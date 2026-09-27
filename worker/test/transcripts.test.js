@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { fetchSource } from '../src/extract.js';
-import { parseYouTubeDetails, supadataTranscript } from '../src/transcripts.js';
+import { fetchSource, tiktokVideoUrl } from '../src/extract.js';
+import { parseYouTubeDetails, supadataTranscript, checkServices } from '../src/transcripts.js';
 import { summarizeCosts } from '../src/costs.js';
 import { sqlStore } from './helpers.js';
 
@@ -113,6 +113,52 @@ test('tiktok without a Supadata key keeps the caption-only partial breakdown', a
     const source = await fetchSource('https://www.tiktok.com/@a/video/2', depsFor(sqlStore(), {}));
     assert.strictEqual(source.transcriptSource, 'caption');
     assert.strictEqual(source.partial, true);
+});
+
+test('tiktok says why Supadata failed and rebuilds short links from oEmbed', async (t) => {
+    const seen = [];
+    mockFetch(t, (url) => {
+        if (url.includes('tiktok.com/oembed')) return json({ title: 'Caption', author_name: 'A', author_unique_id: 'a', embed_product_id: '42' });
+        if (url.startsWith('https://api.supadata.ai/v1/transcript?')) {
+            seen.push(new URL(url).searchParams.get('url'));
+            return json({ error: 'limit-exceeded', message: 'Out of credits' }, 402);
+        }
+        return null; // the short link itself is blocked
+    });
+    const source = await fetchSource('https://vm.tiktok.com/ZMabc/', depsFor(sqlStore(), { SUPADATA_API_KEY: 'k' }));
+    assert.deepStrictEqual(seen, ['https://www.tiktok.com/@a/video/42']);
+    assert.strictEqual(source.url, 'https://www.tiktok.com/@a/video/42');
+    assert.strictEqual(source.partial, true);
+    assert.match(source.transcriptError, /out of credits/);
+});
+
+test('tiktok video urls', () => {
+    assert.strictEqual(tiktokVideoUrl('https://www.tiktok.com/@a/video/1?_r=1', null), 'https://www.tiktok.com/@a/video/1');
+    assert.strictEqual(tiktokVideoUrl('https://vm.tiktok.com/x', { author_url: 'https://www.tiktok.com/@bee', embed_product_id: '7' }), 'https://www.tiktok.com/@bee/video/7');
+    assert.strictEqual(tiktokVideoUrl('https://vm.tiktok.com/x', {}), 'https://vm.tiktok.com/x');
+});
+
+test('supadata reports rejected keys and empty transcripts', async (t) => {
+    let reply = json({ message: 'Invalid API key' }, 401);
+    mockFetch(t, () => reply);
+    const reasons = [];
+    const report = (r) => reasons.push(r);
+    assert.strictEqual(await supadataTranscript('https://www.tiktok.com/@a/video/1', { SUPADATA_API_KEY: 'k' }, { report }), null);
+    reply = json({ content: '  ' });
+    assert.strictEqual(await supadataTranscript('https://www.tiktok.com/@a/video/1', { SUPADATA_API_KEY: 'k' }, { report }), null);
+    assert.match(reasons[0], /rejected the API key/);
+    assert.match(reasons[1], /no speech/);
+});
+
+test('service check flags keys that are rejected', async (t) => {
+    const calls = mockFetch(t, (url) => {
+        if (url.includes('generativelanguage')) return json({ error: { message: 'API key not valid' } }, 400);
+        if (url === 'https://api.supadata.ai/v1/me') return json({ plan: 'free' });
+        return null;
+    });
+    assert.deepStrictEqual(await checkServices({ GEMINI_API_KEY: 'AQ.x', SUPADATA_API_KEY: 'k' }), { gemini: 'api_key_rejected' });
+    assert.strictEqual(calls.find((c) => c.url.includes('generativelanguage')).init.headers['x-goog-api-key'], 'AQ.x');
+    assert.deepStrictEqual(await checkServices({}), {});
 });
 
 test('supadata job that never finishes asks for a retry instead of failing', async (t) => {

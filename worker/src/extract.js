@@ -207,14 +207,18 @@ async function extractTikTok(rawUrl, deps) {
     if (cached) return cached;
     const meta = await oembed(`https://www.tiktok.com/oembed?url=${encodeURIComponent(canonical)}`);
     const caption = meta?.title || '';
+    // TikTok sometimes blocks the server's page fetch, leaving a short link;
+    // oEmbed still names the video, so rebuild its full address.
+    const videoUrl = tiktokVideoUrl(canonical, meta);
 
     // Supadata transcribes what is said (AI speech-to-text when needed).
-    const supadata = await supadataTranscript(canonical, env, { mode: 'auto' });
+    let transcriptError = '';
+    const supadata = await supadataTranscript(videoUrl, env, { mode: 'auto', report: (reason) => { transcriptError = reason; } });
     if (supadata) {
         await record('supadata:requests', 1);
         const source = {
             sourceType: 'tiktok',
-            url: canonical,
+            url: videoUrl,
             title: caption ? caption.slice(0, 120) : 'TikTok video',
             author: meta?.author_name || '',
             thumbnail: meta?.thumbnail_url || '',
@@ -236,14 +240,23 @@ async function extractTikTok(rawUrl, deps) {
     }
     return {
         sourceType: 'tiktok',
-        url: canonical,
+        url: videoUrl,
         title: caption ? caption.slice(0, 120) : 'TikTok video',
         author: meta?.author_name || '',
         thumbnail: meta?.thumbnail_url || '',
         text: parts.join('\n\n'),
         transcriptSource: 'caption',
+        transcriptError: transcriptError || (env.SUPADATA_API_KEY ? '' : 'Add a Supadata key to transcribe what TikToks say.'),
         partial: true
     };
+}
+
+export function tiktokVideoUrl(url, meta) {
+    if (/tiktok\.com\/@[^/]+\/video\/\d+/.test(url)) return url.split('?')[0];
+    const id = meta?.embed_product_id;
+    const author = meta?.author_unique_id || String(meta?.author_url || '').match(/@([^/?]+)/)?.[1];
+    if (id && /^\d+$/.test(String(id)) && author) return `https://www.tiktok.com/@${author}/video/${id}`;
+    return url;
 }
 
 function escapeHtml(text) {

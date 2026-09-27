@@ -75,8 +75,26 @@ async function supadataGet(path, env) {
 
 // mode: 'native' (existing captions only, cheapest), 'generate' or 'auto'
 // (AI speech-to-text when there are no captions).
-export async function supadataTranscript(url, env, { mode = 'auto', sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+const SUPADATA_REASONS = {
+    401: 'Supadata rejected the API key. Check SUPADATA_API_KEY in Cloudflare.',
+    403: 'Supadata rejected the API key. Check SUPADATA_API_KEY in Cloudflare.',
+    402: 'Supadata is out of credits for this month.',
+    429: 'Supadata is rate limiting requests. Try again in a minute.'
+};
+
+function supadataReason(status, data) {
+    const detail = String(data?.message || data?.details || data?.error?.message || data?.error || '').slice(0, 200);
+    return SUPADATA_REASONS[status] || `Supadata couldn't transcribe this video (${status}${detail ? `: ${detail}` : ''}).`;
+}
+
+// report(reason) is told why no transcript came back, so the note can say so.
+export async function supadataTranscript(url, env, { mode = 'auto', sleep = (ms) => new Promise((r) => setTimeout(r, ms)), report = () => {} } = {}) {
     if (!env.SUPADATA_API_KEY) return null;
+    const fail = (reason) => {
+        console.warn(`supadata: ${reason}`);
+        report(reason);
+        return null;
+    };
     try {
         const query = new URLSearchParams({ url, text: 'true', mode });
         let { status, data } = await supadataGet(`/transcript?${query}`, env);
@@ -91,23 +109,51 @@ export async function supadataTranscript(url, env, { mode = 'auto', sleep = (ms)
                 ({ status, data } = await supadataGet(`/transcript/${encodeURIComponent(jobId)}`, env));
                 if (data.status === 'completed') break;
                 if (data.status === 'failed') {
-                    console.warn(`supadata job failed: ${data.error?.message || data.error || 'unknown'}`);
-                    return null;
+                    return fail(`Supadata couldn't transcribe this video: ${String(data.error?.message || data.error || 'unknown error').slice(0, 200)}`);
                 }
+                if (status >= 400) return fail(supadataReason(status, data));
             }
         } else if (status !== 200) {
-            console.warn(`supadata ${status}: ${data?.message || data?.error || 'no message'}`);
-            return null;
+            return fail(supadataReason(status, data));
         }
-        const text = typeof data.content === 'string'
-            ? data.content
-            : Array.isArray(data.content) ? data.content.map((c) => c.text).join(' ') : '';
-        return text.trim() ? { text: text.replace(/\s+\n/g, '\n').trim(), lang: data.lang || '' } : null;
+        const content = data.content ?? data.result?.content;
+        const text = typeof content === 'string'
+            ? content
+            : Array.isArray(content) ? content.map((c) => c.text).join(' ') : '';
+        if (!text.trim()) return fail('Supadata found no speech in this video.');
+        return { text: text.replace(/\s+\n/g, '\n').trim(), lang: data.lang || '' };
     } catch (error) {
         if (error instanceof HttpError) throw error;
-        console.warn(`supadata unreachable: ${error.message}`);
-        return null;
+        return fail(`Couldn't reach Supadata (${error.message}).`);
     }
+}
+
+// Health check for the optional services: confirms each key works without
+// spending anything. Returns { service: reasonCode } for the ones that don't.
+export async function checkServices(env) {
+    const problems = {};
+    const probe = async (name, url, headers) => {
+        try {
+            const response = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+            if (response.ok) return;
+            if ([400, 401, 403].includes(response.status)) problems[name] = 'api_key_rejected';
+            else if (response.status === 402) problems[name] = 'out_of_credits';
+            else if (response.status === 404 && name === 'gemini') problems[name] = 'model_not_available';
+            else if (response.status !== 404) problems[name] = `error_${response.status}`;
+        } catch {
+            problems[name] = 'unreachable';
+        }
+    };
+    const checks = [];
+    if (env.GEMINI_API_KEY) {
+        const base = env.GEMINI_BASE_URL || GEMINI_BASE;
+        checks.push(probe('gemini', `${base}/${encodeURIComponent(env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL)}`, { 'x-goog-api-key': env.GEMINI_API_KEY }));
+    }
+    if (env.SUPADATA_API_KEY) {
+        checks.push(probe('supadata', `${env.SUPADATA_BASE_URL || SUPADATA_BASE}/me`, { 'x-api-key': env.SUPADATA_API_KEY }));
+    }
+    await Promise.all(checks);
+    return problems;
 }
 
 // Title, channel, length and description (which often lists chapters) from

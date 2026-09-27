@@ -66,7 +66,8 @@ After this, deploys, dependency updates and monitoring run by themselves.
 3. **Optional video transcripts** (same place, as secrets):
    - `GEMINI_API_KEY`: from aistudio.google.com → *Get API key*. Transcribes YouTube videos, including ones without captions.
    - `SUPADATA_API_KEY`: from supadata.ai (free plan). Transcribes what's said in TikToks.
-   - Each one switches on when its key is present; `/api/health` lists them under `services`.
+   - Each one switches on when its key is present; `/api/health` lists them under `services`, and `/api/health?deep=1` also tests each key and lists any that fail under `serviceProblems` (e.g. `api_key_rejected`, `out_of_credits`).
+   - When a transcript service fails, the note is marked partial and says why. Sharing the same link again retries it and updates that note in place.
 4. **Anthropic spend cap:** in the Anthropic Console → *Limits*, set a monthly spend limit so costs can never run away.
 5. **GitHub (hands-off updates):**
    - *Settings → General*: turn on **Allow auto-merge**.
