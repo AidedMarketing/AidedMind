@@ -6,9 +6,9 @@ const USAGE_KEY = 'aidedmind.usage';
 
 export function getSettings() {
     try {
-        return { serverUrl: '', token: '', showConcepts: true, depth: 'auto', ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+        return { serverUrl: '', token: '', showConcepts: true, depth: 'auto', mapColor: 'theme', themeDetail: 'balanced', ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
     } catch {
-        return { serverUrl: '', token: '', showConcepts: true, depth: 'auto' };
+        return { serverUrl: '', token: '', showConcepts: true, depth: 'auto', mapColor: 'theme', themeDetail: 'balanced' };
     }
 }
 
@@ -162,6 +162,20 @@ export async function adminListUsers() {
 
 export async function adminCreateUser({ label, plan }) {
     return request('POST', '/admin/users', { label, plan });
+}
+
+// Public status of the server and its optional services. deep also tests
+// storage and each API key (free: no tokens are spent).
+export async function fetchHealth({ deep = false } = {}) {
+    let response;
+    try {
+        response = await fetch(`${serverBase()}/api/health${deep ? '?deep=1' : ''}`, { cache: 'no-store' });
+    } catch {
+        throw new Error('Can\'t reach your AidedMind server.');
+    }
+    const data = await response.json().catch(() => null);
+    if (!data) throw new Error(`Server error (${response.status}).`);
+    return data;
 }
 
 export function serverBase() {

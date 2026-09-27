@@ -23,6 +23,16 @@
     --node-photo: #e8c4d8;
     --graph-line: #4a4659;
     --graph-line-strong: #c4b6e8;
+    /* Map themes: eight distinct, soft hues that read on the warm dark bg. */
+    --theme-0: #c4b6e8;
+    --theme-1: #9fd3c7;
+    --theme-2: #e9a095;
+    --theme-3: #d9b887;
+    --theme-4: #9dbde6;
+    --theme-5: #e8c4d8;
+    --theme-6: #b8d69a;
+    --theme-7: #e6c07a;
+    --theme-none: #6e6a80;
     --bar-bg: rgba(28, 28, 39, 0.78);
     --scrim: rgba(8, 8, 14, 0.55);
     --radius: 24px;
@@ -64,6 +74,15 @@
         --node-photo: #8a4a6e;
         --graph-line: #cfc5d9;
         --graph-line-strong: #695085;
+        --theme-0: #695085;
+        --theme-1: #2f7a6b;
+        --theme-2: #a14238;
+        --theme-3: #806023;
+        --theme-4: #385e9b;
+        --theme-5: #8a4a6e;
+        --theme-6: #4f7a2e;
+        --theme-7: #9a6a12;
+        --theme-none: #a79db2;
         --bar-bg: rgba(247, 244, 239, 0.82);
         --scrim: rgba(40, 32, 53, 0.35);
     }
@@ -262,7 +281,9 @@ p { margin: 0 0 12px; }
 button.group-row { cursor: pointer; }
 button.group-row:active, .note-row:active, .link-card:active { background: var(--surface-2); }
 .group-row .row-label { flex: 1; min-width: 0; }
-.group-row .row-value { color: var(--text-2); font-size: 15px; }
+.group-row .row-value { color: var(--text-2); font-size: 15px; text-align: right; max-width: 48%; }
+.group-row .row-value.ok { color: var(--accent); }
+.group-row .row-value.muted { color: var(--text-3); }
 .group-row.danger { color: var(--danger); }
 .group-row.danger .row-icon { color: var(--danger); }
 
@@ -680,7 +701,9 @@ details.card[open] summary { margin-bottom: 12px; }
     box-shadow: inset 0 0 0 0.5px var(--line-strong);
 }
 
-.graph-top .search { flex: 1; height: 42px; border-radius: 14px; }
+.graph-top .search { flex: 1; min-width: 0; height: 42px; border-radius: 14px; }
+.graph-top .search input { min-width: 0; }
+.graph-top .float-button { flex: none; }
 
 .float-button {
     width: 42px;
@@ -703,9 +726,29 @@ details.card[open] summary { margin-bottom: 12px; }
     bottom: calc(var(--tab-h) + var(--safe-bottom) + 12px);
     display: flex;
     gap: 6px;
-    flex-wrap: wrap;
-    pointer-events: none;
+    /* One row that scrolls sideways when there are many themes. */
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    pointer-events: auto;
 }
+
+.graph-legend::-webkit-scrollbar { display: none; }
+.graph-legend .legend-item { flex: none; white-space: nowrap; }
+
+.graph-legend button.legend-item {
+    pointer-events: auto;
+    border: 0;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.graph-legend button.legend-item.active { color: var(--text); box-shadow: inset 0 0 0 1.5px var(--dot); }
+.legend-item .count { color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+.theme-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dot); display: inline-block; flex: none; }
 
 .legend-item {
     display: inline-flex;
