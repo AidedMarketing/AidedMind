@@ -32,6 +32,28 @@ test('health reports configuration without secrets', async () => {
     assert.strictEqual(bad.status, 503);
 });
 
+test('deep health explains why the model check failed', async (t) => {
+    let status = 401;
+    const stub = await anthropicStub(() => (status === 200
+        ? { json: { id: 'claude-opus-5', type: 'model' } }
+        : { status, json: { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } } }));
+    t.after(() => stub.close());
+    const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
+    const bad = await call(app, env, 'GET', '/api/health?deep=1');
+    assert.strictEqual(bad.status, 503);
+    assert.deepStrictEqual(await bad.json(), {
+        ok: false, version: '0.2.0',
+        checks: { anthropicKey: true, ownerToken: true, storage: true, model: false },
+        problems: { model: 'api_key_rejected' }
+    });
+    status = 404;
+    assert.strictEqual((await (await call(app, env, 'GET', '/api/health?deep=1')).json()).problems.model, 'model_not_available');
+    status = 200;
+    const good = await (await call(app, env, 'GET', '/api/health?deep=1')).json();
+    assert.strictEqual(good.ok, true);
+    assert.strictEqual(good.problems, undefined);
+});
+
 test('source endpoint blocks private addresses', async () => {
     const env = fakeEnv();
     for (const url of ['http://127.0.0.1/', 'http://169.254.169.254/latest', 'http://localhost:8787', 'file:///etc/passwd', 'http://[::1]/']) {
