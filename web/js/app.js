@@ -34,6 +34,8 @@ function depthLabel(depth) {
     return DEPTH_INFO[depth]?.label || DEPTH_INFO.auto.label;
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
+// Matches the service worker cache version, so Settings shows which build is running.
+const APP_VERSION = '10';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -222,9 +224,11 @@ function buildNote(result, title) {
     };
 }
 
-async function runCapture({ input, title, photos = [] }) {
+async function runCapture({ input, title, photos = [], retry = null }) {
     let result;
-    if (photos.length) {
+    if (retry) {
+        result = await capture({ url: retry.source?.sharedUrl || retry.source?.url, retry }, notes);
+    } else if (photos.length) {
         result = await capture({ text: input.trim(), title, photos }, notes);
         result.photos = photos.map((photo) => photo.thumb);
     } else {
@@ -623,6 +627,7 @@ function noteActions(note, byId) {
                     closeSheet();
                     shareFile(new File([toMarkdown(note, byId)], fileName(note), { type: 'text/markdown' }));
                 }),
+                note.source?.partial && href ? actionRow('Get the full transcript', 'refresh', () => retryTranscript(note)) : null,
                 actionRow(`Re-analyze (${depthLabel(getSettings().depth)})`, 'refresh', () => reanalyze(note)),
                 note.depth !== 'thorough' ? actionRow('Re-analyze in depth (Thorough)', 'sparkle', () => reanalyze(note, 'thorough')) : null
             ),
@@ -642,6 +647,24 @@ function noteActions(note, byId) {
             h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel')
         )
     );
+}
+
+// Fetches a caption-only note's link again (the transcript services may have
+// been off or failing) and replaces the note in place.
+async function retryTranscript(note) {
+    closeSheet();
+    if (pending) return;
+    toast('Getting the full transcript…');
+    pending = runCapture({ retry: note });
+    try {
+        const fresh = await pending;
+        toast(fresh.source?.partial ? 'Still caption-only. See the note for why.' : 'Updated with the full transcript');
+    } catch (error) {
+        toast(error.message);
+    } finally {
+        pending = null;
+        if (location.hash.includes(encodeURIComponent(note.id))) route();
+    }
 }
 
 async function reanalyze(note, depth) {
@@ -919,7 +942,7 @@ function settingsView() {
             ))),
             actionRow('Restore from backup', 'refresh', () => fileInput.click())
         ),
-        h('p', { class: 'group-footer' }, `${notes.length} note${notes.length === 1 ? '' : 's'}, stored only on this device.`),
+        h('p', { class: 'group-footer' }, `${notes.length} note${notes.length === 1 ? '' : 's'}, stored only on this device. App version ${APP_VERSION}.`),
         accounts,
         fileInput
     );
@@ -1018,8 +1041,11 @@ function removeFailedShare(id) {
     saveFailedShares(failedShares().filter((item) => item.id !== id));
 }
 
-function refreshInboxViews() {
-    if (!pending && (location.hash.startsWith('#/library') || location.hash === '' || location.hash === '#/')) route();
+// notesChanged: an open note may have been replaced, so redraw it too.
+function refreshInboxViews(notesChanged = false) {
+    if (pending) return;
+    const onNote = location.hash.startsWith('#/note/');
+    if ((onNote && notesChanged) || location.hash.startsWith('#/library') || location.hash === '' || location.hash === '#/') route();
 }
 
 // Pulls links saved by the iOS Shortcut and breaks each one down. A link the
@@ -1091,7 +1117,7 @@ async function drainInbox({ manual = false } = {}) {
                 h('a', { href: '#/library', onclick: () => setBanner(null) }, 'View')
             ]);
         }
-        refreshInboxViews();
+        refreshInboxViews(saved > 0);
     }
 }
 
