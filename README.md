@@ -60,19 +60,22 @@ Photos are resized on the phone to 1,568 px on the long edge (the most detail Cl
 
 The Map tab shows every note as a dot. With **Color notes by: Theme** (the default), AidedMind groups your notes into topics and gives each one a color, a soft background area and a name, such as *Sleep · Health* or *Marketing · Growth*.
 
-- **How themes are found (on your phone, no AI cost).** Two notes count as related when Claude linked them, when you `[[wikilinked]]` one from the other in your own notes, or when they share tags or concepts. Rare tags and concepts count more than common ones, and ones on every note (or on most of a larger library) are ignored. A clustering method (Louvain community detection) then finds the groups of notes that are more connected to each other than to the rest.
-- **Names and colors.** Each theme is named after its most distinctive tags: common inside the theme, rare outside it. Its color follows its main name, so themes keep their colors as the library grows. The same library always gives the same themes.
-- **Unsorted.** Notes that don't share anything with the rest yet stay grey until related notes arrive.
+- **Main topics.** Every breakdown gives the note a **topic**: the one broad subject it's *about*, not what it mentions in passing. A note on journaling that mentions an AI app is about *Journaling*. Claude reuses your existing topic names, so notes on the same subject match up.
+- **How themes are found (on your phone, no AI cost).** Sharing a topic counts most. Notes are also related when Claude linked them, when you `[[wikilinked]]` one from the other in your own notes, or when they share tags or concepts. Between notes with *different* topics, shared tags, concepts and Claude's links count much less, so a passing mention doesn't pull a note into the wrong group. Your own `[[wikilinks]]` always count in full. Rare tags and concepts count more than common ones, and ones on every note (or on most of a larger library) are ignored. A clustering method (Louvain community detection) then finds the groups of notes that are more connected to each other than to the rest.
+- **Names and colors.** A theme is named after the topic most of its notes share, otherwise its most distinctive tags. Its color follows its main name, so themes keep their colors as the library grows. The same library always gives the same themes.
+- **Fixing mistakes.** If a note lands in the wrong theme, open it → ••• → **Topic** and pick or type the right one; your choice sticks, even through a re-analysis. If two notes are linked but shouldn't be, open the note's **Links** tab and tap **×** on that link; a re-analysis won't bring it back.
+- **Notes saved before topics existed** get theirs filled in automatically (on the owner account) or from Settings → *Map* → **Sort notes by topic**: one cheap call covers up to 150 notes (about a cent) and counts as one breakdown.
+- **Unsorted.** Notes that don't share anything with the rest yet (like a single note on a new topic) stay grey until related notes arrive.
 - **When they appear.** Themes need a few notes that share tags, ideas or links. They're most useful from about 15–20 notes.
 
 On the map:
 
 - **Tap a theme** in the row under the map to light up its notes; tap it again to list them. Tap empty space to clear.
 - **Tap a dot** to preview a note, or a diamond to see every note that shares that idea.
-- The **layers button** switches between coloring by theme and by source (article, YouTube, TikTok, photo, text). The **diamond button** shows or hides shared ideas. The **corners button** fits everything on screen.
+- The **layers button** switches between coloring by theme and by source (article, YouTube, TikTok, photo, text). The **diamond button** shows or hides shared ideas (grey diamonds when coloring by theme). The **corners button** fits everything on screen.
 - **Find on map** highlights notes by title.
 
-Themes also show up elsewhere: as colored filter chips at the top of the Library, and as a chip under each note's TL;DR (tap it to see the whole theme). Settings → *Map* controls the coloring and how finely notes are grouped (*Broad*, *Balanced*, *Detailed*).
+Themes also show up elsewhere: as colored filter chips at the top of the Library, as each Library row's colored topic, as a chip under each note's TL;DR (tap it to see the whole theme), and in Obsidian exports (`theme:` in the frontmatter). Settings → *Map* controls the coloring and how finely notes are grouped (*Broad*, *Balanced*, *Detailed*).
 
 ## Using the app
 
@@ -86,7 +89,10 @@ Themes also show up elsewhere: as colored filter chips at the top of the Library
 | Get a TikTok or video's full transcript later | Open the note → ••• → **Get the full transcript** |
 | Redo a breakdown in more depth | Open the note → ••• → **Re-analyze in depth (Thorough)** |
 | Link your own notes | In a note's **Notes** tab, write `[[Title of another note]]` |
-| Find something | **Library** → search (titles, summaries, concepts, tags, your notes), or filter by theme, source or tag |
+| Remove a wrong link | Open the note → **Links** tab → **×** on the link |
+| Move a note to the right theme | Open the note → ••• → **Topic** → pick or type its subject |
+| Find something | **Library** → search (titles, topics, summaries, concepts, tags, your notes), or filter by theme, source or tag |
+| Sort the Library | **Library** → sort button next to search: newest, oldest, title A–Z, by theme or by source |
 | Explore topics | **Map** tab → tap a theme under the map |
 | Take notes to Obsidian | Settings → **Export to Obsidian (.zip)** |
 | Back up / move to a new phone | Settings → **Back up library**, then **Restore from backup** on the new phone |
@@ -126,6 +132,7 @@ Everything in the app's Settings tab. Choices are saved on the device.
 | Map | Color notes by: Theme / Source | Color the map by topic (with theme areas and names) or by where each note came from. Default Theme |
 | Map | Theme detail: Broad / Balanced / Detailed | Fewer, bigger themes or more, smaller ones. Shows how many themes your library has. Default Balanced |
 | Map | Shared ideas: Show / Hide | The diamonds linking notes that mention the same concept |
+| Map | Sort notes by topic | Shown when some notes have no topic yet (saved before topics existed): fills them in with one cheap call |
 | Connection | Server URL | Leave blank when the app is opened from your Worker URL (normal). Only for running the app from another address |
 | Connection | Access token | Your `OWNER_TOKEN`, or a token from *Accounts*. **Save & Test** checks it |
 | This month | (read-only) | Breakdowns used, estimated Claude spend, Gemini videos, Supadata transcripts |
@@ -149,7 +156,9 @@ Everything in the app's Settings tab. Choices are saved on the device.
 | "You've used all N breakdowns for this month" | That account's plan limit; the owner token has no limit. Limits reset on the 1st |
 | The daily health check email arrived | Open *Actions → Health check* in GitHub: the log names what failed (app, storage, Claude key, or a transcript key) |
 | Health page shows `anthropic_error_400` | Usually no credit on the Anthropic account. Add credit in the Anthropic Console |
-| No themes on the map | Themes need a few notes that share tags, ideas or links. Keep saving; *Theme detail → Detailed* also helps with small libraries |
+| No themes on the map | Themes need a few notes that share a topic, tags, ideas or links. Keep saving; *Theme detail → Detailed* also helps with small libraries |
+| A note is in the wrong theme | Note → ••• → **Topic** → set its real subject. Settings → *Map* → **Sort notes by topic** if older notes have none |
+| Two unrelated notes are linked | Note → **Links** tab → **×** on that link. It stays removed |
 
 The live status page is `https://<your worker>/api/health?deep=1`.
 
@@ -204,7 +213,8 @@ All routes are under your Worker URL. Every route except `/api/health` needs the
 | `GET /api/health` (`?deep=1`) | | `ok`, `checks` (keys; with `deep`, also storage and model access), `services` (`gemini`, `supadata`), and with `deep` any `serviceProblems`. Public, spends nothing |
 | `POST /api/auth-check` | `{}` | your plan and this month's usage and spend |
 | `POST /api/source` | `{ url }` | the source text (or article HTML for the app to clean up), with `transcriptSource`, `partial` and `transcriptError` for videos |
-| `POST /api/analyze` | `{ source, library, depth, concepts }` | the breakdown (`analysis`), model and style used, usage. Counts one breakdown |
+| `POST /api/analyze` | `{ source, library, depth, concepts, topics }` | the breakdown (`analysis`, including its `topic`), model and style used, usage. Counts one breakdown |
+| `POST /api/topics` | `{ notes: [{ id, title, tldr, tags }], topics }` | `{ assignments: { id: topic } }` for up to 150 notes, using the Quick model. Counts one breakdown |
 | `POST /api/inbox` | `{ url }` or `{ text, title }` | saves a shared link for the app (what the Shortcut calls) |
 | `GET /api/inbox` | | links waiting to be broken down |
 | `DELETE /api/inbox/:id` | | removes one |
@@ -240,15 +250,16 @@ worker/
   src/extract.js        link → source (article HTML / YouTube / TikTok), fallback order
   src/transcripts.js    Gemini, Supadata, YouTube description fallbacks, key checks
   src/costs.js          monthly spend estimate from the cost ledger
-  src/analyze.js        Claude call, JSON schema, normalization
+  src/analyze.js        Claude call, JSON schema (incl. topic), normalization
+  src/topics.js         batch topics for notes saved before topics existed
   src/store-core.js     SQLite tables: users, inbox, usage, transcript cache, cost ledger
   src/store.js          Durable Object wrapper
 web/
   index.html, app.css, manifest.webmanifest, service-worker.js, _headers
   js/app.js             views, routing, sheets, inbox sync, settings, accounts, updates
-  js/themes.js          map themes: note similarity, clustering, names, colors
+  js/themes.js          map themes: topics, note similarity, clustering, names, colors
   js/graph.js           canvas map (themes, touch, pinch, label placement)
-  js/library.js         related-note picking, concept list, duplicate links
+  js/library.js         related-note picking, concept and topic lists, duplicate links
   js/readable.js        article HTML → clean text on the device
   js/photos.js          photo resize and thumbnails on the device
   js/api.js, db.js, markdown.js, zip.js, icons.js

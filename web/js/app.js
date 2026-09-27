@@ -1,7 +1,8 @@
 import { allNotes, saveNote, saveMany, deleteNote, newId } from './db.js';
-import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, serverBase, fetchHealth, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
+import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, serverBase, fetchHealth, assignTopics, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { buildThemes, THEME_DETAIL } from './themes.js';
+import { knownTopics } from './library.js';
 import { toMarkdown, fileName } from './markdown.js';
 import { icon } from './icons.js';
 import { createZip } from './zip.js';
@@ -52,7 +53,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '12';
+const APP_VERSION = '13';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -150,7 +151,14 @@ function noteRow(note) {
         h('div', { class: 'body' },
             h('div', { class: 'title' }, note.title),
             h('div', { class: 'tldr' }, note.tldr),
-            h('div', { class: 'meta' }, `${origin} · ${relativeDate(note.createdAt)}`)
+            h('div', { class: 'meta' },
+                (() => {
+                    // The note's theme color and topic lead the line when it has one.
+                    const theme = themeOf(note.id);
+                    const topic = note.topic || theme?.label;
+                    return topic ? [h('span', { class: 'theme-dot', style: { '--dot': theme ? `var(--theme-${theme.color})` : 'var(--theme-none)' } }), h('span', { class: 'meta-topic' }, topic), ' · '] : null;
+                })(),
+                `${origin} · ${relativeDate(note.createdAt)}`)
         )
     );
 }
@@ -225,6 +233,7 @@ function buildNote(result, title) {
         },
         sourceText: result.source.text,
         title: title || a.title || result.source.title || 'Untitled',
+        topic: a.topic || '',
         tldr: a.tldr,
         summary: a.summary,
         outline: a.outline,
@@ -257,7 +266,15 @@ async function runCapture({ input, title, photos = [], retry = null }) {
     const previous = result.replaces && notes.find((n) => n.id === result.replaces);
     if (previous) {
         // A retried caption-only note keeps its place and anything you wrote.
-        note = { ...note, id: previous.id, createdAt: previous.createdAt, userNotes: previous.userNotes || '' };
+        note = {
+            ...note,
+            id: previous.id,
+            createdAt: previous.createdAt,
+            userNotes: previous.userNotes || '',
+            removedLinks: previous.removedLinks || [],
+            ...(previous.topicByUser ? { topic: previous.topic, topicByUser: true } : {})
+        };
+        note.connections = keepAllowedLinks(note, note.connections);
     }
     await saveNote(note);
     notes = await allNotes();
@@ -426,6 +443,49 @@ function captureView() {
 
 // ---------- Library ----------
 
+const LIBRARY_SORTS = {
+    newest: { label: 'Newest first' },
+    oldest: { label: 'Oldest first' },
+    title: { label: 'Title A–Z' },
+    theme: { label: 'By theme' },
+    source: { label: 'By source' }
+};
+
+// Splits notes into [heading, notes] groups for the chosen sort.
+function groupNotes(list, sort, { themes, byNote }) {
+    const byDate = (a, b) => String(b.createdAt).localeCompare(String(a.createdAt));
+    const grouped = (keyOf, order) => {
+        const groups = new Map(order.map((label) => [label, []]));
+        list.forEach((note) => {
+            const key = keyOf(note);
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(note);
+        });
+        return [...groups.entries()].filter(([, items]) => items.length).map(([label, items]) => [label, items.sort(byDate)]);
+    };
+    if (sort === 'oldest') {
+        return grouped((n) => dateBucket(n.createdAt), []).reverse().map(([label, items]) => [label, items.reverse()]);
+    }
+    if (sort === 'title') {
+        const sorted = [...list].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+        const groups = new Map();
+        sorted.forEach((note) => {
+            const letter = /^[a-z]/i.test(note.title) ? note.title[0].toUpperCase() : '#';
+            if (!groups.has(letter)) groups.set(letter, []);
+            groups.get(letter).push(note);
+        });
+        return [...groups.entries()];
+    }
+    if (sort === 'theme') {
+        const labels = new Map(themes.map((t) => [t.id, t.label]));
+        return grouped((n) => labels.get(byNote.get(n.id)) || 'Unsorted', [...themes.map((t) => t.label), 'Unsorted']);
+    }
+    if (sort === 'source') {
+        return grouped((n) => SOURCE_LABELS[n.source?.sourceType || 'text'] || 'Text', Object.values(SOURCE_LABELS));
+    }
+    return grouped((n) => dateBucket(n.createdAt), []);
+}
+
 function libraryView(params) {
     setNav({ title: 'Library', right: navButton('', () => drainInbox({ manual: true }), 'inbox') });
     let activeTag = params.get('tag') || '';
@@ -452,7 +512,7 @@ function libraryView(params) {
             if (activeTheme && byNote.get(note.id) !== activeTheme) return false;
             if (!q) return true;
             const haystack = [
-                note.title, note.tldr, note.userNotes, note.source?.author,
+                note.title, note.topic, note.tldr, note.userNotes, note.source?.author,
                 ...(note.concepts || []).map((c) => c.name),
                 ...(note.tags || []),
                 ...(note.summary || []).map((s) => s.body)
@@ -489,23 +549,43 @@ function libraryView(params) {
             list.replaceChildren(h('div', { class: 'empty' }, h('strong', {}, 'No results'), 'Try a different word or filter.'));
             return;
         }
-        const groups = new Map();
-        matches.forEach((note) => {
-            const bucket = dateBucket(note.createdAt);
-            if (!groups.has(bucket)) groups.set(bucket, []);
-            groups.get(bucket).push(note);
-        });
-        list.replaceChildren(...[...groups.entries()].flatMap(([label, items]) => [
+        sortButton.lastChild.textContent = LIBRARY_SORTS[sort].label;
+        list.replaceChildren(...groupNotes(matches, sort, { themes, byNote }).flatMap(([label, items]) => [
             h('div', { class: 'section-label' }, label),
             h('div', { class: 'group' }, items.map(noteRow))
         ]));
     };
+    let sort = LIBRARY_SORTS[getSettings().librarySort] ? getSettings().librarySort : 'newest';
+    const sortButton = h('button', {
+        type: 'button',
+        class: 'sort-button',
+        'aria-label': 'Sort notes',
+        onclick: () => openSheet(
+            h('h3', {}, 'Sort notes'),
+            h('div', { class: 'stack' },
+                h('div', { class: 'group' }, Object.entries(LIBRARY_SORTS).map(([key, info]) => h('button', {
+                    type: 'button',
+                    class: 'group-row',
+                    onclick: () => {
+                        sort = key;
+                        saveSettings({ ...getSettings(), librarySort: key });
+                        closeSheet();
+                        refresh();
+                    }
+                }, h('span', { class: 'row-label' }, info.label), key === sort ? icon('check', { size: 20, strokeWidth: 2.4 }) : null))),
+                h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel')
+            )
+        )
+    }, icon('sort', { size: 18, strokeWidth: 2.2 }), h('span'));
     search.addEventListener('input', refresh);
     refresh();
 
     render(
         h('h1', { class: 'large-title' }, 'Library'),
-        h('label', { class: 'search' }, icon('search', { size: 18, strokeWidth: 2.2 }), search),
+        h('div', { class: 'search-row' },
+            h('label', { class: 'search' }, icon('search', { size: 18, strokeWidth: 2.2 }), search),
+            notes.length ? sortButton : null
+        ),
         notes.length ? chips : null,
         sharedItemsSection(),
         list
@@ -560,7 +640,10 @@ function noteView(id) {
             const theme = themeOf(note.id);
             const chips = [
                 theme ? h('a', { class: 'chip', href: `#/library?theme=${encodeURIComponent(theme.id)}`, style: { '--dot': `var(--theme-${theme.color})` }, 'aria-label': `Theme: ${theme.label}` }, h('span', { class: 'dot' }), theme.label) : null,
-                ...(note.tags || []).map((tag) => h('a', { class: 'chip', href: `#/library?tag=${encodeURIComponent(tag)}` }, `#${tag}`))
+                ...(note.tags || [])
+                    // A tag that just repeats the theme or topic adds nothing.
+                    .filter((tag) => ![theme?.label, note.topic].some((name) => name && name.toLowerCase().replace(/\s+/g, '-') === tag.toLowerCase()))
+                    .map((tag) => h('a', { class: 'chip', href: `#/library?tag=${encodeURIComponent(tag)}` }, `#${tag}`))
             ].filter(Boolean);
             return chips.length ? h('div', { class: 'chips wrap' }, chips) : null;
         })(),
@@ -600,10 +683,18 @@ function notePanel(name, note, byId) {
         const backlinks = notes.flatMap((other) => (other.connections || [])
             .filter((c) => c.noteId === note.id && other.id !== note.id && !outgoing.some((o) => o.noteId === other.id))
             .map((c) => ({ ...c, noteId: other.id })));
-        const linkCard = (c) => h('a', { class: 'link-card', href: `#/note/${encodeURIComponent(c.noteId)}` },
-            h('div', { class: 'relation' }, c.relation.replace('-', ' ')),
-            h('div', { class: 'title' }, byId.get(c.noteId).title),
-            h('div', { class: 'reason' }, c.reason)
+        const linkCard = (c) => h('div', { class: 'link-row' },
+            h('a', { class: 'link-card', href: `#/note/${encodeURIComponent(c.noteId)}` },
+                h('div', { class: 'relation' }, c.relation.replace('-', ' ')),
+                h('div', { class: 'title' }, byId.get(c.noteId).title),
+                h('div', { class: 'reason' }, c.reason)
+            ),
+            h('button', {
+                type: 'button',
+                class: 'link-remove',
+                'aria-label': `Remove link to ${byId.get(c.noteId).title}`,
+                onclick: () => confirmRemoveLink(note, byId.get(c.noteId))
+            }, icon('close', { size: 16, strokeWidth: 2.2 }))
         );
         const canvas = h('canvas', { class: 'local-graph', 'aria-label': 'Map around this note' });
         const blocks = [
@@ -625,7 +716,8 @@ function notePanel(name, note, byId) {
             const themes = currentThemes();
             const data = buildGraph(notes, { showConcepts: settings.showConcepts, focusId: note.id, depth: 2, themes });
             if (data.nodes.length > 1 && canvas.isConnected) {
-                new GraphView(canvas, { focusId: note.id, onOpen: openNode, colorBy: settings.mapColor, themes: themes.themes }).setData(data);
+                // The small map keeps theme colors but skips areas and names.
+                new GraphView(canvas, { focusId: note.id, onOpen: openNode, colorBy: settings.mapColor, themes: themes.themes, areas: false }).setData(data);
             } else {
                 canvas.previousElementSibling?.remove();
                 canvas.remove();
@@ -652,6 +744,101 @@ function notePanel(name, note, byId) {
     ];
 }
 
+// ---------- Corrections: links and topics ----------
+
+// Links you removed stay removed, even after a re-analysis.
+function linkBlocked(a, b) {
+    return (a?.removedLinks || []).includes(b?.id) || (b?.removedLinks || []).includes(a?.id);
+}
+
+function keepAllowedLinks(note, connections) {
+    return (connections || []).filter((c) => !linkBlocked(note, notes.find((n) => n.id === c.noteId)));
+}
+
+function confirmRemoveLink(note, other) {
+    openSheet(
+        h('h3', {}, 'Remove this link?'),
+        h('p', { class: 'muted' }, `“${note.title}” and “${other.title}” won't be linked any more, and a re-analysis won't bring the link back.`),
+        h('div', { class: 'stack' },
+            h('button', { type: 'button', class: 'btn primary block', onclick: () => removeLink(note, other) }, 'Remove link'),
+            h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel')
+        )
+    );
+}
+
+async function removeLink(note, other) {
+    closeSheet();
+    [note, other].forEach((n) => {
+        const partner = n === note ? other : note;
+        n.connections = (n.connections || []).filter((c) => c.noteId !== partner.id);
+    });
+    note.removedLinks = [...new Set([...(note.removedLinks || []), other.id])];
+    await saveMany([note, other]);
+    notes = await allNotes();
+    toast('Link removed');
+    route();
+}
+
+function topicSheet(note) {
+    const others = knownTopics(notes.filter((n) => n.id !== note.id)).slice(0, 24);
+    const field = h('input', { class: 'field', type: 'text', placeholder: 'Topic, e.g. Journaling', 'aria-label': 'Topic', autocapitalize: 'words', maxlength: '40' });
+    field.value = note.topic || '';
+    const save = async (value) => {
+        const topic = value.trim().replace(/[.#]/g, '').slice(0, 40);
+        if (!topic) return;
+        note.topic = topic;
+        note.topicByUser = true;
+        await saveNote(note);
+        notes = await allNotes();
+        closeSheet();
+        toast(`Topic set to ${topic}`);
+        route();
+    };
+    openSheet(
+        h('h3', {}, 'What is this note about?'),
+        h('p', { class: 'small muted' }, 'The main subject, not things it mentions in passing. Notes with the same topic are grouped together on the map.'),
+        others.length ? h('div', { class: 'chips wrap', style: { margin: '10px 0 4px' } },
+            others.map((t) => h('button', { type: 'button', class: `chip${t.toLowerCase() === (note.topic || '').toLowerCase() ? ' active' : ''}`, onclick: () => save(t) }, t))) : null,
+        h('form', { class: 'stack', onsubmit: (event) => { event.preventDefault(); save(field.value); } },
+            field,
+            h('button', { type: 'submit', class: 'btn primary block' }, 'Save topic'),
+            h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel')
+        )
+    );
+}
+
+// Fills in topics for notes saved before topics existed (or whose breakdown
+// didn't return one). One cheap call per 150 notes. Automatic for unlimited
+// plans; others start it from Settings.
+let topicsRunning = false;
+function notesWithoutTopic() {
+    return notes.filter((n) => !String(n.topic || '').trim());
+}
+
+async function backfillTopics({ manual = false } = {}) {
+    const missing = notesWithoutTopic();
+    if (topicsRunning || !missing.length || !getSettings().token) return 0;
+    topicsRunning = true;
+    let updated = 0;
+    try {
+        for (let i = 0; i < missing.length; i += 150) {
+            const batch = missing.slice(i, i + 150);
+            const assignments = await assignTopics(batch, knownTopics(notes));
+            const changed = batch.filter((n) => assignments[n.id]).map((n) => ({ ...n, topic: assignments[n.id] }));
+            if (changed.length) await saveMany(changed);
+            updated += changed.length;
+            notes = await allNotes();
+        }
+        if (manual) toast(updated ? `Sorted ${updated} note${updated === 1 ? '' : 's'} by topic` : 'Nothing to sort');
+    } catch (error) {
+        if (manual) toast(error.message);
+    } finally {
+        topicsRunning = false;
+    }
+    if (updated && !pending) route();
+    return updated;
+}
+
 function noteActions(note, byId) {
     const href = safeHref(note.source?.url);
     openSheet(
@@ -663,6 +850,7 @@ function noteActions(note, byId) {
                     closeSheet();
                     shareFile(new File([toMarkdown(note, byId, { theme: themeOf(note.id)?.label })], fileName(note), { type: 'text/markdown' }));
                 }),
+                actionRow(note.topic ? `Topic: ${note.topic}` : 'Set topic', 'themes', () => topicSheet(note)),
                 note.source?.partial && href ? actionRow('Get the full transcript', 'refresh', () => retryTranscript(note)) : null,
                 actionRow(`Re-analyze (${depthLabel(getSettings().depth)})`, 'refresh', () => reanalyze(note)),
                 note.depth !== 'thorough' ? actionRow('Re-analyze in depth (Thorough)', 'sparkle', () => reanalyze(note, 'thorough')) : null
@@ -710,6 +898,8 @@ async function reanalyze(note, depth) {
         const result = await capture({ text: note.sourceText, title: note.source?.title || note.title, depth }, notes.filter((n) => n.id !== note.id));
         const fresh = buildNote(result, note.title);
         ['tldr', 'summary', 'outline', 'concepts', 'tags', 'quotes', 'takeaways', 'connections', 'model', 'depth', 'autoDepth'].forEach((key) => { note[key] = fresh[key]; });
+        if (!note.topicByUser) note.topic = fresh.topic;
+        note.connections = keepAllowedLinks(note, note.connections);
         await saveNote(note);
         notes = await allNotes();
         toast('Updated');
@@ -846,7 +1036,7 @@ function graphView() {
                 legend.append(h('span', { class: 'legend-item glass' }, 'Themes appear as your notes start to connect'));
             }
         }
-        if (settings.showConcepts) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': 'var(--node-concept)' } }, h('i', { class: 'diamond' }), 'Shared idea'));
+        if (settings.showConcepts) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': byTheme && themes.themes.length ? 'var(--theme-none)' : 'var(--node-concept)' } }, h('i', { class: 'diamond' }), 'Shared idea'));
     };
 
     closeSheet();
@@ -1088,6 +1278,22 @@ function settingsView() {
                     paintDetail();
                 }),
                 detailText,
+                (() => {
+                    // Notes saved before topics existed can be sorted in one go.
+                    const missing = notesWithoutTopic().length;
+                    if (!missing || !settings.token) return null;
+                    return h('button', {
+                        type: 'button',
+                        class: 'btn block',
+                        style: { 'margin-top': '12px' },
+                        onclick: async (event) => {
+                            event.currentTarget.disabled = true;
+                            event.currentTarget.textContent = 'Sorting…';
+                            await backfillTopics({ manual: true });
+                            if (location.hash.startsWith('#/settings')) settingsView();
+                        }
+                    }, `Sort ${missing} note${missing === 1 ? '' : 's'} by topic`);
+                })(),
                 h('div', { class: 'small muted', style: { margin: '14px 2px 6px' } }, 'Shared ideas'),
                 segmentedControl('Shared ideas', [['show', 'Show'], ['hide', 'Hide']], settings.showConcepts ? 'show' : 'hide', (value) => saveSettings({ ...getSettings(), showConcepts: value === 'show' })),
                 h('p', { class: 'small muted', style: { margin: '8px 2px 0' } }, `Shared ideas are the diamonds linking notes that mention the same concept.${themes.themes.length ? ' Tap a theme under the map to light it up; tap it again to see its notes.' : ''}`)
@@ -1456,7 +1662,9 @@ async function start() {
     if (!getSettings().token && !location.hash.startsWith('#/settings')) {
         toast('Connect your server in Settings to start');
     }
-    drainInbox();
+    drainInbox().then(() => {
+        if (getLastUsage()?.limit === null) backfillTopics();
+    });
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') drainInbox();
     });

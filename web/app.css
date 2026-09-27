@@ -191,7 +191,6 @@ main.full { max-width: none; padding: 0; }
     margin: 2px 0 14px;
 }
 
-.subtitle { color: var(--text-2); margin: -8px 0 18px; font-size: 15px; }
 
 .section-label {
     font-size: 13px;
@@ -267,6 +266,7 @@ p { margin: 0 0 12px; }
 
 .group-row + .group-row::before,
 .link-card + .link-card::before,
+.link-row + .link-row::before,
 .note-row + .note-row::before {
     content: "";
     position: absolute;
@@ -662,6 +662,25 @@ textarea.field { resize: none; min-height: 88px; line-height: 1.4; }
     position: relative;
 }
 
+.link-row { position: relative; }
+.link-row .link-card { padding-right: 52px; }
+.link-remove {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 0;
+    display: grid;
+    place-items: center;
+    background: var(--surface-2);
+    color: var(--text-3);
+    cursor: pointer;
+}
+.link-remove:active { background: var(--surface-3); color: var(--danger); }
+
 .link-card .relation { font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); }
 .link-card .title { font-weight: 600; margin: 2px 0; }
 .link-card .reason { font-size: 15px; color: var(--text-2); line-height: 1.35; }
@@ -928,4 +947,29 @@ details.card[open] summary { margin-bottom: 12px; }
 
 .note-photos { margin: 4px 0 14px; }
 .note-photos img { width: 96px; height: 96px; }
-.photo-viewer img { width: 100%; height: auto; border-radius: var(--radius-md); display: block; }
+
+/* ---------- Library sort ---------- */
+
+.search-row { display: flex; gap: 8px; align-items: center; }
+.search-row .search { flex: 1; min-width: 0; }
+.sort-button {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 38px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--surface-2);
+    color: var(--accent);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.sort-button:active { background: var(--surface-2); }
+
+.note-row .meta .theme-dot { width: 7px; height: 7px; margin-right: 5px; vertical-align: 1px; }
+.note-row .meta .meta-topic { color: var(--text-2); font-weight: 500; }

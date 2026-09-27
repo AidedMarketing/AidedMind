@@ -91,6 +91,20 @@ export function conceptVocabulary(notes, { limit = VOCABULARY_LIMIT } = {}) {
     return [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)).slice(0, limit).map((e) => e.name);
 }
 
+// Topic names already used, most common first, so new notes reuse them.
+export function knownTopics(notes, { limit = 100 } = {}) {
+    const counts = new Map();
+    (Array.isArray(notes) ? notes : []).forEach((note) => {
+        const name = String(note.topic || '').trim();
+        if (!name) return;
+        const key = name.toLowerCase();
+        const entry = counts.get(key) || { name, count: 0 };
+        entry.count++;
+        counts.set(key, entry);
+    });
+    return [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)).slice(0, limit).map((e) => e.name);
+}
+
 const TRACKING_PARAMS = /^(utm_.*|fbclid|gclid|dclid|mc_cid|mc_eid|igshid|igsh|si|feature|ref|ref_src|ref_url|share|share_id|t|is_from_webapp|sender_device|_r|_t|publication_id|triedredirect)$/i;
 
 // A stable key for "the same thing": ignores tracking parameters, fragments,

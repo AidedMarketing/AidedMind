@@ -10,6 +10,7 @@ const QUICK_MAX_CHARS = 350000; // Haiku 4.5 has a 200K context; longer sources 
 // notes. These caps guard against older app versions sending everything.
 const MAX_LIBRARY_NOTES = 60;
 const MAX_VOCABULARY = 200;
+const MAX_TOPICS = 100;
 
 // Breakdown styles. Each maps to a model and reasoning level; the model ids
 // can be overridden per style with AIDEDMIND_MODEL_QUICK / _BALANCED / _THOROUGH.
@@ -67,7 +68,8 @@ function supportsFallbacks(model) {
     return /^claude-(opus-5|fable-5)/.test(model);
 }
 
-export function buildRequest(source, library, config, vocabulary = []) {
+// vocabulary: { concepts, topics } names already used in the library.
+export function buildRequest(source, library, config, vocabulary = {}) {
     const request = {
         model: config.model,
         max_tokens: 16000,
@@ -89,9 +91,13 @@ export function buildRequest(source, library, config, vocabulary = []) {
 export const ANALYSIS_SCHEMA = {
     type: 'object',
     additionalProperties: false,
-    required: ['title', 'tldr', 'summary', 'outline', 'concepts', 'tags', 'quotes', 'connections', 'takeaways', 'sourceText'],
+    required: ['title', 'topic', 'tldr', 'summary', 'outline', 'concepts', 'tags', 'quotes', 'connections', 'takeaways', 'sourceText'],
     properties: {
         title: { type: 'string', description: 'Clear, specific title for the note' },
+        topic: {
+            type: 'string',
+            description: 'The one broad subject this source is mainly about, in 1-3 words, Title Case (for example "Journaling", "Artificial Intelligence", "Sleep", "Marketing"). Name what it is about, not what it mentions in passing. Reuse a name from known_topics when one fits.'
+        },
         tldr: { type: 'string', description: 'Two or three sentences capturing the core point' },
         summary: {
             type: 'array',
@@ -141,7 +147,7 @@ export const ANALYSIS_SCHEMA = {
         takeaways: { type: 'array', items: { type: 'string' }, description: '3-7 specific, actionable or memorable takeaways, each a complete sentence the reader could act on or remember' },
         connections: {
             type: 'array',
-            description: 'Links to existing library notes that are genuinely related. Empty if none.',
+            description: 'Links to existing library notes that are genuinely related (same subject, or one directly builds on, supports, contradicts or is an example of the other). Empty if none.',
             items: {
                 type: 'object',
                 additionalProperties: false,
@@ -161,7 +167,9 @@ You receive one captured source (an article, a video transcript, a short-video c
 
 Produce a faithful breakdown of the source: a TL;DR, a sectioned summary, a hierarchical outline, key concepts, tags, notable quotes, and takeaways. The summary and outline are for skimming, so keep them concise; put the most care into the quotes and takeaways, which the reader values most. Stay grounded in what the source actually says; do not add outside facts. Quotes must be verbatim from the source. If the source is thin (for example only a caption), keep the breakdown proportionally short and say in the TL;DR that only partial content was available.
 
-For connections, only link to notes from the provided library index, using their exact ids, and only when there is a real conceptual relationship. Prefer a few strong links over many weak ones. The index holds the notes most related to this source, not the whole library. Reuse concept names that already appear in the library index or the known concepts list when they refer to the same idea, so the knowledge graph links up.
+The topic is what the source is about as a whole: a piece on journaling that mentions using an AI app is about Journaling, not Artificial Intelligence. Keep topics broad enough to be shared by many notes, and reuse a name from known_topics (or a note's topic in the library index) whenever it fits, so notes on the same subject sort together.
+
+For connections, only link to notes from the provided library index, using their exact ids. Link when the two notes share a subject, or when one directly builds on, supports, contradicts or is an example of the other. Sharing a passing mention, a tool or a buzzword (for example both mentioning AI) is not a connection. When the notes have different topics, link only if the relationship is specific and would genuinely help the reader. Prefer a few strong links over many weak ones; no links is a fine answer. The index holds the notes most related to this source, not the whole library. Reuse concept names that already appear in the library index or the known concepts list when they refer to the same idea, so the knowledge graph links up.
 
 When the source is photos (screenshots, book pages, slides, whiteboards, handwritten notes, charts), read them carefully: transcribe their text faithfully into sourceText, treat that text as the source for the breakdown, and explain what charts or diagrams show. Quotes must be verbatim from the photos. If a photo is unreadable, say so in the TL;DR rather than guessing.
 
@@ -173,6 +181,7 @@ export function compactLibrary(library) {
         .map((note) => ({
             id: String(note.id || '').slice(0, 64),
             title: String(note.title || '').slice(0, 200),
+            topic: String(note.topic || '').slice(0, 40),
             tldr: String(note.tldr || '').slice(0, 400),
             concepts: (Array.isArray(note.concepts) ? note.concepts : []).slice(0, 15).map((c) => String(c).slice(0, 60)),
             tags: (Array.isArray(note.tags) ? note.tags : []).slice(0, 10).map((t) => String(t).slice(0, 40))
@@ -180,7 +189,7 @@ export function compactLibrary(library) {
         .filter((note) => note.id);
 }
 
-export function compactVocabulary(concepts) {
+export function compactVocabulary(concepts, limit = MAX_VOCABULARY) {
     const seen = new Set();
     return (Array.isArray(concepts) ? concepts : [])
         .map((c) => String(c || '').trim().slice(0, 60))
@@ -190,10 +199,10 @@ export function compactVocabulary(concepts) {
             seen.add(key);
             return true;
         })
-        .slice(0, MAX_VOCABULARY);
+        .slice(0, limit);
 }
 
-function buildUserContent(source, library, depth = 'balanced', vocabulary = []) {
+function buildUserContent(source, library, depth = 'balanced', { concepts = [], topics = [] } = {}) {
     const header = [
         `Source type: ${source.sourceType}`,
         source.title ? `Title: ${source.title}` : null,
@@ -206,7 +215,11 @@ function buildUserContent(source, library, depth = 'balanced', vocabulary = []) 
     const content = [
         {
             type: 'text',
-            text: `<library_index>\n${JSON.stringify(library)}\n</library_index>${vocabulary.length ? `\n<known_concepts>\n${JSON.stringify(vocabulary)}\n</known_concepts>` : ''}`
+            text: [
+                `<library_index>\n${JSON.stringify(library)}\n</library_index>`,
+                topics.length ? `<known_topics>\n${JSON.stringify(topics)}\n</known_topics>` : null,
+                concepts.length ? `<known_concepts>\n${JSON.stringify(concepts)}\n</known_concepts>` : null
+            ].filter(Boolean).join('\n')
         }
     ];
     if (images.length) {
@@ -236,6 +249,7 @@ export function normalize(raw, libraryIds) {
     const seenConcepts = new Set();
     return {
         title: clean(raw.title),
+        topic: clean(raw.topic).replace(/[.#]/g, '').slice(0, 40),
         tldr: clean(raw.tldr),
         sourceText: clean(raw.sourceText).slice(0, MAX_SOURCE_CHARS),
         summary: asArray(raw.summary).map((s) => ({ heading: clean(s.heading), body: clean(s.body) })).filter((s) => s.body),
@@ -259,20 +273,14 @@ export function normalize(raw, libraryIds) {
     };
 }
 
-export async function analyze(source, rawLibrary, env, depth, rawVocabulary) {
-    const hasImages = Array.isArray(source?.images) && source.images.length > 0;
-    if (typeof source?.text !== 'string' || (!source.text.trim() && !hasImages)) throw new HttpError(400, 'Nothing to analyze.');
-    if (source.text.length > MAX_SOURCE_CHARS) {
-        throw new HttpError(413, `This source is too long to analyze in one pass (${source.text.length.toLocaleString()} characters; limit ${MAX_SOURCE_CHARS.toLocaleString()}). Paste a section instead.`);
-    }
-    if (!env.ANTHROPIC_API_KEY) throw new HttpError(500, 'The server has no Anthropic API key configured.');
-    const library = compactLibrary(rawLibrary);
-    const libraryIds = new Set(library.map((note) => note.id));
-    const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, baseURL: env.ANTHROPIC_BASE_URL || undefined, timeout: 5 * 60 * 1000 });
+function anthropicClient(env, timeout, options = {}) {
+    return new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, baseURL: env.ANTHROPIC_BASE_URL || undefined, timeout, ...options });
+}
 
-    const config = resolveDepth(depth, env, source);
-    const request = buildRequest(source, library, config, compactVocabulary(rawVocabulary));
-
+// One structured-output call: sends the request, maps API errors to
+// messages the app can show, and parses the JSON reply.
+export async function callClaude(env, request, { timeout, what }) {
+    const client = anthropicClient(env, timeout);
     let message;
     try {
         // Non-streaming on purpose: parsing hundreds of SSE events costs Worker
@@ -287,16 +295,32 @@ export async function analyze(source, rawLibrary, env, depth, rawVocabulary) {
         if (error instanceof Anthropic.APIError) throw new HttpError(502, `Claude API error (${error.status}): ${error.message}`);
         throw error;
     }
-
-    if (message.stop_reason === 'refusal') throw new HttpError(422, 'Claude declined to analyze this content.');
-    if (message.stop_reason === 'max_tokens') throw new HttpError(502, 'The analysis ran out of room before finishing. Try a shorter source.');
+    if (message.stop_reason === 'refusal') throw new HttpError(422, `Claude declined to ${what}.`);
+    if (message.stop_reason === 'max_tokens') throw new HttpError(502, 'Claude ran out of room before finishing. Try something shorter.');
     const text = message.content.filter((block) => block.type === 'text').map((block) => block.text).join('');
-    let parsed;
     try {
-        parsed = JSON.parse(text);
+        return { message, parsed: JSON.parse(text) };
     } catch {
-        throw new HttpError(502, 'Claude returned an analysis AidedMind could not read.');
+        throw new HttpError(502, 'Claude returned a reply AidedMind could not read.');
     }
+}
+
+// vocabulary: { concepts, topics } from the app (optional).
+export async function analyze(source, rawLibrary, env, depth, vocabulary = {}) {
+    const hasImages = Array.isArray(source?.images) && source.images.length > 0;
+    if (typeof source?.text !== 'string' || (!source.text.trim() && !hasImages)) throw new HttpError(400, 'Nothing to analyze.');
+    if (source.text.length > MAX_SOURCE_CHARS) {
+        throw new HttpError(413, `This source is too long to analyze in one pass (${source.text.length.toLocaleString()} characters; limit ${MAX_SOURCE_CHARS.toLocaleString()}). Paste a section instead.`);
+    }
+    if (!env.ANTHROPIC_API_KEY) throw new HttpError(500, 'The server has no Anthropic API key configured.');
+    const library = compactLibrary(rawLibrary);
+    const libraryIds = new Set(library.map((note) => note.id));
+    const config = resolveDepth(depth, env, source);
+    const request = buildRequest(source, library, config, {
+        concepts: compactVocabulary(vocabulary.concepts),
+        topics: compactVocabulary(vocabulary.topics, MAX_TOPICS)
+    });
+    const { message, parsed } = await callClaude(env, request, { timeout: 5 * 60 * 1000, what: 'analyze this content' });
     return {
         analysis: normalize(parsed, libraryIds),
         model: message.model,
@@ -310,7 +334,7 @@ export async function analyze(source, rawLibrary, env, depth, rawVocabulary) {
 // Returns null when fine, or a short reason code safe to show publicly.
 export async function checkModel(env) {
     if (!env.ANTHROPIC_API_KEY) return 'missing_api_key';
-    const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, baseURL: env.ANTHROPIC_BASE_URL || undefined, timeout: 15000, maxRetries: 1 });
+    const client = anthropicClient(env, 15000, { maxRetries: 1 });
     for (const depth of Object.keys(DEPTHS)) {
         const { model } = resolveDepth(depth, env);
         try {

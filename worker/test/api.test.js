@@ -111,6 +111,47 @@ test('analyze caps the library index and passes known concepts', async (t) => {
     assert.doesNotMatch(stub.requests[1].body.messages[0].content[0].text, /known_concepts/);
 });
 
+test('analyze asks for a main topic and passes known topics', async (t) => {
+    const stub = await anthropicStub(() => ({ json: { ...claudeReply().json, content: [{ type: 'text', text: JSON.stringify({ ...ANALYSIS, topic: ' Journaling. ' }) }] } }));
+    t.after(() => stub.close());
+    const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
+    const res = await call(app, env, 'POST', '/api/analyze', {
+        token: 'owner-secret',
+        body: { source: { text: 'hello world' }, library: [{ id: 'n1', title: 'Other', topic: 'Sleep' }], topics: ['Sleep', 'sleep', 'Artificial Intelligence'] }
+    });
+    const data = await res.json();
+    assert.strictEqual(data.analysis.topic, 'Journaling');
+    const sent = stub.requests[0].body;
+    assert.ok(sent.output_config.format.schema.required.includes('topic'));
+    const text = sent.messages[0].content[0].text;
+    assert.deepStrictEqual(JSON.parse(text.match(/<known_topics>\n(.*)\n<\/known_topics>/)[1]), ['Sleep', 'Artificial Intelligence']);
+    assert.match(text, /"topic":"Sleep"/);
+    assert.match(sent.system, /not what it mentions in passing|passing mention/);
+});
+
+test('topics endpoint sorts existing notes in one quick call and meters it', async (t) => {
+    const stub = await anthropicStub(() => ({ json: { ...claudeReply().json, model: 'claude-haiku-4-5', content: [{ type: 'text', text: JSON.stringify({ assignments: [{ id: 'a', topic: 'Journaling' }, { id: 'ghost', topic: 'X' }, { id: 'b', topic: '' }] }) }] } }));
+    t.after(() => stub.close());
+    const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
+    const res = await call(app, env, 'POST', '/api/topics', {
+        token: 'owner-secret',
+        body: { notes: [{ id: 'a', title: 'Morning pages', tldr: 'Write daily', tags: ['journaling', 'ai'] }, { id: 'b', title: 'B' }], topics: ['Sleep'] }
+    });
+    const data = await res.json();
+    assert.strictEqual(res.status, 200, JSON.stringify(data));
+    assert.deepStrictEqual(data.assignments, { a: 'Journaling' });
+    const sent = stub.requests[0].body;
+    assert.strictEqual(sent.model, 'claude-haiku-4-5');
+    assert.strictEqual(sent.thinking, undefined);
+    assert.match(sent.messages[0].content, /<known_topics>/);
+    const usage = await env.STORE.get('user:owner').usageFor(new Date().toISOString().slice(0, 7));
+    assert.strictEqual(usage.captures, 1);
+
+    const tooMany = await call(app, env, 'POST', '/api/topics', { token: 'owner-secret', body: { notes: Array.from({ length: 151 }, (_, i) => ({ id: `n${i}` })) } });
+    assert.strictEqual(tooMany.status, 413);
+    assert.strictEqual((await env.STORE.get('user:owner').usageFor(new Date().toISOString().slice(0, 7))).captures, 1); // refunded
+});
+
 test('breakdown styles pick the right model and options', async (t) => {
     const stub = await anthropicStub(() => claudeReply());
     t.after(() => stub.close());

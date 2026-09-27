@@ -1,14 +1,14 @@
 // Talks to the AidedMind server. Settings live in localStorage.
-import { relatedNotes, conceptVocabulary, findDuplicate } from './library.js';
+import { relatedNotes, conceptVocabulary, knownTopics, findDuplicate } from './library.js';
 
 const SETTINGS_KEY = 'aidedmind.settings';
 const USAGE_KEY = 'aidedmind.usage';
 
 export function getSettings() {
     try {
-        return { serverUrl: '', token: '', showConcepts: true, depth: 'auto', mapColor: 'theme', themeDetail: 'balanced', ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+        return { serverUrl: '', token: '', showConcepts: true, depth: 'auto', mapColor: 'theme', themeDetail: 'balanced', librarySort: 'newest', ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
     } catch {
-        return { serverUrl: '', token: '', showConcepts: true, depth: 'auto', mapColor: 'theme', themeDetail: 'balanced' };
+        return { serverUrl: '', token: '', showConcepts: true, depth: 'auto', mapColor: 'theme', themeDetail: 'balanced', librarySort: 'newest' };
     }
 }
 
@@ -56,6 +56,7 @@ function libraryIndex(notes) {
     return notes.map((note) => ({
         id: note.id,
         title: note.title,
+        topic: note.topic || '',
         tldr: note.tldr,
         concepts: (note.concepts || []).map((c) => c.name),
         tags: note.tags || []
@@ -109,7 +110,7 @@ export async function capture({ url, text, title, depth, photos, retry }, notes)
     // concept names, so the cost per breakdown stays flat as the library grows.
     const others = replaces ? notes.filter((n) => n.id !== replaces.id) : notes;
     const related = relatedNotes(others, source);
-    const body = { source, library: libraryIndex(related), depth: depth || getSettings().depth };
+    const body = { source, library: libraryIndex(related), depth: depth || getSettings().depth, topics: knownTopics(others) };
     if (related.length < others.length) body.concepts = conceptVocabulary(others);
     const result = await request('POST', '/analyze', body);
     setLastUsage(result.usage);
@@ -145,6 +146,16 @@ export async function checkAuth() {
     const result = await request('POST', '/auth-check', {});
     setLastUsage(result.usage);
     return result;
+}
+
+// Asks the server for the main topic of notes saved before topics existed.
+export async function assignTopics(notes, topics) {
+    const result = await request('POST', '/topics', {
+        notes: notes.map((n) => ({ id: n.id, title: n.title, tldr: n.tldr, tags: n.tags || [] })),
+        topics
+    });
+    setLastUsage(result.usage);
+    return result.assignments || {};
 }
 
 export async function fetchInbox() {
