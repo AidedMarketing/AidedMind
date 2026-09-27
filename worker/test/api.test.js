@@ -92,6 +92,25 @@ test('analyze calls Claude, keeps only known connections and meters usage', asyn
     assert.deepStrictEqual(usage, { captures: 1, inputTokens: 120, outputTokens: 40 });
 });
 
+test('analyze caps the library index and passes known concepts', async (t) => {
+    const stub = await anthropicStub(() => claudeReply());
+    t.after(() => stub.close());
+    const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
+    const library = Array.from({ length: 90 }, (_, i) => ({ id: `n${i}`, title: `Note ${i}` }));
+    const concepts = ['Memory', 'memory', ' Sleep ', '', ...Array.from({ length: 300 }, (_, i) => `c${i}`)];
+    const res = await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: { source: { text: 'hello world' }, library, concepts } });
+    assert.strictEqual(res.status, 200);
+    const text = stub.requests[0].body.messages[0].content[0].text;
+    const index = JSON.parse(text.match(/<library_index>\n(.*)\n<\/library_index>/)[1]);
+    assert.strictEqual(index.length, 60);
+    const known = JSON.parse(text.match(/<known_concepts>\n(.*)\n<\/known_concepts>/)[1]);
+    assert.deepStrictEqual(known.slice(0, 3), ['Memory', 'Sleep', 'c0']);
+    assert.strictEqual(known.length, 200);
+
+    await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: { source: { text: 'hello world' }, library: [] } });
+    assert.doesNotMatch(stub.requests[1].body.messages[0].content[0].text, /known_concepts/);
+});
+
 test('breakdown styles pick the right model and options', async (t) => {
     const stub = await anthropicStub(() => claudeReply());
     t.after(() => stub.close());

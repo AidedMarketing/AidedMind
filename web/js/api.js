@@ -1,4 +1,6 @@
 // Talks to the AidedMind server. Settings live in localStorage.
+import { relatedNotes, conceptVocabulary, findDuplicate } from './library.js';
+
 const SETTINGS_KEY = 'aidedmind.settings';
 const USAGE_KEY = 'aidedmind.usage';
 
@@ -60,9 +62,19 @@ function libraryIndex(notes) {
     }));
 }
 
+export class DuplicateError extends Error {
+    constructor(note) {
+        super('Already in your library.');
+        this.note = note;
+    }
+}
+
 // Step 1: turn a link or pasted text into source text (articles are fetched by
 // the server and cleaned up here). Step 2: ask the server for the breakdown.
 export async function capture({ url, text, title, depth, photos }, notes) {
+    // Links already saved open the existing note: no fetch, no Claude call.
+    const saved = url ? findDuplicate(notes, url) : null;
+    if (saved) throw new DuplicateError(saved);
     let source;
     if (photos?.length) {
         source = {
@@ -83,8 +95,17 @@ export async function capture({ url, text, title, depth, photos }, notes) {
         } else {
             source = fetched;
         }
+        // Short links (vm.tiktok.com, youtu.be) resolve to the saved address.
+        const resolved = findDuplicate(notes, source.url);
+        if (resolved) throw new DuplicateError(resolved);
+        source.sharedUrl = url;
     }
-    const result = await request('POST', '/analyze', { source, library: libraryIndex(notes), depth: depth || getSettings().depth });
+    // Only the notes likely to connect are sent, plus the library's common
+    // concept names, so the cost per breakdown stays flat as the library grows.
+    const related = relatedNotes(notes, source);
+    const body = { source, library: libraryIndex(related), depth: depth || getSettings().depth };
+    if (related.length < notes.length) body.concepts = conceptVocabulary(notes);
+    const result = await request('POST', '/analyze', body);
     setLastUsage(result.usage);
     if (source.images) {
         // Keep what Claude read from the photos, never the photos themselves.
