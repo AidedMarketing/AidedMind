@@ -62,9 +62,18 @@ function libraryIndex(notes) {
 
 // Step 1: turn a link or pasted text into source text (articles are fetched by
 // the server and cleaned up here). Step 2: ask the server for the breakdown.
-export async function capture({ url, text, title, depth }, notes) {
+export async function capture({ url, text, title, depth, photos }, notes) {
     let source;
-    if (text) {
+    if (photos?.length) {
+        source = {
+            sourceType: 'photo',
+            url: '',
+            title: title || '',
+            author: '',
+            text: text || '',
+            images: photos.map((photo) => ({ mediaType: photo.mediaType, data: photo.data }))
+        };
+    } else if (text) {
         source = { sourceType: 'text', url: url || '', title: title || '', author: '', text };
     } else {
         const fetched = await request('POST', '/source', { url });
@@ -77,6 +86,11 @@ export async function capture({ url, text, title, depth }, notes) {
     }
     const result = await request('POST', '/analyze', { source, library: libraryIndex(notes), depth: depth || getSettings().depth });
     setLastUsage(result.usage);
+    if (source.images) {
+        // Keep what Claude read from the photos, never the photos themselves.
+        const { images, ...rest } = source;
+        source = { ...rest, text: result.analysis.sourceText || source.text };
+    }
     return { source, analysis: result.analysis, model: result.model, depth: result.depth, auto: result.auto, usage: result.usage };
 }
 
@@ -91,7 +105,10 @@ export function getLastUsage() {
 function setLastUsage(usage) {
     if (!usage) return;
     try {
-        localStorage.setItem(USAGE_KEY, JSON.stringify(usage));
+        // Breakdown responses carry counts only; keep the last spend summary.
+        const previous = getLastUsage();
+        const merged = usage.spend || !previous?.spend || previous.month !== usage.month ? usage : { ...usage, spend: previous.spend };
+        localStorage.setItem(USAGE_KEY, JSON.stringify(merged));
     } catch {
         // storage unavailable
     }

@@ -19,5 +19,9 @@ export class Store extends DurableObject {
     reserveCapture(month, limit) { return this.core.reserveCapture(month, limit); }
     releaseCapture(month) { return this.core.releaseCapture(month); }
     recordTokens(month, input, output) { return this.core.recordTokens(month, input, output); }
+    transcriptGet(key) { return this.core.transcriptGet(key); }
+    transcriptPut(key, source) { return this.core.transcriptPut(key, source); }
+    addCost(month, item, amount) { return this.core.addCost(month, item, amount); }
+    costsFor(month) { return this.core.costsFor(month); }
     ping() { return 'ok'; }
 }

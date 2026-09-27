@@ -44,6 +44,7 @@ test('deep health explains why the model check failed', async (t) => {
     assert.deepStrictEqual(await bad.json(), {
         ok: false, version: '0.2.0',
         checks: { anthropicKey: true, ownerToken: true, storage: true, model: false },
+        services: { gemini: false, supadata: false },
         problems: { model: 'api_key_rejected' }
     });
     status = 404;
@@ -195,4 +196,36 @@ test('plan limits', () => {
     assert.strictEqual(monthlyLimit('owner', {}), null);
     assert.strictEqual(monthlyLimit('free', {}), 25);
     assert.strictEqual(monthlyLimit('pro', { PRO_MONTHLY_CAPTURES: '50' }), 50);
+});
+
+test('photos: sent to Claude as images, auto style by count, text read back', async (t) => {
+    const reply = {
+        title: 'Book page', tldr: 'x', summary: [], outline: [], concepts: [], tags: [], quotes: [], takeaways: [], connections: [],
+        sourceText: 'Chapter 3. Habits compound over time.'
+    };
+    const stub = await anthropicStub(() => ({ json: { id: 'm', type: 'message', role: 'assistant', model: 'claude-sonnet-5', content: [{ type: 'text', text: JSON.stringify(reply) }], stop_reason: 'end_turn', usage: { input_tokens: 1600, output_tokens: 300 } } }));
+    t.after(() => stub.close());
+    const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
+    const photo = { mediaType: 'image/jpeg', data: Buffer.from('fake-jpeg-bytes').toString('base64') };
+    const send = (images, text = '') => call(app, env, 'POST', '/api/analyze', {
+        token: 'owner-secret',
+        body: { source: { sourceType: 'photo', title: 'Page', text, images }, library: [] }
+    });
+
+    const one = await (await send([photo], 'From chapter 3')).json();
+    assert.strictEqual(one.depth, 'balanced');
+    assert.strictEqual(one.analysis.sourceText, 'Chapter 3. Habits compound over time.');
+    const content = stub.requests.at(-1).body.messages[0].content;
+    assert.deepStrictEqual(content.map((b) => b.type), ['text', 'text', 'image', 'text', 'text']);
+    assert.deepStrictEqual(content[2].source, { type: 'base64', media_type: 'image/jpeg', data: photo.data });
+    assert.match(content[3].text, /The user added this context:\nFrom chapter 3/);
+    assert.match(content[4].text, /Transcribe the photos into sourceText/);
+
+    assert.strictEqual((await (await send(Array(6).fill(photo))).json()).depth, 'thorough');
+    assert.strictEqual((await send(Array(9).fill(photo))).status, 413);
+    assert.strictEqual((await send([{ mediaType: 'image/tiff', data: photo.data }])).status, 415);
+    assert.strictEqual((await send([{ mediaType: 'image/png', data: 'not base64!' }])).status, 400);
+    // Rejected photos don't use up the monthly quota.
+    const usage = await env.STORE.get('user:owner').usageFor(new Date().toISOString().slice(0, 7));
+    assert.strictEqual(usage.captures, 2);
 });

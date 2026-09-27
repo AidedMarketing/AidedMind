@@ -24,6 +24,17 @@ export class StoreCore {
             title TEXT NOT NULL DEFAULT '',
             received_at TEXT NOT NULL
         )`);
+        sql.exec(`CREATE TABLE IF NOT EXISTS transcripts (
+            key TEXT PRIMARY KEY,
+            data TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )`);
+        sql.exec(`CREATE TABLE IF NOT EXISTS costs (
+            month TEXT NOT NULL,
+            item TEXT NOT NULL,
+            amount REAL NOT NULL DEFAULT 0,
+            PRIMARY KEY (month, item)
+        )`);
         sql.exec(`CREATE TABLE IF NOT EXISTS usage (
             month TEXT PRIMARY KEY,
             captures INTEGER NOT NULL DEFAULT 0,
@@ -91,6 +102,39 @@ export class StoreCore {
         const before = this.rows('SELECT COUNT(*) AS n FROM inbox WHERE id = ?', id)[0].n;
         this.sql.exec('DELETE FROM inbox WHERE id = ?', id);
         return before > 0;
+    }
+
+    // ----- transcript cache (so a retried link never pays twice) -----
+
+    transcriptGet(key) {
+        const cutoff = new Date(Date.now() - INBOX_TTL_MS).toISOString();
+        this.sql.exec('DELETE FROM transcripts WHERE created_at < ?', cutoff);
+        const [row] = this.rows('SELECT data FROM transcripts WHERE key = ?', key);
+        if (!row) return null;
+        try {
+            return JSON.parse(row.data);
+        } catch {
+            return null;
+        }
+    }
+
+    transcriptPut(key, source) {
+        this.sql.exec(`INSERT INTO transcripts (key, data, created_at) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET data = excluded.data, created_at = excluded.created_at`,
+        key, JSON.stringify(source), new Date().toISOString());
+    }
+
+    // ----- cost ledger: token and request counts per service per month -----
+
+    addCost(month, item, amount) {
+        const value = Number(amount) || 0;
+        if (!value) return;
+        this.sql.exec(`INSERT INTO costs (month, item, amount) VALUES (?, ?, ?)
+            ON CONFLICT(month, item) DO UPDATE SET amount = amount + excluded.amount`, month, String(item).slice(0, 120), value);
+    }
+
+    costsFor(month) {
+        return this.rows('SELECT item, amount FROM costs WHERE month = ? ORDER BY item', month);
     }
 
     // ----- usage -----

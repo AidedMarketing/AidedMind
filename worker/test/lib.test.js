@@ -113,3 +113,9 @@ test('auto depth thresholds', () => {
     assert.strictEqual(autoDepth({ text: words(5000), sourceType: 'tiktok' }), 'quick');
     assert.strictEqual(autoDepth({ text: words(5000), partial: true }), 'quick');
 });
+
+test('schema asks for sourceText, and normalize keeps it', () => {
+    assert.ok(ANALYSIS_SCHEMA.required.includes('sourceText'));
+    assert.strictEqual(normalize({ sourceText: '  read text  ' }, new Set()).sourceText, 'read text');
+    assert.strictEqual(normalize({}, new Set()).sourceText, '');
+});
