@@ -10,6 +10,18 @@ const navbar = document.getElementById('navbar');
 const SOURCE_LABELS = { article: 'Article', youtube: 'YouTube', tiktok: 'TikTok', text: 'Text' };
 const SOURCE_ICONS = { article: 'article', youtube: 'youtube', tiktok: 'tiktok', text: 'text', concept: 'concept' };
 const NOTE_TABS = ['Summary', 'Outline', 'Links', 'Notes'];
+const PARTIAL_NOTES = {
+    caption: 'Only the caption was available, so this is a partial breakdown. Paste the transcript for the full picture.',
+    description: 'This video had no transcript, so the breakdown is based on its title and description. Paste the transcript for the full picture.',
+    gemini: 'This video was very long, so its transcript was cut short. Paste the rest as text for the full picture.'
+};
+const TRANSCRIPT_LABELS = {
+    captions: 'video captions',
+    gemini: 'Gemini (watched the video)',
+    supadata: 'Supadata',
+    description: 'video description only',
+    caption: 'caption only'
+};
 const DEPTH_INFO = {
     auto: { label: 'Auto', detail: 'Picks for each link: Quick for TikToks and short posts, Balanced for most articles and videos, Thorough for very long pieces.' },
     quick: { label: 'Quick', detail: 'Fastest and cheapest (Claude Haiku). Short summary; great for TikToks and short posts.' },
@@ -186,7 +198,8 @@ function buildNote(result, title) {
             author: result.source.author,
             siteName: result.source.siteName,
             thumbnail: result.source.thumbnail,
-            partial: result.source.partial
+            partial: result.source.partial,
+            transcriptSource: result.source.transcriptSource || ''
         },
         sourceText: result.source.text,
         title: title || a.title || result.source.title || 'Untitled',
@@ -434,7 +447,7 @@ function noteView(id) {
         h('div', { class: 'source-line' }, sourceTile(type, 14), h('span', {}, `${SOURCE_LABELS[type]}${origin ? ` · ${origin}` : ''}`)),
         h('h1', { class: 'note-title' }, note.title),
         h('div', { class: 'tldr-card' }, h('span', { class: 'label' }, 'In short'), note.tldr),
-        note.source?.partial ? h('p', { class: 'partial-note' }, 'Only the caption was available, so this is a partial breakdown. Paste the transcript for the full picture.') : null,
+        note.source?.partial ? h('p', { class: 'partial-note' }, PARTIAL_NOTES[note.source.transcriptSource] || PARTIAL_NOTES.caption) : null,
         note.tags?.length ? h('div', { class: 'chips wrap' }, note.tags.map((tag) => h('a', { class: 'chip', href: `#/library?tag=${encodeURIComponent(tag)}` }, `#${tag}`))) : null,
         href ? h('a', { class: 'btn small-btn', href, target: '_blank', rel: 'noopener noreferrer', style: { 'margin-top': '14px' } }, icon('external', { size: 16, strokeWidth: 2 }), 'Open original') : null,
         h('div', { class: 'sticky-tabs' }, segmented),
@@ -517,6 +530,7 @@ function notePanel(name, note, byId) {
     return [
         userNotes,
         note.sourceText ? [h('div', { class: 'section-label' }, 'Captured source'), h('details', { class: 'card' }, h('summary', {}, 'Show full text'), h('div', { class: 'source-text' }, note.sourceText))] : null,
+        note.source?.transcriptSource ? h('p', { class: 'group-footer' }, `Transcript from ${TRANSCRIPT_LABELS[note.source.transcriptSource] || note.source.transcriptSource}`) : null,
         note.model ? h('p', { class: 'group-footer' }, `${note.depth ? `${note.autoDepth ? 'Auto → ' : ''}${depthLabel(note.depth)} breakdown` : 'Breakdown'} by ${note.model}`) : null
     ];
 }
@@ -723,9 +737,26 @@ function settingsView() {
 
     const inboxUrl = `${serverBase()}/api/inbox`;
     const usage = getLastUsage();
-    const usageText = usage
-        ? `${usage.captures} breakdown${usage.captures === 1 ? '' : 's'} this month${usage.limit === null ? '' : ` of ${usage.limit}`}`
-        : '';
+    const spendBox = h('div');
+    const fillSpend = (u) => {
+        spendBox.replaceChildren();
+        if (!u) return;
+        const lines = [`${u.captures} breakdown${u.captures === 1 ? '' : 's'} this month${u.limit === null ? '' : ` of ${u.limit}`}`];
+        const spend = u.spend;
+        if (spend) {
+            const usd = spend.claudeUsd > 0 && spend.claudeUsd < 0.01 ? 'under $0.01' : `about $${spend.claudeUsd.toFixed(2)}`;
+            lines.push(`Claude: ${usd}${spend.unpricedModels?.length ? ' (plus unpriced models)' : ''}`);
+            if (spend.geminiVideos) lines.push(`Gemini: ${spend.geminiVideos} video${spend.geminiVideos === 1 ? '' : 's'} transcribed`);
+            if (spend.supadataRequests) lines.push(`Supadata: ${spend.supadataRequests} transcript${spend.supadataRequests === 1 ? '' : 's'} (100 free credits a month)`);
+        }
+        append(spendBox, [
+            h('div', { class: 'section-label' }, 'This month'),
+            h('div', { class: 'group' }, lines.map((line) => h('div', { class: 'group-row' }, h('span', { class: 'row-label' }, line)))),
+            h('p', { class: 'group-footer' }, 'Estimates. Exact Claude charges are in the Anthropic Console under Cost.')
+        ]);
+    };
+    fillSpend(usage);
+    if (settings.token) checkAuth().then((result) => fillSpend(result.usage)).catch(() => {});
     const accounts = h('div');
 
     render(
@@ -780,7 +811,7 @@ function settingsView() {
         token,
         h('button', { class: 'btn primary block', type: 'submit', style: { 'margin-top': '12px' } }, 'Save & Test'),
         status),
-        usageText ? h('p', { class: 'group-footer' }, usageText) : null,
+        spendBox,
 
         h('div', { class: 'section-label' }, 'Save from the Share button'),
         h('div', { class: 'card' },

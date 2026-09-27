@@ -36,12 +36,16 @@ iOS doesn't let home-screen web apps appear in the Share menu, and it keeps thei
 
 ## What each source gives you
 
-| Source | What AidedMind reads |
+| Source | How AidedMind reads it (in order, cheapest first) |
 |---|---|
-| Articles / blogs | Main text via Mozilla Readability. Paywalled or JavaScript-only pages may fail; paste the text instead |
-| YouTube (videos, Shorts) | Full caption transcript, title and channel. No captions? Paste a transcript |
-| TikTok | Caption, description and author only, **not the spoken audio**. Notes are marked partial |
+| Articles / blogs | Main text via Mozilla Readability on the phone; Substack posts fall back to Substack's post API. Paywalled or login-only pages: paste the text |
+| YouTube | 1. the video's own captions (free) → 2. **Gemini** watches the video, captions or not (needs `GEMINI_API_KEY`) → 3. Supadata captions-only (needs `SUPADATA_API_KEY`) → 4. title + description + chapters, marked partial |
+| TikTok | 1. **Supadata** transcribes what's said (needs `SUPADATA_API_KEY`) → 2. caption and description only, marked partial |
 | Anything else | Paste the text |
+
+Transcripts are cached for 30 days, so a retried or re-analyzed link never pays for transcription twice. Each note says where its transcript came from (bottom of its Notes tab).
+
+**Costs:** Gemini's YouTube-link input is free during Google's preview; afterwards it costs a few cents per video. Supadata's free tier is 100 credits a month (a transcribed TikTok is about 2 credits per minute). Settings → *This month* shows breakdowns, estimated Claude spend, Gemini videos and Supadata transcripts; the exact Claude bill is in the Anthropic Console.
 
 ## One-time setup (about 15 minutes)
 
@@ -54,12 +58,16 @@ After this, deploys, dependency updates and monitoring run by themselves.
 2. **Secrets:** in the Worker → *Settings* → *Variables and Secrets*, add:
    - `ANTHROPIC_API_KEY`: your Claude API key
    - `OWNER_TOKEN`: a long random string (your personal, unlimited access token). Generate one with `node -e "console.log(crypto.randomUUID()+crypto.randomUUID())"`
-3. **Anthropic spend cap:** in the Anthropic Console → *Limits*, set a monthly spend limit so costs can never run away.
-4. **GitHub (hands-off updates):**
+3. **Optional video transcripts** (same place, as secrets):
+   - `GEMINI_API_KEY`: from aistudio.google.com → *Get API key*. Transcribes YouTube videos, including ones without captions.
+   - `SUPADATA_API_KEY`: from supadata.ai (free plan). Transcribes what's said in TikToks.
+   - Each one switches on when its key is present; `/api/health` lists them under `services`.
+4. **Anthropic spend cap:** in the Anthropic Console → *Limits*, set a monthly spend limit so costs can never run away.
+5. **GitHub (hands-off updates):**
    - *Settings → General*: turn on **Allow auto-merge**.
    - *Settings → Rules → Rulesets*: add a rule for `main` that **requires the `test` status check**. Dependabot's weekly minor/patch updates then merge themselves once CI passes, and Cloudflare deploys them. Major version bumps wait for you.
    - *Settings → Secrets and variables → Actions → Variables*: add `APP_URL` = your Worker URL (e.g. `https://aidedmind.<you>.workers.dev`). A daily health check then verifies the app, its storage and your Claude key, and **GitHub emails you if it fails**.
-5. **iPhone:** open the Worker URL in Safari → Share → **Add to Home Screen**. Open it, go to Settings, paste your `OWNER_TOKEN`, tap **Save & Test**, then follow *Save from the Share button*.
+6. **iPhone:** open the Worker URL in Safari → Share → **Add to Home Screen**. Open it, go to Settings, paste your `OWNER_TOKEN`, tap **Save & Test**, then follow *Save from the Share button*.
 
 ## Accounts and the path to paid
 
@@ -91,6 +99,9 @@ npm run check                                  # bundle exactly what Cloudflare 
 | `AIDEDMIND_DEFAULT_DEPTH` | `wrangler.jsonc` vars | breakdown style when the app doesn't send one: `auto` (default), `quick`, `balanced` or `thorough` |
 | `AIDEDMIND_MODEL_QUICK` / `_BALANCED` / `_THOROUGH` | `wrangler.jsonc` vars | defaults `claude-haiku-4-5` / `claude-sonnet-5` / `claude-opus-5-5` |
 | `FREE_MONTHLY_CAPTURES` / `PRO_MONTHLY_CAPTURES` | `wrangler.jsonc` vars | default 25 / 400 |
+| `GEMINI_API_KEY` | secret, optional | YouTube transcripts via Gemini |
+| `GEMINI_MODEL` | `wrangler.jsonc` vars | default `gemini-flash-latest` (Google's current Flash model) |
+| `SUPADATA_API_KEY` | secret, optional | TikTok (and fallback YouTube caption) transcripts |
 | `APP_URL` | GitHub Actions variable | enables the daily health check |
 
 **Breakdown styles** (Settings → Breakdown style, per device):
@@ -116,9 +127,11 @@ Summaries and outlines are kept short for skimming; quotes and takeaways get the
 worker/
   wrangler.jsonc        Cloudflare config: static assets, Durable Object, vars
   src/app.js            API routes: auth, quotas, source, analyze, inbox, admin
-  src/extract.js        link → source (article HTML / YouTube captions / TikTok caption)
+  src/extract.js        link → source (article HTML / YouTube / TikTok), fallback order
+  src/transcripts.js    Gemini, Supadata and YouTube description fallbacks
+  src/costs.js          monthly spend estimate from the cost ledger
   src/analyze.js        Claude call, JSON schema, normalization
-  src/store-core.js     SQLite tables: users, inbox, usage
+  src/store-core.js     SQLite tables: users, inbox, usage, transcript cache, cost ledger
   src/store.js          Durable Object wrapper
 web/
   index.html, app.css, manifest.webmanifest, service-worker.js, _headers
@@ -137,7 +150,6 @@ web/
 ## Roadmap
 
 - Stripe checkout for paid plans
-- Audio transcription for TikTok and caption-less videos
 - PDFs and podcasts
 - Optional encrypted sync between devices
 - Spaced-repetition review of takeaways

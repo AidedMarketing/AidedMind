@@ -3,6 +3,7 @@
 // resolved to text here.
 import { YoutubeTranscript } from 'youtube-transcript';
 import { HttpError } from './http.js';
+import { geminiTranscript, supadataTranscript, youtubeDetails } from './transcripts.js';
 
 const TIMEOUT_MS = 15000;
 const MAX_BYTES = 3 * 1024 * 1024;
@@ -124,37 +125,108 @@ async function oembed(endpoint) {
     }
 }
 
-async function extractYouTube(rawUrl) {
+// deps: { env, cacheGet(key), cachePut(key, source), record(item, amount) }.
+// All optional so tests and plain calls work without storage.
+const NO_DEPS = { env: {}, cacheGet: async () => null, cachePut: async () => {}, record: async () => {} };
+
+function withDeps(deps) {
+    return { ...NO_DEPS, ...deps, env: deps?.env || {} };
+}
+
+async function extractYouTube(rawUrl, deps) {
+    const { env, cacheGet, cachePut, record } = withDeps(deps);
     const id = youtubeId(rawUrl);
     if (!id) throw new HttpError(400, 'Could not find a video ID in that YouTube link.');
     const canonical = `https://www.youtube.com/watch?v=${id}`;
+    const cacheKey = `youtube:${id}`;
+    const cached = await cacheGet(cacheKey);
+    if (cached) return cached;
+
     const meta = await oembed(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(canonical)}`);
-    let transcript = '';
-    try {
-        const segments = await YoutubeTranscript.fetchTranscript(id);
-        transcript = segments.map((segment) => decodeEntities(segment.text)).join(' ').replace(/\s+/g, ' ').trim();
-    } catch (error) {
-        console.warn(`no transcript for ${id}: ${error.message}`);
-    }
-    if (!transcript) {
-        throw new HttpError(422, 'This video has no captions AidedMind can read. Paste the transcript or your notes as text instead.');
-    }
-    return {
+    const base = {
         sourceType: 'youtube',
         url: canonical,
         title: meta?.title || 'YouTube video',
         author: meta?.author_name || '',
-        thumbnail: meta?.thumbnail_url || '',
-        text: transcript
+        thumbnail: meta?.thumbnail_url || ''
     };
+    const keep = async (source) => {
+        await cachePut(cacheKey, source);
+        return source;
+    };
+
+    // 1. The video's own captions (free).
+    try {
+        const segments = await YoutubeTranscript.fetchTranscript(id);
+        const transcript = segments.map((segment) => decodeEntities(segment.text)).join(' ').replace(/\s+/g, ' ').trim();
+        if (transcript) return keep({ ...base, text: transcript, transcriptSource: 'captions' });
+    } catch (error) {
+        console.warn(`no captions for ${id}: ${error.message}`);
+    }
+
+    // 2. Gemini watches the video (works without captions).
+    const gemini = await geminiTranscript(canonical, env);
+    if (gemini) {
+        await record('gemini:videos', 1);
+        await record('gemini:input', gemini.usage.input);
+        await record('gemini:output', gemini.usage.output);
+        return keep({ ...base, text: gemini.text, transcriptSource: 'gemini', partial: gemini.truncated });
+    }
+
+    // 3. Supadata, existing captions only (cheapest mode).
+    const supadata = await supadataTranscript(canonical, env, { mode: 'native' });
+    if (supadata) {
+        await record('supadata:requests', 1);
+        return keep({ ...base, text: supadata.text, transcriptSource: 'supadata' });
+    }
+
+    // 4. Title, description and chapters: a partial breakdown beats nothing.
+    const details = await youtubeDetails(canonical);
+    if (details?.description && details.description.trim().length > 40) {
+        const minutes = details.lengthSeconds ? `Length: ${Math.round(details.lengthSeconds / 60)} minutes\n` : '';
+        return {
+            ...base,
+            title: base.title === 'YouTube video' && details.title ? details.title : base.title,
+            author: base.author || details.author,
+            text: `${minutes}Video description:\n${details.description.trim()}`,
+            transcriptSource: 'description',
+            partial: true
+        };
+    }
+    throw new HttpError(422, env.GEMINI_API_KEY
+        ? 'Couldn\'t get a transcript or description for this video (it may be private or age-restricted). Paste the transcript as text instead.'
+        : 'This video has no captions AidedMind can read. Add a Gemini key to transcribe videos without captions, or paste the transcript as text.');
 }
 
-async function extractTikTok(rawUrl) {
+async function extractTikTok(rawUrl, deps) {
+    const { env, cacheGet, cachePut, record } = withDeps(deps);
     const page = await fetchPage(rawUrl).catch(() => null);
     const canonical = page?.url || rawUrl;
+    const cacheKey = `tiktok:${canonical.split('?')[0]}`;
+    const cached = await cacheGet(cacheKey);
+    if (cached) return cached;
     const meta = await oembed(`https://www.tiktok.com/oembed?url=${encodeURIComponent(canonical)}`);
+    const caption = meta?.title || '';
+
+    // Supadata transcribes what is said (AI speech-to-text when needed).
+    const supadata = await supadataTranscript(canonical, env, { mode: 'auto' });
+    if (supadata) {
+        await record('supadata:requests', 1);
+        const source = {
+            sourceType: 'tiktok',
+            url: canonical,
+            title: caption ? caption.slice(0, 120) : 'TikTok video',
+            author: meta?.author_name || '',
+            thumbnail: meta?.thumbnail_url || '',
+            text: [caption ? `Caption: ${caption}` : null, `Transcript:\n${supadata.text}`].filter(Boolean).join('\n\n'),
+            transcriptSource: 'supadata'
+        };
+        await cachePut(cacheKey, source);
+        return source;
+    }
+
     const parts = [];
-    if (meta?.title) parts.push(`Caption: ${meta.title}`);
+    if (caption) parts.push(`Caption: ${caption}`);
     const description = page?.body?.match(/<meta[^>]+(?:name|property)="(?:og:)?description"[^>]+content="([^"]*)"/i);
     if (description && description[1] && !parts.join(' ').includes(decodeEntities(description[1]))) {
         parts.push(`Description: ${decodeEntities(description[1])}`);
@@ -165,10 +237,11 @@ async function extractTikTok(rawUrl) {
     return {
         sourceType: 'tiktok',
         url: canonical,
-        title: meta?.title ? meta.title.slice(0, 120) : 'TikTok video',
+        title: caption ? caption.slice(0, 120) : 'TikTok video',
         author: meta?.author_name || '',
         thumbnail: meta?.thumbnail_url || '',
         text: parts.join('\n\n'),
+        transcriptSource: 'caption',
         partial: true
     };
 }
@@ -222,12 +295,12 @@ async function extractArticle(rawUrl) {
     return { sourceType: 'article', url: page.url, html: page.body };
 }
 
-export async function fetchSource(url) {
+export async function fetchSource(url, deps) {
     if (typeof url !== 'string' || !url.trim()) throw new HttpError(400, 'Send a link.');
     const trimmed = url.trim();
     switch (classifyUrl(trimmed)) {
-        case 'youtube': return extractYouTube(trimmed);
-        case 'tiktok': return extractTikTok(trimmed);
+        case 'youtube': return extractYouTube(trimmed, deps);
+        case 'tiktok': return extractTikTok(trimmed, deps);
         case 'article': return extractArticle(trimmed);
         default: throw new HttpError(400, 'That does not look like a valid link.');
     }

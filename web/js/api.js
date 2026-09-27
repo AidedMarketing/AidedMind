@@ -91,7 +91,10 @@ export function getLastUsage() {
 function setLastUsage(usage) {
     if (!usage) return;
     try {
-        localStorage.setItem(USAGE_KEY, JSON.stringify(usage));
+        // Breakdown responses carry counts only; keep the last spend summary.
+        const previous = getLastUsage();
+        const merged = usage.spend || !previous?.spend || previous.month !== usage.month ? usage : { ...usage, spend: previous.spend };
+        localStorage.setItem(USAGE_KEY, JSON.stringify(merged));
     } catch {
         // storage unavailable
     }

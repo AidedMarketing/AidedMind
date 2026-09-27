@@ -3,6 +3,7 @@
 import { analyze, checkModel } from './analyze.js';
 import { fetchSource } from './extract.js';
 import { HttpError, json, readJson, sha256Hex, digestsEqual, randomToken } from './http.js';
+import { summarizeCosts } from './costs.js';
 
 export const VERSION = '0.2.0';
 
@@ -46,8 +47,10 @@ async function authenticate(request, env) {
 }
 
 async function usageSummary(env, user) {
-    const usage = await userStore(env, user.id).usageFor(currentMonth());
-    return { month: currentMonth(), captures: usage.captures, limit: monthlyLimit(user.plan, env) };
+    const store = userStore(env, user.id);
+    const month = currentMonth();
+    const [usage, costs] = await Promise.all([store.usageFor(month), store.costsFor(month)]);
+    return { month, captures: usage.captures, limit: monthlyLimit(user.plan, env), spend: summarizeCosts(costs) };
 }
 
 function requireOwner(user) {
@@ -69,16 +72,25 @@ const routes = [
             if (modelProblem) problems.model = modelProblem;
         }
         const ok = Object.values(checks).every(Boolean);
-        return json({ ok, version: VERSION, checks, ...(ok ? {} : { problems }) }, ok ? 200 : 503);
+        // Optional services: reported, but never make the app unhealthy.
+        const services = { gemini: Boolean(env.GEMINI_API_KEY), supadata: Boolean(env.SUPADATA_API_KEY) };
+        return json({ ok, version: VERSION, checks, services, ...(ok ? {} : { problems }) }, ok ? 200 : 503);
     }],
 
     ['POST', /^\/api\/auth-check$/, async (request, env, user) => {
         return json({ ok: true, user: { id: user.id, plan: user.plan }, usage: await usageSummary(env, user) });
     }, { auth: true }],
 
-    ['POST', /^\/api\/source$/, async (request, env) => {
+    ['POST', /^\/api\/source$/, async (request, env, user) => {
         const { url } = await readJson(request);
-        return json(await fetchSource(url));
+        const store = userStore(env, user.id);
+        const month = currentMonth();
+        return json(await fetchSource(url, {
+            env,
+            cacheGet: (key) => store.transcriptGet(key),
+            cachePut: (key, source) => store.transcriptPut(key, source),
+            record: (item, amount) => store.addCost(month, item, amount)
+        }));
     }, { auth: true }],
 
     ['POST', /^\/api\/analyze$/, async (request, env, user) => {
@@ -102,6 +114,8 @@ const routes = [
             };
             const result = await analyze(clean, library, env, typeof depth === 'string' ? depth : undefined);
             await store.recordTokens(month, result.tokens.input, result.tokens.output);
+            await store.addCost(month, `claude:${result.model}:input`, result.tokens.input);
+            await store.addCost(month, `claude:${result.model}:output`, result.tokens.output);
             return json({ analysis: result.analysis, model: result.model, depth: result.depth, auto: result.auto, usage: { month, captures: reservation.captures, limit } });
         } catch (error) {
             await store.releaseCapture(month);

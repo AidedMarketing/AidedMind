@@ -44,6 +44,7 @@ test('deep health explains why the model check failed', async (t) => {
     assert.deepStrictEqual(await bad.json(), {
         ok: false, version: '0.2.0',
         checks: { anthropicKey: true, ownerToken: true, storage: true, model: false },
+        services: { gemini: false, supadata: false },
         problems: { model: 'api_key_rejected' }
     });
     status = 404;
