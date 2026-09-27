@@ -41,7 +41,10 @@ iOS doesn't let home-screen web apps appear in the Share menu, and it keeps thei
 | Articles / blogs | Main text via Mozilla Readability on the phone; Substack posts fall back to Substack's post API. Paywalled or login-only pages: paste the text |
 | YouTube | 1. the video's own captions (free) → 2. **Gemini** watches the video, captions or not (needs `GEMINI_API_KEY`) → 3. Supadata captions-only (needs `SUPADATA_API_KEY`) → 4. title + description + chapters, marked partial |
 | TikTok | 1. **Supadata** transcribes what's said (needs `SUPADATA_API_KEY`) → 2. caption and description only, marked partial |
+| Photos | **Add photos** on the Add tab (camera or library, up to 8 per note): screenshots, book pages, slides, whiteboards, handwritten notes, charts. Claude reads the text, explains visuals and breaks it down in one request |
 | Anything else | Paste the text |
+
+Photos are resized on the phone to 1,568 px on the long edge (the most detail Claude uses) and sent as JPEG, roughly 1,600 tokens each (about $0.003 per photo on Sonnet 5). Only small thumbnails and the text Claude read are kept with the note; the photos themselves are never stored. Auto uses Balanced for photos and Thorough for 6 or more.
 
 Transcripts are cached for 30 days, so a retried or re-analyzed link never pays for transcription twice. Each note says where its transcript came from (bottom of its Notes tab).
 
@@ -137,6 +140,7 @@ web/
   index.html, app.css, manifest.webmanifest, service-worker.js, _headers
   js/app.js             views, routing, sheets, inbox sync, accounts
   js/readable.js        article HTML → clean text on the device
+  js/photos.js          photo resize and thumbnails on the device
   js/graph.js           canvas map (touch, pinch, label placement)
   js/api.js, db.js, markdown.js, zip.js, icons.js
   vendor/Readability.js Mozilla Readability (Apache-2.0)

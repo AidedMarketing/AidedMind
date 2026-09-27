@@ -4,11 +4,12 @@ import { buildGraph, GraphView } from './graph.js';
 import { toMarkdown, fileName } from './markdown.js';
 import { icon } from './icons.js';
 import { createZip } from './zip.js';
+import { preparePhoto, MAX_PHOTOS } from './photos.js';
 
 const view = document.getElementById('view');
 const navbar = document.getElementById('navbar');
-const SOURCE_LABELS = { article: 'Article', youtube: 'YouTube', tiktok: 'TikTok', text: 'Text' };
-const SOURCE_ICONS = { article: 'article', youtube: 'youtube', tiktok: 'tiktok', text: 'text', concept: 'concept' };
+const SOURCE_LABELS = { article: 'Article', youtube: 'YouTube', tiktok: 'TikTok', text: 'Text', photo: 'Photos' };
+const SOURCE_ICONS = { article: 'article', youtube: 'youtube', tiktok: 'tiktok', text: 'text', concept: 'concept', photo: 'photo' };
 const NOTE_TABS = ['Summary', 'Outline', 'Links', 'Notes'];
 const PARTIAL_NOTES = {
     caption: 'Only the caption was available, so this is a partial breakdown. Paste the transcript for the full picture.',
@@ -23,7 +24,7 @@ const TRANSCRIPT_LABELS = {
     caption: 'caption only'
 };
 const DEPTH_INFO = {
-    auto: { label: 'Auto', detail: 'Picks for each link: Quick for TikToks and short posts, Balanced for most articles and videos, Thorough for very long pieces.' },
+    auto: { label: 'Auto', detail: 'Picks for each link: Quick for TikToks and short posts, Balanced for most articles, videos and photos, Thorough for very long pieces or 6+ photos.' },
     quick: { label: 'Quick', detail: 'Fastest and cheapest (Claude Haiku). Short summary; great for TikToks and short posts.' },
     balanced: { label: 'Balanced', detail: 'Fast, with a tight summary and strong quotes and takeaways (Claude Sonnet). Best for most things.' },
     thorough: { label: 'Thorough', detail: 'Deepest reasoning (Claude Opus). Slower and uses the most; for long or dense pieces.' }
@@ -35,7 +36,7 @@ function depthLabel(depth) {
 const TIP_KEY = 'aidedmind.tipDismissed';
 
 let notes = [];
-let draft = { input: '', title: '' };
+let draft = { input: '', title: '', photos: [] };
 let pending = null;
 let inboxRunning = false;
 const noteTab = new Map();
@@ -211,6 +212,7 @@ function buildNote(result, title) {
         quotes: a.quotes,
         takeaways: a.takeaways,
         connections: a.connections,
+        photos: result.photos || [],
         userNotes: '',
         model: result.model,
         depth: result.depth,
@@ -218,29 +220,35 @@ function buildNote(result, title) {
     };
 }
 
-async function runCapture({ input, title }) {
-    const { url, text } = splitInput(input);
-    if (!url && !text) throw new Error('Paste a link or some text first.');
-    const result = await capture({ url, text, title }, notes);
+async function runCapture({ input, title, photos = [] }) {
+    let result;
+    if (photos.length) {
+        result = await capture({ text: input.trim(), title, photos }, notes);
+        result.photos = photos.map((photo) => photo.thumb);
+    } else {
+        const { url, text } = splitInput(input);
+        if (!url && !text) throw new Error('Paste a link or some text first.');
+        result = await capture({ url, text, title }, notes);
+    }
     const note = buildNote(result, title);
     await saveNote(note);
     notes = await allNotes();
     return note;
 }
 
-async function startCapture(input, title = '') {
+async function startCapture(input, title = '', photos = []) {
     if (pending) return;
     if (!getSettings().token) {
         toast('Add your access token in Settings first');
         location.hash = '#/settings';
         return;
     }
-    draft = { input, title };
-    pending = runCapture({ input, title });
+    draft = { input, title, photos };
+    pending = runCapture({ input, title, photos });
     captureView();
     try {
         const note = await pending;
-        draft = { input: '', title: '' };
+        draft = { input: '', title: '', photos: [] };
         pending = null;
         toast('Saved to your library');
         location.hash = `#/note/${encodeURIComponent(note.id)}`;
@@ -288,10 +296,52 @@ function captureView() {
     h('div', {}, h('strong', {}, 'Paste link'), h('span', {}, 'Article, YouTube, TikTok or any web page'))
     );
 
+    const photoInput = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
+    photoInput.addEventListener('change', async () => {
+        const files = [...photoInput.files];
+        photoInput.value = '';
+        if (!files.length) return;
+        const room = MAX_PHOTOS - draft.photos.length;
+        if (files.length > room) toast(`Up to ${MAX_PHOTOS} photos per note; added the first ${Math.max(room, 0)}.`);
+        toast('Preparing photos…');
+        try {
+            for (const file of files.slice(0, Math.max(room, 0))) draft.photos.push(await preparePhoto(file));
+        } catch (error) {
+            toast(error.message);
+        }
+        draft.input = input.value;
+        draft.title = titleInput.value;
+        captureView();
+    });
+    const hasPhotos = draft.photos.length > 0;
+    if (hasPhotos) input.placeholder = 'Add context (optional): what these photos are, what to focus on…';
+
+    const photoButton = h('button', { type: 'button', class: 'photo-button', onclick: () => photoInput.click() },
+        h('span', { class: 'big-icon' }, icon('camera', { size: 22, strokeWidth: 2 })),
+        h('div', {}, h('strong', {}, 'Add photos'), h('span', {}, 'Screenshots, book pages, slides, notes, charts'))
+    );
+
+    const photoStrip = hasPhotos ? h('div', { class: 'photo-strip', style: { 'margin-bottom': '12px' } },
+        draft.photos.map((photo, index) => h('div', { class: 'photo-thumb' },
+            h('img', { src: photo.thumb, alt: `Photo ${index + 1}` }),
+            h('button', {
+                type: 'button',
+                'aria-label': `Remove photo ${index + 1}`,
+                onclick: () => {
+                    draft.photos.splice(index, 1);
+                    draft.input = input.value;
+                    draft.title = titleInput.value;
+                    captureView();
+                }
+            }, icon('close', { size: 14, strokeWidth: 2.4 }))
+        )),
+        draft.photos.length < MAX_PHOTOS ? h('button', { type: 'button', class: 'photo-add-more', 'aria-label': 'Add more photos', onclick: () => photoInput.click() }, icon('add', { size: 24 })) : null
+    ) : null;
+
     const progress = pending
         ? h('div', { class: 'card progress-card' },
             h('div', { class: 'pulse' }, icon('sparkle', { size: 22 })),
-            h('div', {}, h('strong', {}, 'Breaking it down…'), h('span', {}, 'Reading, summarizing and finding connections. Usually under a minute.')))
+            h('div', {}, h('strong', {}, 'Breaking it down…'), h('span', {}, draft.photos.length ? 'Reading your photos, summarizing and finding connections.' : 'Reading, summarizing and finding connections. Usually under a minute.')))
         : null;
 
     const tipDismissed = localStorage.getItem(TIP_KEY) === '1';
@@ -312,22 +362,30 @@ function captureView() {
     render(
         h('h1', { class: 'large-title' }, 'Add'),
         progress || [
-            pasteButton,
-            h('div', { class: 'or' }, 'or'),
+            hasPhotos ? null : [pasteButton, photoButton, h('div', { class: 'or' }, 'or')],
             h('form', {
                 class: 'card',
                 onsubmit: (event) => {
                     event.preventDefault();
-                    startCapture(input.value, titleInput.value.trim());
+                    startCapture(input.value, titleInput.value.trim(), [...draft.photos]);
                 }
             },
+            photoStrip,
             input,
             titleInput,
             error ? h('p', { class: 'error small', style: { 'margin-top': '12px' } }, error) : null,
-            h('button', { class: 'btn primary block', type: 'submit', style: { 'margin-top': '12px' } }, 'Break it down'),
+            h('button', { class: 'btn primary block', type: 'submit', style: { 'margin-top': '12px' } },
+                hasPhotos ? `Break down ${draft.photos.length} photo${draft.photos.length === 1 ? '' : 's'}` : 'Break it down'),
+            hasPhotos ? h('button', {
+                type: 'button',
+                class: 'btn block',
+                style: { 'margin-top': '8px' },
+                onclick: () => { draft.photos = []; captureView(); }
+            }, 'Cancel photos') : null,
             h('p', { class: 'small muted', style: { margin: '10px 0 0', 'text-align': 'center' } }, `${depthLabel(getSettings().depth)} breakdown · `, h('a', { href: '#/settings' }, 'change')))
         ],
-        tip,
+        photoInput,
+        hasPhotos ? null : tip,
         notes.length ? [h('div', { class: 'section-label' }, 'Recent'), h('div', { class: 'group' }, notes.slice(0, 5).map(noteRow))] : null
     );
 }
@@ -446,6 +504,8 @@ function noteView(id) {
     render(
         h('div', { class: 'source-line' }, sourceTile(type, 14), h('span', {}, `${SOURCE_LABELS[type]}${origin ? ` · ${origin}` : ''}`)),
         h('h1', { class: 'note-title' }, note.title),
+        note.photos?.length ? h('div', { class: 'photo-strip note-photos' },
+            note.photos.map((src, index) => h('div', { class: 'photo-thumb' }, h('img', { src, alt: `Photo ${index + 1}` })))) : null,
         h('div', { class: 'tldr-card' }, h('span', { class: 'label' }, 'In short'), note.tldr),
         note.source?.partial ? h('p', { class: 'partial-note' }, PARTIAL_NOTES[note.source.transcriptSource] || PARTIAL_NOTES.caption) : null,
         note.tags?.length ? h('div', { class: 'chips wrap' }, note.tags.map((tag) => h('a', { class: 'chip', href: `#/library?tag=${encodeURIComponent(tag)}` }, `#${tag}`))) : null,
