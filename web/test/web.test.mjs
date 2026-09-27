@@ -93,3 +93,16 @@ test('duplicate links are recognised despite tracking and short forms', () => {
     assert.strictEqual(findDuplicate(lib, 'https://example.com/other'), null);
     assert.strictEqual(findDuplicate(lib, ''), null);
 });
+
+test('settings version matches the service worker cache version', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const app = await readFile(new URL('../js/app.js', import.meta.url), 'utf8');
+    const sw = await readFile(new URL('../service-worker.js', import.meta.url), 'utf8');
+    const appVersion = app.match(/const APP_VERSION = '(\d+)'/)[1];
+    const cacheVersion = sw.match(/const CACHE_NAME = 'aidedmind-v(\d+)'/)[1];
+    assert.strictEqual(appVersion, cacheVersion);
+    // Every precached script must exist, or installing the update fails.
+    for (const [, path] of sw.matchAll(/'\.\/(js\/[\w.-]+\.js)'/g)) {
+        await readFile(new URL(`../${path}`, import.meta.url));
+    }
+});

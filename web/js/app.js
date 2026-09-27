@@ -35,7 +35,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '10';
+const APP_VERSION = '11';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -1110,6 +1110,7 @@ async function drainInbox({ manual = false } = {}) {
                 already ? `${already} already in your library` : ''
             ].filter(Boolean).join(' · '));
         }
+        if (updateReady && !failed) showUpdateBanner();
         if (failed) {
             setBanner([
                 icon('inbox', { size: 18, strokeWidth: 2 }),
@@ -1161,6 +1162,45 @@ function sharedItemsSection() {
 
 // ---------- Routing & startup ----------
 
+// ---------- App updates ----------
+
+// A new version installs in the background (checked on every open); once it
+// takes over, reload straight away when nothing is in progress, otherwise
+// offer a reload so nothing typed or running is lost.
+function watchForUpdates() {
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let registration = null;
+    navigator.serviceWorker.register('service-worker.js')
+        .then((reg) => { registration = reg; })
+        .catch((error) => console.warn('SW registration failed', error));
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') registration?.update().catch(() => {});
+    });
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController || reloading) return; // first install, not an update
+        const typing = document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+        const busy = pending || inboxRunning || typing || draft.input.trim() || draft.photos.length;
+        if (!busy) {
+            reloading = true;
+            location.reload();
+            return;
+        }
+        updateReady = true;
+        showUpdateBanner();
+    });
+}
+
+let updateReady = false;
+
+function showUpdateBanner() {
+    setBanner([
+        icon('refresh', { size: 18, strokeWidth: 2 }),
+        h('span', { style: { flex: '1' } }, 'AidedMind has been updated.'),
+        h('a', { href: '#', onclick: (event) => { event.preventDefault(); location.reload(); } }, 'Reload')
+    ]);
+}
+
 function route() {
     const [path, query = ''] = (location.hash.slice(1) || '/').split('?');
     const params = new URLSearchParams(query);
@@ -1204,7 +1244,7 @@ async function start() {
         if (document.visibilityState === 'visible') drainInbox();
     });
     if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('service-worker.js').catch((error) => console.warn('SW registration failed', error));
+        watchForUpdates();
     }
 }
 
