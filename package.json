@@ -1,0 +1,17 @@
+{
+    "name": "aidedmind",
+    "version": "0.2.0",
+    "private": true,
+    "description": "Save, summarize, break down and map anything you find online",
+    "scripts": {
+        "postinstall": "npm --prefix worker install",
+        "dev": "npm --prefix worker run dev",
+        "deploy": "npm --prefix worker run deploy",
+        "check": "npm --prefix worker run check",
+        "test": "npm --prefix worker test && node --test web/test/*.test.mjs"
+    },
+    "engines": {
+        "node": ">=22.5"
+    },
+    "license": "MIT"
+}

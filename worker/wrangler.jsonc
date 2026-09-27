@@ -1,0 +1,25 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "aidedmind",
+    "main": "src/worker.js",
+    "compatibility_date": "2026-09-01",
+    "assets": {
+        "directory": "../web",
+        "binding": "ASSETS",
+        "not_found_handling": "single-page-application",
+        "run_worker_first": ["/api/*"]
+    },
+    "durable_objects": {
+        "bindings": [{ "name": "STORE", "class_name": "Store" }]
+    },
+    "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
+    "vars": {
+        "AIDEDMIND_MODEL": "claude-opus-5",
+        "FREE_MONTHLY_CAPTURES": "25",
+        "PRO_MONTHLY_CAPTURES": "400"
+    },
+    // Secrets (set in the Cloudflare dashboard or with `wrangler secret put`):
+    //   ANTHROPIC_API_KEY  - Claude API key
+    //   OWNER_TOKEN        - your personal access token (unlimited plan)
+    "observability": { "enabled": true }
+}
