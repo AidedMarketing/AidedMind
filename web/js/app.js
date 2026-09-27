@@ -53,7 +53,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '13';
+const APP_VERSION = '14';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -143,6 +143,15 @@ function hostOf(url) {
     }
 }
 
+// Topics are marked with a colored "#" everywhere; sources keep their
+// colored dot or icon tile, so the two never look alike.
+function topicMark(label, colorIndex = null) {
+    return [
+        h('span', { class: 'hash', style: { '--hash': colorIndex === null ? 'var(--theme-none)' : `var(--theme-${colorIndex})` }, 'aria-hidden': 'true' }, '#'),
+        label
+    ];
+}
+
 function noteRow(note) {
     const type = note.source?.sourceType || 'text';
     const origin = note.source?.author || note.source?.siteName || hostOf(note.source?.url) || SOURCE_LABELS[type];
@@ -156,7 +165,7 @@ function noteRow(note) {
                     // The note's theme color and topic lead the line when it has one.
                     const theme = themeOf(note.id);
                     const topic = note.topic || theme?.label;
-                    return topic ? [h('span', { class: 'theme-dot', style: { '--dot': theme ? `var(--theme-${theme.color})` : 'var(--theme-none)' } }), h('span', { class: 'meta-topic' }, topic), ' · '] : null;
+                    return topic ? [h('span', { class: 'meta-topic' }, topicMark(topic, theme ? theme.color : null)), ' · '] : null;
                 })(),
                 `${origin} · ${relativeDate(note.createdAt)}`)
         )
@@ -497,11 +506,8 @@ function libraryView(params) {
     search.value = params.get('q') || '';
     const list = h('div');
     const chips = h('div', { class: 'chips' });
+    const topicChips = h('div', { class: 'chips topic-row' });
 
-    const tagCounts = new Map();
-    notes.forEach((note) => (note.tags || []).forEach((tag) => tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1)));
-    const topTags = [...tagCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 16).map(([tag]) => tag);
-    if (activeTag && !topTags.includes(activeTag)) topTags.unshift(activeTag);
     const presentTypes = Object.keys(SOURCE_LABELS).filter((type) => notes.some((n) => (n.source?.sourceType || 'text') === type));
 
     const refresh = () => {
@@ -522,23 +528,29 @@ function libraryView(params) {
 
         chips.replaceChildren(
             h('button', { type: 'button', class: `chip${!activeType && !activeTag && !activeTheme ? ' active' : ''}`, onclick: () => { activeType = ''; activeTag = ''; activeTheme = ''; refresh(); } }, 'All'),
-            ...themes.slice(0, 8).map((theme) => h('button', {
-                type: 'button',
-                class: `chip${theme.id === activeTheme ? ' active' : ''}`,
-                style: { '--dot': `var(--theme-${theme.color})` },
-                onclick: () => { activeTheme = activeTheme === theme.id ? '' : theme.id; refresh(); }
-            }, h('span', { class: 'dot' }), theme.label)),
+            // Sources: colored dot. Topics: colored #. A tag (opened from a
+            // note) shows as a plain chip while it's the active filter.
             ...presentTypes.map((type) => h('button', {
                 type: 'button',
                 class: `chip${type === activeType ? ' active' : ''}`,
                 style: { '--dot': `var(--node-${type})` },
                 onclick: () => { activeType = activeType === type ? '' : type; refresh(); }
             }, h('span', { class: 'dot' }), SOURCE_LABELS[type])),
-            ...topTags.map((tag) => h('button', {
+        );
+        // Second row: topics (colored #), plus a tag filter opened from a note.
+        topicChips.replaceChildren(
+            ...themes.map((theme) => h('button', {
                 type: 'button',
-                class: `chip${tag === activeTag ? ' active' : ''}`,
-                onclick: () => { activeTag = activeTag === tag ? '' : tag; refresh(); }
-            }, `#${tag}`))
+                class: `chip topic-chip${theme.id === activeTheme ? ' active' : ''}`,
+                'aria-label': `Topic: ${theme.label}`,
+                onclick: () => { activeTheme = activeTheme === theme.id ? '' : theme.id; refresh(); }
+            }, topicMark(theme.label, theme.color))),
+            activeTag ? h('button', {
+                type: 'button',
+                class: 'chip tag-chip active',
+                'aria-label': `Tag ${activeTag}, tap to clear`,
+                onclick: () => { activeTag = ''; refresh(); }
+            }, `${activeTag}`, icon('close', { size: 14, strokeWidth: 2.4 })) : null
         );
 
         if (!notes.length) {
@@ -587,6 +599,7 @@ function libraryView(params) {
             notes.length ? sortButton : null
         ),
         notes.length ? chips : null,
+        notes.length && (themes.length || activeTag) ? topicChips : null,
         sharedItemsSection(),
         list
     );
@@ -639,11 +652,11 @@ function noteView(id) {
         (() => {
             const theme = themeOf(note.id);
             const chips = [
-                theme ? h('a', { class: 'chip', href: `#/library?theme=${encodeURIComponent(theme.id)}`, style: { '--dot': `var(--theme-${theme.color})` }, 'aria-label': `Theme: ${theme.label}` }, h('span', { class: 'dot' }), theme.label) : null,
+                theme ? h('a', { class: 'chip topic-chip', href: `#/library?theme=${encodeURIComponent(theme.id)}`, 'aria-label': `Topic: ${theme.label}` }, topicMark(theme.label, theme.color)) : null,
                 ...(note.tags || [])
                     // A tag that just repeats the theme or topic adds nothing.
                     .filter((tag) => ![theme?.label, note.topic].some((name) => name && name.toLowerCase().replace(/\s+/g, '-') === tag.toLowerCase()))
-                    .map((tag) => h('a', { class: 'chip', href: `#/library?tag=${encodeURIComponent(tag)}` }, `#${tag}`))
+                    .map((tag) => h('a', { class: 'chip tag-chip', href: `#/library?tag=${encodeURIComponent(tag)}` }, tag))
             ].filter(Boolean);
             return chips.length ? h('div', { class: 'chips wrap' }, chips) : null;
         })(),
@@ -971,9 +984,9 @@ function previewNode(node) {
 function themeSheet(theme) {
     const members = theme.noteIds.map((id) => notes.find((n) => n.id === id)).filter(Boolean);
     openSheet(
-        h('div', { class: 'source-line' }, h('span', { class: 'theme-dot', style: { '--dot': `var(--theme-${theme.color})` } }), h('span', {}, `Theme · ${members.length} notes`)),
-        h('h3', { style: { 'margin-top': '8px' } }, theme.label),
-        theme.tags.length ? h('p', { class: 'small muted' }, theme.tags.map((t) => `#${t}`).join('  ')) : null,
+        h('div', { class: 'source-line' }, h('span', {}, `Topic · ${members.length} notes`)),
+        h('h3', { class: 'topic-title', style: { 'margin-top': '4px' } }, topicMark(theme.label, theme.color)),
+        theme.tags.length ? h('p', { class: 'small muted' }, `Common tags: ${theme.tags.join(', ')}`) : null,
         h('div', { class: 'stack' },
             h('div', { class: 'group' }, members.slice(0, 12).map(noteRow)),
             h('a', { class: 'btn primary block', href: `#/library?theme=${encodeURIComponent(theme.id)}` }, members.length > 12 ? `See all ${members.length} in Library` : 'Open in Library')
@@ -1028,7 +1041,7 @@ function graphView() {
                     graph.highlightTheme(theme.id);
                     paintLegend();
                 }
-            }, h('i'), theme.label, h('span', { class: 'count' }, String(theme.noteIds.length)))));
+            }, topicMark(theme.label, theme.color), h('span', { class: 'count' }, String(theme.noteIds.length)))));
             if (unsorted) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': 'var(--theme-none)' } }, h('i'), 'Unsorted', h('span', { class: 'count' }, String(unsorted))));
         } else {
             types.forEach((type) => legend.append(h('span', { class: 'legend-item glass', style: { '--dot': `var(--node-${type})` } }, h('i'), SOURCE_LABELS[type])));
