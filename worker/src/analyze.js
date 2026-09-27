@@ -12,7 +12,9 @@ const MAX_LIBRARY_NOTES = 400;
 export const DEPTHS = {
     quick: { model: 'claude-haiku-4-5', envKey: 'AIDEDMIND_MODEL_QUICK', effort: null, thinking: false },
     balanced: { model: 'claude-sonnet-5', envKey: 'AIDEDMIND_MODEL_BALANCED', effort: 'medium', thinking: true },
-    thorough: { model: 'claude-opus-5', envKey: 'AIDEDMIND_MODEL_THOROUGH', effort: 'high', thinking: true }
+    // Opus 5.5 at medium effort out-performs Opus 5 at high while thinking
+    // less, at a lower price; thinking is always on for it (adaptive only).
+    thorough: { model: 'claude-opus-5-5', envKey: 'AIDEDMIND_MODEL_THOROUGH', effort: 'medium', thinking: true }
 };
 export const DEFAULT_DEPTH = 'balanced';
 

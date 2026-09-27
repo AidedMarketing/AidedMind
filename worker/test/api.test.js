@@ -108,10 +108,11 @@ test('breakdown styles pick the right model and options', async (t) => {
     assert.strictEqual((await (await send('thorough')).json()).depth, 'thorough');
     sent = stub.requests.at(-1);
     assert.strictEqual(sent.url, '/v1/messages?beta=true');
-    assert.strictEqual(sent.body.model, 'claude-opus-5');
+    assert.strictEqual(sent.body.model, 'claude-opus-5-5');
     assert.strictEqual(sent.body.fallbacks, 'default');
     assert.match(sent.headers['anthropic-beta'], /server-side-fallback-2026-07-01/);
-    assert.strictEqual(sent.body.output_config.effort, 'high');
+    assert.deepStrictEqual(sent.body.thinking, { type: 'adaptive' });
+    assert.strictEqual(sent.body.output_config.effort, 'medium');
 
     // Unknown styles fall back to the default; very long sources skip Quick.
     assert.strictEqual((await (await send('turbo')).json()).depth, 'balanced');
