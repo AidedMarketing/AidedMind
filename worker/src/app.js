@@ -61,12 +61,15 @@ const routes = [
             anthropicKey: Boolean(env.ANTHROPIC_API_KEY),
             ownerToken: Boolean(env.OWNER_TOKEN)
         };
+        const problems = {};
         if (url.searchParams.get('deep') === '1') {
-            checks.storage = await directory(env).ping().then(() => true, () => false);
-            checks.model = checks.anthropicKey ? await checkModel(env).then(() => true, () => false) : false;
+            checks.storage = await Promise.resolve().then(() => directory(env).ping()).then(() => true, () => false);
+            const modelProblem = await checkModel(env);
+            checks.model = !modelProblem;
+            if (modelProblem) problems.model = modelProblem;
         }
         const ok = Object.values(checks).every(Boolean);
-        return json({ ok, version: VERSION, checks }, ok ? 200 : 503);
+        return json({ ok, version: VERSION, checks, ...(ok ? {} : { problems }) }, ok ? 200 : 503);
     }],
 
     ['POST', /^\/api\/auth-check$/, async (request, env, user) => {

@@ -3,6 +3,8 @@
     "name": "aidedmind",
     "main": "src/worker.js",
     "compatibility_date": "2026-09-01",
+    // Serve the app at https://aidedmind.<subdomain>.workers.dev on every deploy.
+    "workers_dev": true,
     "assets": {
         "directory": "../web",
         "binding": "ASSETS",

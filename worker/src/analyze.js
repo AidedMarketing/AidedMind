@@ -200,8 +200,20 @@ export async function analyze(source, rawLibrary, env) {
     };
 }
 
+// Confirms the API key can use the configured model (free; no tokens spent).
+// Returns null when fine, or a short reason code safe to show publicly.
 export async function checkModel(env) {
+    if (!env.ANTHROPIC_API_KEY) return 'missing_api_key';
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, baseURL: env.ANTHROPIC_BASE_URL || undefined, timeout: 15000, maxRetries: 1 });
-    const model = await client.models.retrieve(env.AIDEDMIND_MODEL || DEFAULT_MODEL);
-    return model.id;
+    try {
+        await client.models.retrieve(env.AIDEDMIND_MODEL || DEFAULT_MODEL);
+        return null;
+    } catch (error) {
+        if (error instanceof Anthropic.AuthenticationError) return 'api_key_rejected';
+        if (error instanceof Anthropic.PermissionDeniedError) return 'api_key_not_permitted';
+        if (error instanceof Anthropic.NotFoundError) return 'model_not_available';
+        if (error instanceof Anthropic.RateLimitError) return 'rate_limited';
+        if (error instanceof Anthropic.APIError && error.status) return `anthropic_error_${error.status}`;
+        return 'anthropic_unreachable';
+    }
 }
