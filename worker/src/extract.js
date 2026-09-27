@@ -6,7 +6,8 @@ import { HttpError } from './http.js';
 
 const TIMEOUT_MS = 15000;
 const MAX_BYTES = 3 * 1024 * 1024;
-const USER_AGENT = 'Mozilla/5.0 (compatible; AidedMindBot/0.2; personal knowledge app)';
+// A regular browser identity: many sites (Substack, news) refuse unknown bots.
+const USER_AGENT = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
 
 export function isPrivateAddress(address) {
     const v4 = address.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
@@ -76,7 +77,11 @@ export async function fetchPage(rawUrl, accept = 'text/html,application/xhtml+xm
     } catch (error) {
         throw new HttpError(502, `Could not reach ${url.hostname}: ${error.message}`);
     }
-    if (!response.ok) throw new HttpError(502, `${url.hostname} responded with ${response.status}.`);
+    if (!response.ok) {
+        const error = new HttpError(502, `${url.hostname} responded with ${response.status}.`);
+        error.upstreamStatus = response.status;
+        throw error;
+    }
     const finalUrl = response.url || url.toString();
     assertPublicUrl(finalUrl);
     return { url: finalUrl, contentType: response.headers.get('content-type') || '', body: await readLimited(response) };
@@ -168,8 +173,46 @@ async function extractTikTok(rawUrl) {
     };
 }
 
+function escapeHtml(text) {
+    return String(text || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+// Substack posts (substack.com or custom domains) live at /p/<slug>. When the
+// page itself is blocked, the same post is usually available from Substack's
+// public post API.
+export function substackApiUrl(rawUrl) {
+    const url = new URL(rawUrl);
+    const match = url.pathname.match(/^\/p\/([\w-]+)/);
+    return match ? `${url.origin}/api/v1/posts/${match[1]}` : null;
+}
+
+async function substackFallback(rawUrl) {
+    const api = substackApiUrl(rawUrl);
+    if (!api) return null;
+    try {
+        const { body } = await fetchPage(api, 'application/json');
+        const post = JSON.parse(body);
+        if (!post?.body_html) return null;
+        const html = `<!doctype html><html><head><title>${escapeHtml(post.title)}</title>` +
+            `<meta name="author" content="${escapeHtml(post.publishedBylines?.[0]?.name || '')}"></head><body><article>` +
+            `<h1>${escapeHtml(post.title)}</h1>${post.subtitle ? `<h2>${escapeHtml(post.subtitle)}</h2>` : ''}${post.body_html}</article></body></html>`;
+        return { sourceType: 'article', url: post.canonical_url || rawUrl, html };
+    } catch {
+        return null;
+    }
+}
+
 async function extractArticle(rawUrl) {
-    const page = await fetchPage(rawUrl);
+    let page;
+    try {
+        page = await fetchPage(rawUrl);
+    } catch (error) {
+        if (error.upstreamStatus) {
+            const fallback = await substackFallback(rawUrl);
+            if (fallback) return fallback;
+        }
+        throw error;
+    }
     const type = page.contentType.toLowerCase();
     if (type.includes('application/pdf')) throw new HttpError(415, 'PDF links are not supported yet. Paste the text instead.');
     if (type.startsWith('text/plain')) {
