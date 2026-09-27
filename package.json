@@ -1,15 +1,17 @@
 {
     "name": "aidedmind",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "private": true,
-    "description": "Personal knowledge PWA: capture links, get AI breakdowns, explore an Obsidian-style graph",
+    "description": "Save, summarize, break down and map anything you find online",
     "scripts": {
-        "start": "npm --prefix server start",
-        "postinstall": "npm --prefix server install",
-        "test": "npm --prefix server test && node --test web/test/*.test.mjs"
+        "postinstall": "npm --prefix worker install",
+        "dev": "npm --prefix worker run dev",
+        "deploy": "npm --prefix worker run deploy",
+        "check": "npm --prefix worker run check",
+        "test": "npm --prefix worker test && node --test web/test/*.test.mjs"
     },
     "engines": {
-        "node": ">=20"
+        "node": ">=22.5"
     },
     "license": "MIT"
 }

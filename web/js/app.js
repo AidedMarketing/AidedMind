@@ -1,5 +1,5 @@
 import { allNotes, saveNote, saveMany, deleteNote, newId } from './db.js';
-import { capture, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, serverBase } from './api.js';
+import { capture, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, serverBase, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { toMarkdown, fileName } from './markdown.js';
 import { icon } from './icons.js';
@@ -706,6 +706,11 @@ function settingsView() {
     });
 
     const inboxUrl = `${serverBase()}/api/inbox`;
+    const usage = getLastUsage();
+    const usageText = usage
+        ? `${usage.captures} breakdown${usage.captures === 1 ? '' : 's'} this month${usage.limit === null ? '' : ` of ${usage.limit}`}`
+        : '';
+    const accounts = h('div');
 
     render(
         h('h1', { class: 'large-title' }, 'Settings'),
@@ -735,6 +740,7 @@ function settingsView() {
         token,
         h('button', { class: 'btn primary block', type: 'submit', style: { 'margin-top': '12px' } }, 'Save & Test'),
         status),
+        usageText ? h('p', { class: 'group-footer' }, usageText) : null,
 
         h('div', { class: 'section-label' }, 'Save from the Share button'),
         h('div', { class: 'card' },
@@ -766,8 +772,47 @@ function settingsView() {
             actionRow('Restore from backup', 'refresh', () => fileInput.click())
         ),
         h('p', { class: 'group-footer' }, `${notes.length} note${notes.length === 1 ? '' : 's'}, stored only on this device.`),
+        accounts,
         fileInput
     );
+    if (usage?.limit === null) renderAccounts(accounts);
+}
+
+// Owner-only: give other people their own access token and monthly quota.
+async function renderAccounts(container) {
+    let data;
+    try {
+        data = await adminListUsers();
+    } catch {
+        return;
+    }
+    const row = (user) => h('div', { class: 'group-row' },
+        h('span', { class: 'row-label' }, user.label || user.id.slice(0, 8), h('div', { class: 'small muted' }, `${user.plan}${user.status === 'active' ? '' : ' · paused'}`)),
+        h('span', { class: 'row-value' }, `${user.usage.captures}${user.limit === null ? '' : ` / ${user.limit}`}`)
+    );
+    container.replaceChildren();
+    append(container, [
+        h('div', { class: 'section-label' }, 'Accounts'),
+        h('div', { class: 'group' },
+            data.users.map(row),
+            actionRow('Add an account', 'add', async () => {
+                const label = prompt('Who is this account for?');
+                if (label === null) return;
+                try {
+                    const created = await adminCreateUser({ label: label.trim(), plan: 'free' });
+                    openSheet(
+                        h('h3', {}, `Account for ${created.label || 'new user'}`),
+                        h('p', { class: 'muted small' }, `Free plan, ${created.limit} breakdowns a month. Send them this token; it is shown only once.`),
+                        copyField(created.token, 'Token'),
+                        h('div', { class: 'stack' }, h('button', { type: 'button', class: 'btn block', onclick: () => { closeSheet(); renderAccounts(container); } }, 'Done'))
+                    );
+                } catch (error) {
+                    toast(error.message);
+                }
+            })
+        ),
+        h('p', { class: 'group-footer' }, `Breakdowns used in ${data.month}. Paid plans can plug in here later.`)
+    ]);
 }
 
 function exportVault() {
@@ -816,7 +861,7 @@ async function drainInbox() {
                 await removeInboxItem(item.id);
                 saved++;
             } catch (error) {
-                if (error.status && error.status < 500 && error.status !== 401 && error.status !== 429) {
+                if (error.status && error.status < 500 && ![401, 402, 403, 429].includes(error.status)) {
                     await removeInboxItem(item.id);
                     toast(`Couldn't read ${hostOf(item.url) || 'a shared item'}: ${error.message}`);
                 } else {
