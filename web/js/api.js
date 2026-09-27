@@ -71,11 +71,12 @@ export class DuplicateError extends Error {
 
 // Step 1: turn a link or pasted text into source text (articles are fetched by
 // the server and cleaned up here). Step 2: ask the server for the breakdown.
-export async function capture({ url, text, title, depth, photos }, notes) {
+// retry: an existing note to fetch again and replace (e.g. caption-only).
+export async function capture({ url, text, title, depth, photos, retry }, notes) {
     // Links already saved open the existing note: no fetch, no Claude call.
     // A caption-only (partial) note is retried instead, and replaced in place.
-    let replaces = null;
-    const saved = url && !text && !photos?.length ? findDuplicate(notes, url) : null;
+    let replaces = retry || null;
+    const saved = url && !text && !photos?.length && !retry ? findDuplicate(notes, url) : null;
     if (saved && !saved.source?.partial) throw new DuplicateError(saved);
     if (saved) replaces = saved;
     let source;
@@ -99,7 +100,7 @@ export async function capture({ url, text, title, depth, photos }, notes) {
             source = fetched;
         }
         // Short links (vm.tiktok.com, youtu.be) resolve to the saved address.
-        const resolved = findDuplicate(notes, source.url);
+        const resolved = retry ? null : findDuplicate(notes, source.url);
         if (resolved && !resolved.source?.partial) throw new DuplicateError(resolved);
         if (resolved) replaces = resolved;
         source.sharedUrl = url;
