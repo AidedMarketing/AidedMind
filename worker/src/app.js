@@ -82,7 +82,7 @@ const routes = [
     }, { auth: true }],
 
     ['POST', /^\/api\/analyze$/, async (request, env, user) => {
-        const { source, library } = await readJson(request, 3 * 1024 * 1024);
+        const { source, library, depth } = await readJson(request, 3 * 1024 * 1024);
         if (!source || typeof source !== 'object') throw new HttpError(400, 'Send a source to analyze.');
         const store = userStore(env, user.id);
         const month = currentMonth();
@@ -100,9 +100,9 @@ const routes = [
                 partial: Boolean(source.partial),
                 text: String(source.text || '')
             };
-            const result = await analyze(clean, library, env);
+            const result = await analyze(clean, library, env, typeof depth === 'string' ? depth : undefined);
             await store.recordTokens(month, result.tokens.input, result.tokens.output);
-            return json({ analysis: result.analysis, model: result.model, usage: { month, captures: reservation.captures, limit } });
+            return json({ analysis: result.analysis, model: result.model, depth: result.depth, usage: { month, captures: reservation.captures, limit } });
         } catch (error) {
             await store.releaseCapture(month);
             throw error;

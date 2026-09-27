@@ -16,7 +16,11 @@
     },
     "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
     "vars": {
-        "AIDEDMIND_MODEL": "claude-opus-5",
+        // Breakdown styles: Quick / Balanced / Thorough (the app picks one per capture).
+        "AIDEDMIND_DEFAULT_DEPTH": "balanced",
+        "AIDEDMIND_MODEL_QUICK": "claude-haiku-4-5",
+        "AIDEDMIND_MODEL_BALANCED": "claude-sonnet-5",
+        "AIDEDMIND_MODEL_THOROUGH": "claude-opus-5",
         "FREE_MONTHLY_CAPTURES": "25",
         "PRO_MONTHLY_CAPTURES": "400"
     },

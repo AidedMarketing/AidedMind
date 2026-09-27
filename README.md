@@ -88,11 +88,20 @@ npm run check                                  # bundle exactly what Cloudflare 
 |---|---|---|
 | `ANTHROPIC_API_KEY` | secret | required |
 | `OWNER_TOKEN` | secret | required; your unlimited access token |
-| `AIDEDMIND_MODEL` | `wrangler.jsonc` vars | default `claude-opus-5` |
+| `AIDEDMIND_DEFAULT_DEPTH` | `wrangler.jsonc` vars | breakdown style when the app doesn't send one: `quick`, `balanced` (default) or `thorough` |
+| `AIDEDMIND_MODEL_QUICK` / `_BALANCED` / `_THOROUGH` | `wrangler.jsonc` vars | defaults `claude-haiku-4-5` / `claude-sonnet-5` / `claude-opus-5` |
 | `FREE_MONTHLY_CAPTURES` / `PRO_MONTHLY_CAPTURES` | `wrangler.jsonc` vars | default 25 / 400 |
 | `APP_URL` | GitHub Actions variable | enables the daily health check |
 
-Analysis uses Claude structured outputs (the reply always matches the note schema) and Anthropic's server-side refusal fallback (`fallbacks: "default"`). Sources over ~600k characters are rejected rather than silently truncated.
+**Breakdown styles** (Settings → Breakdown style, per device):
+
+| Style | Model | Use it for |
+|---|---|---|
+| Quick | Claude Haiku 4.5, no extended thinking | TikToks, short posts; fastest and cheapest |
+| Balanced (default) | Claude Sonnet 5, medium effort | most articles and videos |
+| Thorough | Claude Opus 5, high effort | long or dense pieces; also available per note via ••• → *Re-analyze in depth* |
+
+Summaries and outlines are kept short for skimming; quotes and takeaways get the most attention. Analysis uses Claude structured outputs (the reply always matches the note schema); Thorough also uses Anthropic's server-side refusal fallback (`fallbacks: "default"`). Sources over ~600k characters are rejected rather than silently truncated.
 
 ## Security
 
