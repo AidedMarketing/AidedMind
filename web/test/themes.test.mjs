@@ -116,3 +116,37 @@ test('large libraries stay fast', () => {
     assert.ok(themes.length >= 6 && themes.length <= 60, `${themes.length} themes`);
     assert.ok(byNote.size > 500);
 });
+
+test('a journaling note that mentions AI sorts with journaling, not AI', () => {
+    day = 1;
+    const notes = [
+        note('ai1', ['ai', 'llms'], ['Large language models'], { topic: 'Artificial Intelligence' }),
+        note('ai2', ['ai', 'agents'], ['Large language models', 'Agents'], { topic: 'Artificial Intelligence' }),
+        note('ai3', ['ai', 'prompting'], ['Prompting'], { topic: 'Artificial Intelligence' }),
+        // Mentions AI (tag, concept and even a Claude link) but is about journaling.
+        note('j1', ['journaling', 'ai', 'prompting'], ['Prompting', 'Morning pages'], {
+            topic: 'Journaling', connections: [{ noteId: 'ai3', relation: 'related', reason: '' }]
+        }),
+        note('j2', ['journaling', 'habits'], ['Morning pages'], { topic: 'Journaling' }),
+        note('j3', ['journaling', 'reflection'], ['Gratitude'], { topic: 'Journaling' })
+    ];
+    const { themes, byNote } = buildThemes(notes);
+    assert.strictEqual(byNote.get('j1'), byNote.get('j2'));
+    assert.notStrictEqual(byNote.get('j1'), byNote.get('ai1'));
+    const journaling = themes.find((t) => t.id === byNote.get('j1'));
+    assert.strictEqual(journaling.label, 'Journaling');
+    assert.strictEqual(themes.find((t) => t.id === byNote.get('ai1')).label, 'Artificial Intelligence');
+    assert.strictEqual(byNote.get('ai1'), 'artificial-intelligence');
+});
+
+test('without topics, notes still group by shared tags and links', () => {
+    const { themes } = buildThemes(library());
+    assert.strictEqual(themes.length, 2);
+});
+
+test('theme names keep acronyms', async () => {
+    const { prettyName } = await import('../js/themes.js');
+    assert.strictEqual(prettyName('ai-agents'), 'AI agents');
+    assert.strictEqual(prettyName('saas'), 'SaaS');
+    assert.strictEqual(prettyName('deep-work'), 'Deep work');
+});

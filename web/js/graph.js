@@ -93,7 +93,9 @@ export function buildGraph(notes, { showConcepts = true, focusId = null, depth =
 export class GraphView {
     // colorBy: 'theme' colors notes by topic and draws soft areas around
     // each theme; 'source' colors them by where they came from.
-    constructor(canvas, { onOpen, focusId = null, colorBy = 'source', themes = [] } = {}) {
+    // areas: draw theme areas and names, and pull themes into their own
+    // regions (off for the small map on a note).
+    constructor(canvas, { onOpen, focusId = null, colorBy = 'source', themes = [], areas = true } = {}) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
         this.hullCanvas = document.createElement('canvas');
@@ -101,6 +103,7 @@ export class GraphView {
         this.focusId = focusId;
         this.colorBy = colorBy;
         this.themes = themes;
+        this.areas = areas;
         this.nodes = [];
         this.links = [];
         this.transform = { x: 0, y: 0, k: 1 };
@@ -251,7 +254,7 @@ export class GraphView {
         const repulsion = 2200;
         // With themes on, notes from different themes push apart harder so
         // each topic gets its own area instead of overlapping.
-        const themed = this.themed();
+        const themed = this.themed() && this.areas;
         for (let i = 0; i < nodes.length; i++) {
             const a = nodes[i];
             for (let j = i + 1; j < nodes.length; j++) {
@@ -289,7 +292,7 @@ export class GraphView {
         });
         // Themes: pull each note gently toward its theme's centre, so topics
         // settle into their own areas of the map.
-        if (this.themed()) {
+        if (this.themed() && this.areas) {
             const centres = new Map();
             nodes.forEach((node) => {
                 if (!node.theme) return;
@@ -324,7 +327,7 @@ export class GraphView {
     fit() {
         if (!this.nodes.length || !this.width) return;
         // Leave room for the theme areas and their names around the dots.
-        const pad = this.themed() ? 34 : 0;
+        const pad = this.themed() && this.areas ? 34 : 0;
         const xs = this.nodes.map((n) => n.x);
         const ys = this.nodes.map((n) => n.y);
         const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
@@ -363,7 +366,7 @@ export class GraphView {
         const palette = this.palette();
         const { line: lineColor, lineStrong, label: labelColor, dimLabel } = palette;
         ctx.clearRect(0, 0, width, height);
-        if (this.themed()) this.drawThemeAreas(palette);
+        if (this.themed() && this.areas) this.drawThemeAreas(palette);
         ctx.save();
         ctx.translate(transform.x, transform.y);
         ctx.scale(transform.k, transform.k);
@@ -412,7 +415,7 @@ export class GraphView {
             }
         });
 
-        const placedThemes = this.themed() ? this.drawThemeLabels(palette) : [];
+        const placedThemes = this.themed() && this.areas ? this.drawThemeLabels(palette) : [];
         const fontSize = 12.5 / transform.k;
         ctx.font = `500 ${fontSize}px -apple-system, system-ui, sans-serif`;
         ctx.textAlign = 'center';
@@ -456,6 +459,9 @@ export class GraphView {
     }
 
     fillFor(node, palette) {
+        // With theme colors, shared-idea diamonds go neutral so they never
+        // read as part of a theme.
+        if (!node.isNote && this.themed()) return palette.unthemed;
         if (!node.isNote || !this.themed()) return palette.colors[node.type] || palette.colors.text;
         return node.theme ? palette.themeColors[node.themeColor ?? 0] : palette.unthemed;
     }

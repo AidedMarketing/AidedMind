@@ -1,14 +1,19 @@
 // Map themes: groups notes into topics, entirely on the device (no AI cost).
 //
-// 1. Similarity: two notes are related when Claude linked them, when your
-//    own notes [[wikilink]] one to the other, or when they share tags or
-//    concepts. Rare tags and concepts count more than common ones; ones on
-//    every note, or on most of a larger library, are ignored.
+// 1. Similarity: each note's main topic (what it's about, from Claude or
+//    set by you) counts most. Notes are also related when Claude linked them,
+//    when your own notes [[wikilink]] one to the other, or when they share
+//    tags or concepts. Between notes with different topics, shared tags,
+//    concepts and Claude's links count much less: a journaling note that
+//    mentions AI stays with journaling. Rare tags and concepts count more
+//    than common ones; ones on every note, or on most of a larger library,
+//    are ignored.
 // 2. Clustering: Louvain community detection finds groups of notes that are
 //    more connected to each other than to the rest. Nodes are visited in a
 //    fixed order, so the same library always gives the same themes.
-// 3. Labels: each theme is named after its most distinctive tags (frequent
-//    inside the theme, rare outside it), falling back to concepts.
+// 3. Labels: a theme is named after the topic most of its notes share,
+//    otherwise its most distinctive tags (frequent inside the theme, rare
+//    outside it), falling back to concepts.
 // 4. Colors: picked from the theme's main name, so a theme keeps its color
 //    as the library grows.
 
@@ -19,7 +24,10 @@ export const THEME_DETAIL = {
     detailed: { label: 'Detailed', resolution: 1.6, detail: 'More, smaller themes.' }
 };
 
-const WEIGHTS = { connection: 3, wikilink: 3, tag: 1, concept: 1.4 };
+const WEIGHTS = { topic: 4, connection: 3, wikilink: 3, tag: 1, concept: 1.4 };
+// How much shared tags, concepts and Claude's links count between notes
+// whose topics differ. Your own [[wikilinks]] always count in full.
+const CROSS_TOPIC = 0.3;
 const COMMON_SHARE = 0.5; // ignore tags/concepts on more than half the notes…
 const COMMON_MIN_NOTES = 12; // …once the library has this many notes
 const MIN_THEME_SIZE = 2;
@@ -32,6 +40,10 @@ function conceptNames(note) {
     return [...new Set((note.concepts || []).map((c) => keyOf(typeof c === 'string' ? c : c?.name)).filter(Boolean))];
 }
 
+export function topicOf(note) {
+    return keyOf(note?.topic);
+}
+
 function tagNames(note) {
     return [...new Set((note.tags || []).map(keyOf).filter(Boolean))];
 }
@@ -39,17 +51,40 @@ function tagNames(note) {
 // Weighted, undirected note-to-note graph as Map(id -> Map(id -> weight)).
 export function similarityGraph(notes) {
     const adj = new Map(notes.map((note) => [note.id, new Map()]));
-    const add = (a, b, w) => {
+    const topics = new Map(notes.map((note) => [note.id, topicOf(note)]));
+    // Scale down evidence between notes that are about different things.
+    const scale = (a, b) => {
+        const ta = topics.get(a);
+        const tb = topics.get(b);
+        return ta && tb && ta !== tb ? CROSS_TOPIC : 1;
+    };
+    const add = (a, b, w, { full = false } = {}) => {
         if (a === b || !adj.has(a) || !adj.has(b) || !(w > 0)) return;
-        adj.get(a).set(b, (adj.get(a).get(b) || 0) + w);
-        adj.get(b).set(a, (adj.get(b).get(a) || 0) + w);
+        const weight = full ? w : w * scale(a, b);
+        adj.get(a).set(b, (adj.get(a).get(b) || 0) + weight);
+        adj.get(b).set(a, (adj.get(b).get(a) || 0) + weight);
     };
 
     const titles = new Map(notes.map((note) => [keyOf(note.title), note.id]));
     notes.forEach((note) => {
         (note.connections || []).forEach((c) => add(note.id, c.noteId, WEIGHTS.connection));
         for (const match of (note.userNotes || '').matchAll(/\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g)) {
-            add(note.id, titles.get(keyOf(match[1])), WEIGHTS.wikilink);
+            add(note.id, titles.get(keyOf(match[1])), WEIGHTS.wikilink, { full: true });
+        }
+    });
+    // Same topic: the strongest signal. Spread over the group so a big topic
+    // doesn't swamp everything else.
+    const byTopic = new Map();
+    notes.forEach((note) => {
+        const t = topics.get(note.id);
+        if (!t) return;
+        if (!byTopic.has(t)) byTopic.set(t, []);
+        byTopic.get(t).push(note.id);
+    });
+    byTopic.forEach((ids) => {
+        const w = WEIGHTS.topic / Math.sqrt(ids.length - 1 || 1);
+        for (let i = 0; i < ids.length; i++) {
+            for (let j = i + 1; j < ids.length; j++) add(ids[i], ids[j], w);
         }
     });
 
@@ -168,8 +203,13 @@ export function louvain(adj, { resolution = 1, maxLevels = 10, maxPasses = 30 } 
     return result;
 }
 
-function prettyName(name) {
-    const text = name.replace(/-/g, ' ').trim();
+const ACRONYMS = new Map(['ai', 'ml', 'ux', 'ui', 'seo', 'llm', 'api', 'crm', 'b2b', 'b2c', 'roi', 'kpi', 'adhd', 'diy', 'nlp', 'vr', 'ar'].map((w) => [w, w.toUpperCase()]));
+ACRONYMS.set('llms', 'LLMs').set('saas', 'SaaS').set('iphone', 'iPhone').set('ios', 'iOS');
+
+// "ai-agents" → "AI agents": first letter up, known acronyms kept.
+export function prettyName(name) {
+    const words = name.replace(/-/g, ' ').trim().split(/\s+/).map((w) => ACRONYMS.get(w.toLowerCase()) || w);
+    const text = words.join(' ');
     return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
@@ -184,6 +224,15 @@ function hashString(text) {
 
 // Names a group of notes by what sets it apart from the rest of the library.
 function labelFor(members, allNotes) {
+    const topicCounts = new Map();
+    members.forEach((note) => {
+        const key = topicOf(note);
+        if (!key) return;
+        const entry = topicCounts.get(key) || { name: String(note.topic).trim(), count: 0 };
+        entry.count++;
+        topicCounts.set(key, entry);
+    });
+    const dominant = [...topicCounts.entries()].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))[0];
     const pick = (namesOf) => {
         const inside = new Map();
         const everywhere = new Map();
@@ -197,6 +246,9 @@ function labelFor(members, allNotes) {
     };
     const tags = pick(tagNames);
     const concepts = pick(conceptNames);
+    if (dominant && dominant[1].count * 2 >= members.length) {
+        return { label: dominant[1].name, keys: [dominant[0]], tags: tags.slice(0, 6).map((t) => t.name), topic: dominant[1].name };
+    }
     const top = (tags.length ? tags : concepts).slice(0, 2).map((t) => t.name);
     if (!top.length) {
         const first = [...members].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))[0];

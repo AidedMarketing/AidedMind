@@ -5,6 +5,7 @@ import { fetchSource } from './extract.js';
 import { HttpError, json, readJson, sha256Hex, digestsEqual, randomToken } from './http.js';
 import { summarizeCosts } from './costs.js';
 import { checkServices } from './transcripts.js';
+import { assignTopics } from './topics.js';
 
 export const VERSION = '0.2.0';
 
@@ -121,7 +122,7 @@ const routes = [
     }, { auth: true }],
 
     ['POST', /^\/api\/analyze$/, async (request, env, user) => {
-        const { source, library, depth, concepts } = await readJson(request, MAX_ANALYZE_BYTES);
+        const { source, library, depth, concepts, topics } = await readJson(request, MAX_ANALYZE_BYTES);
         if (!source || typeof source !== 'object') throw new HttpError(400, 'Send a source to analyze.');
         const store = userStore(env, user.id);
         const month = currentMonth();
@@ -140,11 +141,34 @@ const routes = [
                 text: String(source.text || ''),
                 images: cleanImages(source.images)
             };
-            const result = await analyze(clean, library, env, typeof depth === 'string' ? depth : undefined, concepts);
+            const result = await analyze(clean, library, env, typeof depth === 'string' ? depth : undefined, { concepts, topics });
             await store.recordTokens(month, result.tokens.input, result.tokens.output);
             await store.addCost(month, `claude:${result.model}:input`, result.tokens.input);
             await store.addCost(month, `claude:${result.model}:output`, result.tokens.output);
             return json({ analysis: result.analysis, model: result.model, depth: result.depth, auto: result.auto, usage: { month, captures: reservation.captures, limit } });
+        } catch (error) {
+            await store.releaseCapture(month);
+            throw error;
+        }
+    }, { auth: true }],
+
+    // Gives existing notes a main topic, for sorting the library and map.
+    // One call handles up to 150 notes and counts as one breakdown.
+    ['POST', /^\/api\/topics$/, async (request, env, user) => {
+        const { notes, topics } = await readJson(request, 2 * 1024 * 1024);
+        const store = userStore(env, user.id);
+        const month = currentMonth();
+        const limit = monthlyLimit(user.plan, env);
+        const reservation = await store.reserveCapture(month, limit);
+        if (!reservation.ok) {
+            throw new HttpError(402, `You've used all ${limit} breakdowns for this month. They reset on the 1st.`, { usage: { month, captures: reservation.captures, limit } });
+        }
+        try {
+            const result = await assignTopics(notes, topics, env);
+            await store.recordTokens(month, result.tokens.input, result.tokens.output);
+            await store.addCost(month, `claude:${result.model}:input`, result.tokens.input);
+            await store.addCost(month, `claude:${result.model}:output`, result.tokens.output);
+            return json({ assignments: result.assignments, usage: { month, captures: reservation.captures, limit } });
         } catch (error) {
             await store.releaseCapture(month);
             throw error;
