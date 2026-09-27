@@ -14,6 +14,27 @@ const CORS_HEADERS = {
     'Access-Control-Max-Age': '86400'
 };
 
+// Photos arrive already resized on the phone (~200-400 KB each).
+export const MAX_PHOTOS = 8;
+const MAX_IMAGE_BASE64 = 5 * 1024 * 1024; // Claude's per-image limit
+const MAX_ANALYZE_BYTES = 16 * 1024 * 1024;
+const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+export function cleanImages(images) {
+    if (images === undefined || images === null) return [];
+    if (!Array.isArray(images)) throw new HttpError(400, 'images must be a list.');
+    if (images.length > MAX_PHOTOS) throw new HttpError(413, `Add up to ${MAX_PHOTOS} photos at a time.`);
+    return images.map((image, index) => {
+        const mediaType = String(image?.mediaType || '');
+        const data = String(image?.data || '');
+        if (!IMAGE_TYPES.has(mediaType)) throw new HttpError(415, `Photo ${index + 1} isn't a supported image type.`);
+        if (!data || data.length > MAX_IMAGE_BASE64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+            throw new HttpError(400, `Photo ${index + 1} couldn't be read.`);
+        }
+        return { mediaType, data };
+    });
+}
+
 export function currentMonth(date = new Date()) {
     return date.toISOString().slice(0, 7);
 }
@@ -94,7 +115,7 @@ const routes = [
     }, { auth: true }],
 
     ['POST', /^\/api\/analyze$/, async (request, env, user) => {
-        const { source, library, depth } = await readJson(request, 3 * 1024 * 1024);
+        const { source, library, depth } = await readJson(request, MAX_ANALYZE_BYTES);
         if (!source || typeof source !== 'object') throw new HttpError(400, 'Send a source to analyze.');
         const store = userStore(env, user.id);
         const month = currentMonth();
@@ -110,7 +131,8 @@ const routes = [
                 title: String(source.title || ''),
                 author: String(source.author || ''),
                 partial: Boolean(source.partial),
-                text: String(source.text || '')
+                text: String(source.text || ''),
+                images: cleanImages(source.images)
             };
             const result = await analyze(clean, library, env, typeof depth === 'string' ? depth : undefined);
             await store.recordTokens(month, result.tokens.input, result.tokens.output);

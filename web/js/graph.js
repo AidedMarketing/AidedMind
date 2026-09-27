@@ -6,7 +6,8 @@ const TYPE_COLORS = {
     youtube: '--node-youtube',
     tiktok: '--node-tiktok',
     text: '--node-text',
-    concept: '--node-concept'
+    concept: '--node-concept',
+    photo: '--node-photo'
 };
 
 export function buildGraph(notes, { showConcepts = true, focusId = null, depth = 2 } = {}) {
