@@ -73,7 +73,7 @@ export class DuplicateError extends Error {
 // the server and cleaned up here). Step 2: ask the server for the breakdown.
 export async function capture({ url, text, title, depth, photos }, notes) {
     // Links already saved open the existing note: no fetch, no Claude call.
-    const saved = url ? findDuplicate(notes, url) : null;
+    const saved = url && !text && !photos?.length ? findDuplicate(notes, url) : null;
     if (saved) throw new DuplicateError(saved);
     let source;
     if (photos?.length) {
