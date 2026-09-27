@@ -3,9 +3,80 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { HttpError } from './http.js';
 
-export const DEFAULT_MODEL = 'claude-opus-5';
 export const MAX_SOURCE_CHARS = 600000; // ~150k tokens; larger sources are rejected, never silently cut
+const QUICK_MAX_CHARS = 350000; // Haiku 4.5 has a 200K context; longer sources go to Balanced
 const MAX_LIBRARY_NOTES = 400;
+
+// Breakdown styles. Each maps to a model and reasoning level; the model ids
+// can be overridden per style with AIDEDMIND_MODEL_QUICK / _BALANCED / _THOROUGH.
+export const DEPTHS = {
+    quick: { model: 'claude-haiku-4-5', envKey: 'AIDEDMIND_MODEL_QUICK', effort: null, thinking: false },
+    balanced: { model: 'claude-sonnet-5', envKey: 'AIDEDMIND_MODEL_BALANCED', effort: 'medium', thinking: true },
+    // Opus 5.5 at medium effort out-performs Opus 5 at high while thinking
+    // less, at a lower price; thinking is always on for it (adaptive only).
+    thorough: { model: 'claude-opus-5-5', envKey: 'AIDEDMIND_MODEL_THOROUGH', effort: 'medium', thinking: true }
+};
+export const DEFAULT_DEPTH = 'auto';
+
+// Auto: pick a style from what was shared, before any model is called.
+export const AUTO_QUICK_MAX_WORDS = 600;
+export const AUTO_THOROUGH_MIN_WORDS = 12000;
+
+export function countWords(text) {
+    const matches = String(text || '').match(/\S+/g);
+    return matches ? matches.length : 0;
+}
+
+export function autoDepth(source = {}) {
+    const words = countWords(source.text);
+    if (source.partial || source.sourceType === 'tiktok' || words < AUTO_QUICK_MAX_WORDS) return 'quick';
+    if (words >= AUTO_THOROUGH_MIN_WORDS) return 'thorough';
+    return 'balanced';
+}
+
+const LENGTH_GUIDE = {
+    quick: 'Keep it brief: a 2-sentence TL;DR, 2-4 summary sections of 1-2 sentences each, an outline of about 6-10 items, 3-6 concepts.',
+    balanced: 'Keep the summary tight: 3-5 summary sections of 1-3 sentences each, an outline of about 8-15 items, 4-8 concepts.',
+    thorough: 'Go deeper where the source warrants it: up to 7 summary sections of 2-4 sentences each, an outline of up to about 25 items, up to 10 concepts.'
+};
+
+const DEPTH_CHOICES = [...Object.keys(DEPTHS), 'auto'];
+
+export function resolveDepth(depth, env = {}, source = {}) {
+    let requested = DEPTH_CHOICES.includes(depth) ? depth
+        : (DEPTH_CHOICES.includes(env.AIDEDMIND_DEFAULT_DEPTH) ? env.AIDEDMIND_DEFAULT_DEPTH : DEFAULT_DEPTH);
+    const auto = requested === 'auto';
+    let key = auto ? autoDepth(source) : requested;
+    if (key === 'quick' && String(source.text || '').length > QUICK_MAX_CHARS) key = 'balanced';
+    const config = DEPTHS[key];
+    // AIDEDMIND_MODEL is the older single-model setting; it now means Thorough.
+    const legacy = key === 'thorough' ? env.AIDEDMIND_MODEL : undefined;
+    return { depth: key, auto, ...config, model: env[config.envKey] || legacy || config.model };
+}
+
+// Server-side refusal fallback is only offered for the Opus/Fable tier.
+function supportsFallbacks(model) {
+    return /^claude-(opus-5|fable-5)/.test(model);
+}
+
+export function buildRequest(source, library, config) {
+    const request = {
+        model: config.model,
+        max_tokens: 16000,
+        system: SYSTEM_PROMPT,
+        output_config: { format: { type: 'json_schema', schema: ANALYSIS_SCHEMA } },
+        messages: [{ role: 'user', content: buildUserContent(source, library, config.depth) }]
+    };
+    if (config.thinking) request.thinking = { type: 'adaptive' };
+    if (config.effort) request.output_config.effort = config.effort;
+    if (supportsFallbacks(config.model)) {
+        // Re-runs the request on Anthropic's recommended model if a safety
+        // classifier declines it, instead of returning a refusal.
+        request.betas = ['server-side-fallback-2026-07-01'];
+        request.fallbacks = 'default';
+    }
+    return request;
+}
 
 export const ANALYSIS_SCHEMA = {
     type: 'object',
@@ -16,7 +87,7 @@ export const ANALYSIS_SCHEMA = {
         tldr: { type: 'string', description: 'Two or three sentences capturing the core point' },
         summary: {
             type: 'array',
-            description: 'Broken-down summary: one entry per major section or idea, in source order',
+            description: 'Concise summary: one entry per major idea, in source order. Short, plain sentences; no filler.',
             items: {
                 type: 'object',
                 additionalProperties: false,
@@ -29,7 +100,7 @@ export const ANALYSIS_SCHEMA = {
         },
         outline: {
             type: 'array',
-            description: 'Hierarchical outline flattened in reading order; level 1 is top level, up to level 3',
+            description: 'Skimmable outline flattened in reading order; level 1 is top level, up to level 3. Short phrases, not sentences.',
             items: {
                 type: 'object',
                 additionalProperties: false,
@@ -54,8 +125,8 @@ export const ANALYSIS_SCHEMA = {
             }
         },
         tags: { type: 'array', items: { type: 'string' }, description: '3-8 lowercase topic tags, hyphenated' },
-        quotes: { type: 'array', items: { type: 'string' }, description: 'Up to 5 verbatim lines worth keeping' },
-        takeaways: { type: 'array', items: { type: 'string' }, description: 'Actionable or memorable takeaways' },
+        quotes: { type: 'array', items: { type: 'string' }, description: 'The 3-5 most striking or useful lines, verbatim from the source' },
+        takeaways: { type: 'array', items: { type: 'string' }, description: '3-7 specific, actionable or memorable takeaways, each a complete sentence the reader could act on or remember' },
         connections: {
             type: 'array',
             description: 'Links to existing library notes that are genuinely related. Empty if none.',
@@ -76,7 +147,7 @@ export const ANALYSIS_SCHEMA = {
 const SYSTEM_PROMPT = `You are the analysis engine for AidedMind, a personal knowledge library.
 You receive one captured source (an article, a video transcript, a short-video caption, or pasted notes) and a compact index of notes already in the library.
 
-Produce a faithful breakdown of the source: a TL;DR, a sectioned summary, a hierarchical outline, key concepts, tags, notable quotes, and takeaways. Stay grounded in what the source actually says; do not add outside facts. Quotes must be verbatim from the source. If the source is thin (for example only a caption), keep the breakdown proportionally short and say in the TL;DR that only partial content was available.
+Produce a faithful breakdown of the source: a TL;DR, a sectioned summary, a hierarchical outline, key concepts, tags, notable quotes, and takeaways. The summary and outline are for skimming, so keep them concise; put the most care into the quotes and takeaways, which the reader values most. Stay grounded in what the source actually says; do not add outside facts. Quotes must be verbatim from the source. If the source is thin (for example only a caption), keep the breakdown proportionally short and say in the TL;DR that only partial content was available.
 
 For connections, only link to notes from the provided library index, using their exact ids, and only when there is a real conceptual relationship. Prefer a few strong links over many weak ones. Reuse concept names that already appear in the library index when they refer to the same idea, so the knowledge graph links up.
 
@@ -95,7 +166,7 @@ export function compactLibrary(library) {
         .filter((note) => note.id);
 }
 
-function buildUserContent(source, library) {
+function buildUserContent(source, library, depth = 'balanced') {
     const header = [
         `Source type: ${source.sourceType}`,
         source.title ? `Title: ${source.title}` : null,
@@ -117,7 +188,7 @@ function buildUserContent(source, library) {
         },
         {
             type: 'text',
-            text: 'Break down the captured source above and suggest connections to the library index.'
+            text: `Break down the captured source above and suggest connections to the library index. ${LENGTH_GUIDE[depth] || LENGTH_GUIDE.balanced}`
         }
     ];
 }
@@ -150,7 +221,7 @@ export function normalize(raw, libraryIds) {
     };
 }
 
-export async function analyze(source, rawLibrary, env) {
+export async function analyze(source, rawLibrary, env, depth) {
     if (typeof source?.text !== 'string' || !source.text.trim()) throw new HttpError(400, 'Nothing to analyze.');
     if (source.text.length > MAX_SOURCE_CHARS) {
         throw new HttpError(413, `This source is too long to analyze in one pass (${source.text.length.toLocaleString()} characters; limit ${MAX_SOURCE_CHARS.toLocaleString()}). Paste a section instead.`);
@@ -160,22 +231,16 @@ export async function analyze(source, rawLibrary, env) {
     const libraryIds = new Set(library.map((note) => note.id));
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, baseURL: env.ANTHROPIC_BASE_URL || undefined, timeout: 5 * 60 * 1000 });
 
+    const config = resolveDepth(depth, env, source);
+    const request = buildRequest(source, library, config);
+
     let message;
     try {
         // Non-streaming on purpose: parsing hundreds of SSE events costs Worker
         // CPU time, while waiting on one response costs none.
-        message = await client.beta.messages.create({
-            model: env.AIDEDMIND_MODEL || DEFAULT_MODEL,
-            max_tokens: 16000,
-            // Re-runs the request on Anthropic's recommended model if a safety
-            // classifier declines it, instead of returning a refusal.
-            betas: ['server-side-fallback-2026-07-01'],
-            fallbacks: 'default',
-            thinking: { type: 'adaptive' },
-            system: SYSTEM_PROMPT,
-            output_config: { format: { type: 'json_schema', schema: ANALYSIS_SCHEMA } },
-            messages: [{ role: 'user', content: buildUserContent(source, library) }]
-        });
+        message = request.betas
+            ? await client.beta.messages.create(request)
+            : await client.messages.create(request);
     } catch (error) {
         if (error instanceof Anthropic.AuthenticationError) throw new HttpError(500, 'The server\'s Anthropic API key was rejected.');
         if (error instanceof Anthropic.RateLimitError) throw new HttpError(429, 'Claude is busy right now. Try again in a minute.');
@@ -196,24 +261,30 @@ export async function analyze(source, rawLibrary, env) {
     return {
         analysis: normalize(parsed, libraryIds),
         model: message.model,
+        depth: config.depth,
+        auto: config.auto,
         tokens: { input: message.usage.input_tokens, output: message.usage.output_tokens }
     };
 }
 
-// Confirms the API key can use the configured model (free; no tokens spent).
+// Confirms the API key can use every configured model (free; no tokens spent).
 // Returns null when fine, or a short reason code safe to show publicly.
 export async function checkModel(env) {
     if (!env.ANTHROPIC_API_KEY) return 'missing_api_key';
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, baseURL: env.ANTHROPIC_BASE_URL || undefined, timeout: 15000, maxRetries: 1 });
-    try {
-        await client.models.retrieve(env.AIDEDMIND_MODEL || DEFAULT_MODEL);
-        return null;
-    } catch (error) {
-        if (error instanceof Anthropic.AuthenticationError) return 'api_key_rejected';
-        if (error instanceof Anthropic.PermissionDeniedError) return 'api_key_not_permitted';
-        if (error instanceof Anthropic.NotFoundError) return 'model_not_available';
-        if (error instanceof Anthropic.RateLimitError) return 'rate_limited';
-        if (error instanceof Anthropic.APIError && error.status) return `anthropic_error_${error.status}`;
-        return 'anthropic_unreachable';
+    for (const depth of Object.keys(DEPTHS)) {
+        const { model } = resolveDepth(depth, env);
+        try {
+            await client.models.retrieve(model);
+        } catch (error) {
+            let code = 'anthropic_unreachable';
+            if (error instanceof Anthropic.AuthenticationError) code = 'api_key_rejected';
+            else if (error instanceof Anthropic.PermissionDeniedError) code = 'api_key_not_permitted';
+            else if (error instanceof Anthropic.NotFoundError) code = 'model_not_available';
+            else if (error instanceof Anthropic.RateLimitError) code = 'rate_limited';
+            else if (error instanceof Anthropic.APIError && error.status) code = `anthropic_error_${error.status}`;
+            return code === 'model_not_available' ? `${code}:${depth}` : code;
+        }
     }
+    return null;
 }

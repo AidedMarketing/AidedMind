@@ -4,9 +4,9 @@ const USAGE_KEY = 'aidedmind.usage';
 
 export function getSettings() {
     try {
-        return { serverUrl: '', token: '', showConcepts: true, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+        return { serverUrl: '', token: '', showConcepts: true, depth: 'auto', ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
     } catch {
-        return { serverUrl: '', token: '', showConcepts: true };
+        return { serverUrl: '', token: '', showConcepts: true, depth: 'auto' };
     }
 }
 
@@ -62,7 +62,7 @@ function libraryIndex(notes) {
 
 // Step 1: turn a link or pasted text into source text (articles are fetched by
 // the server and cleaned up here). Step 2: ask the server for the breakdown.
-export async function capture({ url, text, title }, notes) {
+export async function capture({ url, text, title, depth }, notes) {
     let source;
     if (text) {
         source = { sourceType: 'text', url: url || '', title: title || '', author: '', text };
@@ -75,9 +75,9 @@ export async function capture({ url, text, title }, notes) {
             source = fetched;
         }
     }
-    const result = await request('POST', '/analyze', { source, library: libraryIndex(notes) });
+    const result = await request('POST', '/analyze', { source, library: libraryIndex(notes), depth: depth || getSettings().depth });
     setLastUsage(result.usage);
-    return { source, analysis: result.analysis, model: result.model, usage: result.usage };
+    return { source, analysis: result.analysis, model: result.model, depth: result.depth, auto: result.auto, usage: result.usage };
 }
 
 export function getLastUsage() {

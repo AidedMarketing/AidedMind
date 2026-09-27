@@ -47,7 +47,7 @@ test('deep health explains why the model check failed', async (t) => {
         problems: { model: 'api_key_rejected' }
     });
     status = 404;
-    assert.strictEqual((await (await call(app, env, 'GET', '/api/health?deep=1')).json()).problems.model, 'model_not_available');
+    assert.strictEqual((await (await call(app, env, 'GET', '/api/health?deep=1')).json()).problems.model, 'model_not_available:quick');
     status = 200;
     const good = await (await call(app, env, 'GET', '/api/health?deep=1')).json();
     assert.strictEqual(good.ok, true);
@@ -68,7 +68,7 @@ test('analyze calls Claude, keeps only known connections and meters usage', asyn
     const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
     const res = await call(app, env, 'POST', '/api/analyze', {
         token: 'owner-secret',
-        body: { source: { sourceType: 'text', text: 'hello world', title: 'Mine' }, library: [{ id: 'n1', title: 'Other' }] }
+        body: { source: { sourceType: 'text', text: 'hello world', title: 'Mine' }, library: [{ id: 'n1', title: 'Other' }], depth: 'balanced' }
     });
     const data = await res.json();
     assert.strictEqual(res.status, 200, JSON.stringify(data));
@@ -77,15 +77,71 @@ test('analyze calls Claude, keeps only known connections and meters usage', asyn
     assert.deepStrictEqual(data.usage.limit, null);
 
     const sent = stub.requests[0];
-    assert.strictEqual(sent.url, '/v1/messages?beta=true');
-    assert.match(sent.headers['anthropic-beta'], /server-side-fallback-2026-07-01/);
-    assert.strictEqual(sent.body.model, 'claude-opus-5');
-    assert.strictEqual(sent.body.fallbacks, 'default');
+    assert.strictEqual(sent.url, '/v1/messages');
+    assert.strictEqual(sent.body.model, 'claude-sonnet-5');
+    assert.strictEqual(sent.body.fallbacks, undefined);
+    assert.deepStrictEqual(sent.body.thinking, { type: 'adaptive' });
+    assert.strictEqual(sent.body.output_config.effort, 'medium');
     assert.strictEqual(sent.body.output_config.format.type, 'json_schema');
     assert.deepStrictEqual(sent.body.messages[0].content.map((b) => b.type), ['text', 'document', 'text']);
+    assert.match(sent.body.messages[0].content[2].text, /3-5 summary sections/);
+    assert.strictEqual(data.depth, 'balanced');
 
     const usage = await env.STORE.get('user:owner').usageFor(new Date().toISOString().slice(0, 7));
     assert.deepStrictEqual(usage, { captures: 1, inputTokens: 120, outputTokens: 40 });
+});
+
+test('breakdown styles pick the right model and options', async (t) => {
+    const stub = await anthropicStub(() => claudeReply());
+    t.after(() => stub.close());
+    const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
+    const send = (depth, text = 'hello world') => call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: { source: { text }, library: [], depth } });
+
+    assert.strictEqual((await (await send('quick')).json()).depth, 'quick');
+    let sent = stub.requests.at(-1);
+    assert.strictEqual(sent.url, '/v1/messages');
+    assert.strictEqual(sent.body.model, 'claude-haiku-4-5');
+    assert.strictEqual(sent.body.thinking, undefined);
+    assert.strictEqual(sent.body.output_config.effort, undefined);
+    assert.match(sent.body.messages[0].content[2].text, /Keep it brief/);
+
+    assert.strictEqual((await (await send('thorough')).json()).depth, 'thorough');
+    sent = stub.requests.at(-1);
+    assert.strictEqual(sent.url, '/v1/messages?beta=true');
+    assert.strictEqual(sent.body.model, 'claude-opus-5-5');
+    assert.strictEqual(sent.body.fallbacks, 'default');
+    assert.match(sent.headers['anthropic-beta'], /server-side-fallback-2026-07-01/);
+    assert.deepStrictEqual(sent.body.thinking, { type: 'adaptive' });
+    assert.strictEqual(sent.body.output_config.effort, 'medium');
+
+    // Unknown styles fall back to the default (Auto); very long sources skip Quick.
+    const unknown = await (await send('turbo')).json();
+    assert.deepStrictEqual([unknown.depth, unknown.auto], ['quick', true]);
+    assert.strictEqual((await (await send('quick', 'x'.repeat(400000))).json()).depth, 'balanced');
+
+    // Per-style model overrides from wrangler vars.
+    const custom = fakeEnv({ ANTHROPIC_BASE_URL: stub.url, AIDEDMIND_MODEL_BALANCED: 'claude-opus-5', AIDEDMIND_DEFAULT_DEPTH: 'balanced' });
+    await call(app, custom, 'POST', '/api/analyze', { token: 'owner-secret', body: { source: { text: 'hi' }, library: [] } });
+    assert.strictEqual(stub.requests.at(-1).body.model, 'claude-opus-5');
+    assert.strictEqual(stub.requests.at(-1).body.fallbacks, 'default');
+});
+
+test('auto style picks from what was shared', async (t) => {
+    const stub = await anthropicStub(() => claudeReply());
+    t.after(() => stub.close());
+    const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
+    const words = (n) => Array.from({ length: n }, (_, i) => `word${i % 50}`).join(' ');
+    const send = async (source) => {
+        const data = await (await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: { source, library: [] } })).json();
+        return [data.depth, data.auto, stub.requests.at(-1).body.model];
+    };
+    assert.deepStrictEqual(await send({ sourceType: 'text', text: words(300) }), ['quick', true, 'claude-haiku-4-5']);
+    assert.deepStrictEqual(await send({ sourceType: 'tiktok', text: words(900), partial: true }), ['quick', true, 'claude-haiku-4-5']);
+    assert.deepStrictEqual(await send({ sourceType: 'article', text: words(2500) }), ['balanced', true, 'claude-sonnet-5']);
+    assert.deepStrictEqual(await send({ sourceType: 'youtube', text: words(15000) }), ['thorough', true, 'claude-opus-5-5']);
+    // An explicit style is honored and not marked auto.
+    const fixed = await (await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: { source: { text: words(300) }, library: [], depth: 'thorough' } })).json();
+    assert.deepStrictEqual([fixed.depth, fixed.auto], ['thorough', false]);
 });
 
 test('accounts: owner creates users, free plan quota enforced, failures refunded', async (t) => {

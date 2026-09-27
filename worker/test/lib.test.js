@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { classifyUrl, youtubeId, decodeEntities, isPrivateAddress, assertPublicUrl, substackApiUrl, fetchSource } from '../src/extract.js';
-import { normalize, compactLibrary, analyze, ANALYSIS_SCHEMA } from '../src/analyze.js';
+import { normalize, compactLibrary, analyze, ANALYSIS_SCHEMA, autoDepth, countWords } from '../src/analyze.js';
 import { sqlStore } from './helpers.js';
 
 test('classifies source URLs', () => {
@@ -101,4 +101,15 @@ test('blocked substack page falls back to the post API', async (t) => {
 
     globalThis.fetch = async () => new Response('blocked', { status: 403 });
     await assert.rejects(fetchSource('https://example.com/not-substack'), /responded with 403/);
+});
+
+test('auto depth thresholds', () => {
+    assert.strictEqual(countWords('  one two\nthree  '), 3);
+    const words = (n) => 'w '.repeat(n);
+    assert.strictEqual(autoDepth({ text: words(599) }), 'quick');
+    assert.strictEqual(autoDepth({ text: words(600) }), 'balanced');
+    assert.strictEqual(autoDepth({ text: words(11999) }), 'balanced');
+    assert.strictEqual(autoDepth({ text: words(12000) }), 'thorough');
+    assert.strictEqual(autoDepth({ text: words(5000), sourceType: 'tiktok' }), 'quick');
+    assert.strictEqual(autoDepth({ text: words(5000), partial: true }), 'quick');
 });
