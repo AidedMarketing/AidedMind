@@ -26,6 +26,7 @@ iPhone                                   Cloudflare (free plan)                 
 └───────────────────────────┘            └─────────────────────────────┘
 ```
 
+- **Updates itself.** A new version downloads in the background when you open the app and reloads it on its own (or offers a *Reload* button if you're in the middle of something). Settings shows the version you're running.
 - **Nothing to babysit.** Cloudflare Workers don't sleep, the inbox and usage live in durable SQLite storage, and inbox items clean themselves up after 30 days.
 - **Low server cost.** The Worker only moves data and waits on Claude. Article pages are cleaned up on the phone (Readability), which keeps each request well inside the free plan's CPU limit.
 - **Your notes stay on your phone.** Each breakdown request carries a compact index of your library (titles, TL;DRs, concept names) so Claude can suggest connections; the server doesn't keep notes.
@@ -72,7 +73,7 @@ After this, deploys, dependency updates and monitoring run by themselves.
 5. **GitHub (hands-off updates):**
    - *Settings → General*: turn on **Allow auto-merge**.
    - *Settings → Rules → Rulesets*: add a rule for `main` that **requires the `test` status check**. Dependabot's weekly minor/patch updates then merge themselves once CI passes, and Cloudflare deploys them. Major version bumps wait for you.
-   - *Settings → Secrets and variables → Actions → Variables*: add `APP_URL` = your Worker URL (e.g. `https://aidedmind.<you>.workers.dev`). A daily health check then verifies the app, its storage and your Claude key, and **GitHub emails you if it fails**.
+   - *Settings → Secrets and variables → Actions → Variables*: add `APP_URL` = your Worker URL (e.g. `https://aidedmind.<you>.workers.dev`). A daily health check then verifies the app, its storage, your Claude key and your Gemini and Supadata keys, and **GitHub emails you if any of them fails**. If you don't use a transcript service, add `EXPECT_SERVICES` listing the ones you do (e.g. `gemini`), or `none`.
 6. **iPhone:** open the Worker URL in Safari → Share → **Add to Home Screen**. Open it, go to Settings, paste your `OWNER_TOKEN`, tap **Save & Test**, then follow *Save from the Share button*.
 
 ## Accounts and the path to paid

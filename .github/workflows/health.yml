@@ -1,5 +1,11 @@
-# Daily check that the live app, its storage and the Claude API key all work.
-# A failed scheduled run makes GitHub email the repository owner.
+# Daily check that the live app, its storage, the Claude API key and the
+# transcript keys all work. A failed scheduled run makes GitHub email the
+# repository owner.
+#
+# Repository variables (Settings > Secrets and variables > Actions > Variables):
+#   APP_URL          your Worker URL; required to enable the check
+#   EXPECT_SERVICES  transcript services that must be set up and working,
+#                    comma-separated (default "gemini,supadata"); "none" skips them
 name: Health check
 
 on:
@@ -17,16 +23,28 @@ jobs:
       - name: Check /api/health
         env:
           APP_URL: ${{ vars.APP_URL }}
+          EXPECT_SERVICES: ${{ vars.EXPECT_SERVICES || 'gemini,supadata' }}
         run: |
           if [ -z "$APP_URL" ]; then
             echo "::notice::Set the APP_URL repository variable (Settings > Secrets and variables > Actions > Variables) to enable monitoring."
             exit 0
           fi
+          check() {
+            echo "$1" | jq -e '.ok == true' > /dev/null || { echo "app, storage or Claude key failing"; return 1; }
+            [ "$EXPECT_SERVICES" = "none" ] && return 0
+            for service in ${EXPECT_SERVICES//,/ }; do
+              echo "$1" | jq -e --arg s "$service" '.services[$s] == true' > /dev/null \
+                || { echo "$service key is missing (add it as a Secret in Cloudflare)"; return 1; }
+              problem=$(echo "$1" | jq -r --arg s "$service" '.serviceProblems[$s] // empty')
+              [ -z "$problem" ] || { echo "$service key problem: $problem"; return 1; }
+            done
+          }
           for attempt in 1 2 3; do
             body=$(curl -sS --max-time 30 "$APP_URL/api/health?deep=1" || true)
             echo "attempt $attempt: $body"
-            if echo "$body" | grep -q '"ok":true'; then exit 0; fi
-            sleep 60
+            if reason=$(check "$body"); then exit 0; fi
+            echo "$reason"
+            [ "$attempt" -lt 3 ] && sleep 60
           done
-          echo "::error::AidedMind health check failed: $body"
+          echo "::error::AidedMind health check failed: $reason"
           exit 1

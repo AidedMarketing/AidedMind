@@ -1,5 +1,5 @@
 // App shell cache. API calls always go to the network.
-const CACHE_NAME = 'aidedmind-v10';
+const CACHE_NAME = 'aidedmind-v11';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -47,16 +47,8 @@ self.addEventListener('fetch', (event) => {
         );
         return;
     }
-    event.respondWith(
-        caches.match(request).then((cached) => {
-            const network = fetch(request).then((response) => {
-                if (response.ok) {
-                    const copy = response.clone();
-                    caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-                }
-                return response;
-            });
-            return cached || network;
-        })
-    );
+    // App files come only from this version's cache, filled in one go at
+    // install. Refreshing them one by one in the background could mix files
+    // from two versions; a new version arrives as a new service worker.
+    event.respondWith(caches.match(request).then((cached) => cached || fetch(request)));
 });
