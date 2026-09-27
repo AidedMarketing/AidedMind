@@ -11,13 +11,14 @@ const SOURCE_LABELS = { article: 'Article', youtube: 'YouTube', tiktok: 'TikTok'
 const SOURCE_ICONS = { article: 'article', youtube: 'youtube', tiktok: 'tiktok', text: 'text', concept: 'concept' };
 const NOTE_TABS = ['Summary', 'Outline', 'Links', 'Notes'];
 const DEPTH_INFO = {
+    auto: { label: 'Auto', detail: 'Picks for each link: Quick for TikToks and short posts, Balanced for most articles and videos, Thorough for very long pieces.' },
     quick: { label: 'Quick', detail: 'Fastest and cheapest (Claude Haiku). Short summary; great for TikToks and short posts.' },
     balanced: { label: 'Balanced', detail: 'Fast, with a tight summary and strong quotes and takeaways (Claude Sonnet). Best for most things.' },
     thorough: { label: 'Thorough', detail: 'Deepest reasoning (Claude Opus). Slower and uses the most; for long or dense pieces.' }
 };
 
 function depthLabel(depth) {
-    return DEPTH_INFO[depth]?.label || DEPTH_INFO.balanced.label;
+    return DEPTH_INFO[depth]?.label || DEPTH_INFO.auto.label;
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 
@@ -199,7 +200,8 @@ function buildNote(result, title) {
         connections: a.connections,
         userNotes: '',
         model: result.model,
-        depth: result.depth
+        depth: result.depth,
+        autoDepth: Boolean(result.auto)
     };
 }
 
@@ -515,7 +517,7 @@ function notePanel(name, note, byId) {
     return [
         userNotes,
         note.sourceText ? [h('div', { class: 'section-label' }, 'Captured source'), h('details', { class: 'card' }, h('summary', {}, 'Show full text'), h('div', { class: 'source-text' }, note.sourceText))] : null,
-        note.model ? h('p', { class: 'group-footer' }, `${note.depth ? `${depthLabel(note.depth)} breakdown` : 'Breakdown'} by ${note.model}`) : null
+        note.model ? h('p', { class: 'group-footer' }, `${note.depth ? `${note.autoDepth ? 'Auto → ' : ''}${depthLabel(note.depth)} breakdown` : 'Breakdown'} by ${note.model}`) : null
     ];
 }
 
@@ -557,7 +559,7 @@ async function reanalyze(note, depth) {
     try {
         const result = await capture({ text: note.sourceText, title: note.source?.title || note.title, depth }, notes.filter((n) => n.id !== note.id));
         const fresh = buildNote(result, note.title);
-        ['tldr', 'summary', 'outline', 'concepts', 'tags', 'quotes', 'takeaways', 'connections', 'model', 'depth'].forEach((key) => { note[key] = fresh[key]; });
+        ['tldr', 'summary', 'outline', 'concepts', 'tags', 'quotes', 'takeaways', 'connections', 'model', 'depth', 'autoDepth'].forEach((key) => { note[key] = fresh[key]; });
         await saveNote(note);
         notes = await allNotes();
         toast('Updated');
@@ -731,7 +733,7 @@ function settingsView() {
 
         h('div', { class: 'section-label' }, 'Breakdown style'),
         (() => {
-            const detail = h('p', { class: 'small muted', style: { margin: '10px 2px 0' } }, DEPTH_INFO[settings.depth]?.detail || DEPTH_INFO.balanced.detail);
+            const detail = h('p', { class: 'small muted', style: { margin: '10px 2px 0' } }, DEPTH_INFO[settings.depth]?.detail || DEPTH_INFO.auto.detail);
             const control = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'Breakdown style' });
             const paint = () => [...control.children].forEach((b) => {
                 const on = b.dataset.depth === settings.depth;

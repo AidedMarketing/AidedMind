@@ -4,9 +4,9 @@ const USAGE_KEY = 'aidedmind.usage';
 
 export function getSettings() {
     try {
-        return { serverUrl: '', token: '', showConcepts: true, depth: 'balanced', ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+        return { serverUrl: '', token: '', showConcepts: true, depth: 'auto', ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
     } catch {
-        return { serverUrl: '', token: '', showConcepts: true, depth: 'balanced' };
+        return { serverUrl: '', token: '', showConcepts: true, depth: 'auto' };
     }
 }
 
@@ -77,7 +77,7 @@ export async function capture({ url, text, title, depth }, notes) {
     }
     const result = await request('POST', '/analyze', { source, library: libraryIndex(notes), depth: depth || getSettings().depth });
     setLastUsage(result.usage);
-    return { source, analysis: result.analysis, model: result.model, depth: result.depth, usage: result.usage };
+    return { source, analysis: result.analysis, model: result.model, depth: result.depth, auto: result.auto, usage: result.usage };
 }
 
 export function getLastUsage() {

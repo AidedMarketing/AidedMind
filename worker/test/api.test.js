@@ -68,7 +68,7 @@ test('analyze calls Claude, keeps only known connections and meters usage', asyn
     const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
     const res = await call(app, env, 'POST', '/api/analyze', {
         token: 'owner-secret',
-        body: { source: { sourceType: 'text', text: 'hello world', title: 'Mine' }, library: [{ id: 'n1', title: 'Other' }] }
+        body: { source: { sourceType: 'text', text: 'hello world', title: 'Mine' }, library: [{ id: 'n1', title: 'Other' }], depth: 'balanced' }
     });
     const data = await res.json();
     assert.strictEqual(res.status, 200, JSON.stringify(data));
@@ -114,8 +114,9 @@ test('breakdown styles pick the right model and options', async (t) => {
     assert.deepStrictEqual(sent.body.thinking, { type: 'adaptive' });
     assert.strictEqual(sent.body.output_config.effort, 'medium');
 
-    // Unknown styles fall back to the default; very long sources skip Quick.
-    assert.strictEqual((await (await send('turbo')).json()).depth, 'balanced');
+    // Unknown styles fall back to the default (Auto); very long sources skip Quick.
+    const unknown = await (await send('turbo')).json();
+    assert.deepStrictEqual([unknown.depth, unknown.auto], ['quick', true]);
     assert.strictEqual((await (await send('quick', 'x'.repeat(400000))).json()).depth, 'balanced');
 
     // Per-style model overrides from wrangler vars.
@@ -123,6 +124,24 @@ test('breakdown styles pick the right model and options', async (t) => {
     await call(app, custom, 'POST', '/api/analyze', { token: 'owner-secret', body: { source: { text: 'hi' }, library: [] } });
     assert.strictEqual(stub.requests.at(-1).body.model, 'claude-opus-5');
     assert.strictEqual(stub.requests.at(-1).body.fallbacks, 'default');
+});
+
+test('auto style picks from what was shared', async (t) => {
+    const stub = await anthropicStub(() => claudeReply());
+    t.after(() => stub.close());
+    const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
+    const words = (n) => Array.from({ length: n }, (_, i) => `word${i % 50}`).join(' ');
+    const send = async (source) => {
+        const data = await (await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: { source, library: [] } })).json();
+        return [data.depth, data.auto, stub.requests.at(-1).body.model];
+    };
+    assert.deepStrictEqual(await send({ sourceType: 'text', text: words(300) }), ['quick', true, 'claude-haiku-4-5']);
+    assert.deepStrictEqual(await send({ sourceType: 'tiktok', text: words(900), partial: true }), ['quick', true, 'claude-haiku-4-5']);
+    assert.deepStrictEqual(await send({ sourceType: 'article', text: words(2500) }), ['balanced', true, 'claude-sonnet-5']);
+    assert.deepStrictEqual(await send({ sourceType: 'youtube', text: words(15000) }), ['thorough', true, 'claude-opus-5-5']);
+    // An explicit style is honored and not marked auto.
+    const fixed = await (await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: { source: { text: words(300) }, library: [], depth: 'thorough' } })).json();
+    assert.deepStrictEqual([fixed.depth, fixed.auto], ['thorough', false]);
 });
 
 test('accounts: owner creates users, free plan quota enforced, failures refunded', async (t) => {

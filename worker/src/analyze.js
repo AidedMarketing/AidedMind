@@ -16,7 +16,23 @@ export const DEPTHS = {
     // less, at a lower price; thinking is always on for it (adaptive only).
     thorough: { model: 'claude-opus-5-5', envKey: 'AIDEDMIND_MODEL_THOROUGH', effort: 'medium', thinking: true }
 };
-export const DEFAULT_DEPTH = 'balanced';
+export const DEFAULT_DEPTH = 'auto';
+
+// Auto: pick a style from what was shared, before any model is called.
+export const AUTO_QUICK_MAX_WORDS = 600;
+export const AUTO_THOROUGH_MIN_WORDS = 12000;
+
+export function countWords(text) {
+    const matches = String(text || '').match(/\S+/g);
+    return matches ? matches.length : 0;
+}
+
+export function autoDepth(source = {}) {
+    const words = countWords(source.text);
+    if (source.partial || source.sourceType === 'tiktok' || words < AUTO_QUICK_MAX_WORDS) return 'quick';
+    if (words >= AUTO_THOROUGH_MIN_WORDS) return 'thorough';
+    return 'balanced';
+}
 
 const LENGTH_GUIDE = {
     quick: 'Keep it brief: a 2-sentence TL;DR, 2-4 summary sections of 1-2 sentences each, an outline of about 6-10 items, 3-6 concepts.',
@@ -24,13 +40,18 @@ const LENGTH_GUIDE = {
     thorough: 'Go deeper where the source warrants it: up to 7 summary sections of 2-4 sentences each, an outline of up to about 25 items, up to 10 concepts.'
 };
 
-export function resolveDepth(depth, env = {}, textLength = 0) {
-    let key = Object.hasOwn(DEPTHS, depth) ? depth : (Object.hasOwn(DEPTHS, env.AIDEDMIND_DEFAULT_DEPTH) ? env.AIDEDMIND_DEFAULT_DEPTH : DEFAULT_DEPTH);
-    if (key === 'quick' && textLength > QUICK_MAX_CHARS) key = 'balanced';
+const DEPTH_CHOICES = [...Object.keys(DEPTHS), 'auto'];
+
+export function resolveDepth(depth, env = {}, source = {}) {
+    let requested = DEPTH_CHOICES.includes(depth) ? depth
+        : (DEPTH_CHOICES.includes(env.AIDEDMIND_DEFAULT_DEPTH) ? env.AIDEDMIND_DEFAULT_DEPTH : DEFAULT_DEPTH);
+    const auto = requested === 'auto';
+    let key = auto ? autoDepth(source) : requested;
+    if (key === 'quick' && String(source.text || '').length > QUICK_MAX_CHARS) key = 'balanced';
     const config = DEPTHS[key];
     // AIDEDMIND_MODEL is the older single-model setting; it now means Thorough.
     const legacy = key === 'thorough' ? env.AIDEDMIND_MODEL : undefined;
-    return { depth: key, ...config, model: env[config.envKey] || legacy || config.model };
+    return { depth: key, auto, ...config, model: env[config.envKey] || legacy || config.model };
 }
 
 // Server-side refusal fallback is only offered for the Opus/Fable tier.
@@ -145,7 +166,7 @@ export function compactLibrary(library) {
         .filter((note) => note.id);
 }
 
-function buildUserContent(source, library, depth = DEFAULT_DEPTH) {
+function buildUserContent(source, library, depth = 'balanced') {
     const header = [
         `Source type: ${source.sourceType}`,
         source.title ? `Title: ${source.title}` : null,
@@ -167,7 +188,7 @@ function buildUserContent(source, library, depth = DEFAULT_DEPTH) {
         },
         {
             type: 'text',
-            text: `Break down the captured source above and suggest connections to the library index. ${LENGTH_GUIDE[depth] || LENGTH_GUIDE[DEFAULT_DEPTH]}`
+            text: `Break down the captured source above and suggest connections to the library index. ${LENGTH_GUIDE[depth] || LENGTH_GUIDE.balanced}`
         }
     ];
 }
@@ -210,7 +231,7 @@ export async function analyze(source, rawLibrary, env, depth) {
     const libraryIds = new Set(library.map((note) => note.id));
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, baseURL: env.ANTHROPIC_BASE_URL || undefined, timeout: 5 * 60 * 1000 });
 
-    const config = resolveDepth(depth, env, source.text.length);
+    const config = resolveDepth(depth, env, source);
     const request = buildRequest(source, library, config);
 
     let message;
@@ -241,6 +262,7 @@ export async function analyze(source, rawLibrary, env, depth) {
         analysis: normalize(parsed, libraryIds),
         model: message.model,
         depth: config.depth,
+        auto: config.auto,
         tokens: { input: message.usage.input_tokens, output: message.usage.output_tokens }
     };
 }
