@@ -4,6 +4,7 @@ import { analyze, checkModel } from './analyze.js';
 import { fetchSource } from './extract.js';
 import { HttpError, json, readJson, sha256Hex, digestsEqual, randomToken } from './http.js';
 import { summarizeCosts } from './costs.js';
+import { checkServices } from './transcripts.js';
 
 export const VERSION = '0.2.0';
 
@@ -95,7 +96,12 @@ const routes = [
         const ok = Object.values(checks).every(Boolean);
         // Optional services: reported, but never make the app unhealthy.
         const services = { gemini: Boolean(env.GEMINI_API_KEY), supadata: Boolean(env.SUPADATA_API_KEY) };
-        return json({ ok, version: VERSION, checks, services, ...(ok ? {} : { problems }) }, ok ? 200 : 503);
+        const serviceProblems = url.searchParams.get('deep') === '1' ? await checkServices(env) : {};
+        return json({
+            ok, version: VERSION, checks, services,
+            ...(Object.keys(serviceProblems).length ? { serviceProblems } : {}),
+            ...(ok ? {} : { problems })
+        }, ok ? 200 : 503);
     }],
 
     ['POST', /^\/api\/auth-check$/, async (request, env, user) => {

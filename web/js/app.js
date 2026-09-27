@@ -201,7 +201,8 @@ function buildNote(result, title) {
             siteName: result.source.siteName,
             thumbnail: result.source.thumbnail,
             partial: result.source.partial,
-            transcriptSource: result.source.transcriptSource || ''
+            transcriptSource: result.source.transcriptSource || '',
+            transcriptError: result.source.transcriptError || ''
         },
         sourceText: result.source.text,
         title: title || a.title || result.source.title || 'Untitled',
@@ -231,7 +232,12 @@ async function runCapture({ input, title, photos = [] }) {
         if (!url && !text) throw new Error('Paste a link or some text first.');
         result = await capture({ url, text, title }, notes);
     }
-    const note = buildNote(result, title);
+    let note = buildNote(result, title);
+    const previous = result.replaces && notes.find((n) => n.id === result.replaces);
+    if (previous) {
+        // A retried caption-only note keeps its place and anything you wrote.
+        note = { ...note, id: previous.id, createdAt: previous.createdAt, userNotes: previous.userNotes || '' };
+    }
     await saveNote(note);
     notes = await allNotes();
     return note;
@@ -514,7 +520,11 @@ function noteView(id) {
         note.photos?.length ? h('div', { class: 'photo-strip note-photos' },
             note.photos.map((src, index) => h('div', { class: 'photo-thumb' }, h('img', { src, alt: `Photo ${index + 1}` })))) : null,
         h('div', { class: 'tldr-card' }, h('span', { class: 'label' }, 'In short'), note.tldr),
-        note.source?.partial ? h('p', { class: 'partial-note' }, PARTIAL_NOTES[note.source.transcriptSource] || PARTIAL_NOTES.caption) : null,
+        note.source?.partial ? h('p', { class: 'partial-note' },
+            PARTIAL_NOTES[note.source.transcriptSource] || PARTIAL_NOTES.caption,
+            note.source.transcriptError ? h('span', { class: 'partial-reason' }, ` Why: ${note.source.transcriptError}`) : null,
+            note.source.url ? ' Share the link again to retry.' : null
+        ) : null,
         note.tags?.length ? h('div', { class: 'chips wrap' }, note.tags.map((tag) => h('a', { class: 'chip', href: `#/library?tag=${encodeURIComponent(tag)}` }, `#${tag}`))) : null,
         href ? h('a', { class: 'btn small-btn', href, target: '_blank', rel: 'noopener noreferrer', style: { 'margin-top': '14px' } }, icon('external', { size: 16, strokeWidth: 2 }), 'Open original') : null,
         h('div', { class: 'sticky-tabs' }, segmented),

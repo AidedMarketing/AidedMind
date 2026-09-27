@@ -73,8 +73,11 @@ export class DuplicateError extends Error {
 // the server and cleaned up here). Step 2: ask the server for the breakdown.
 export async function capture({ url, text, title, depth, photos }, notes) {
     // Links already saved open the existing note: no fetch, no Claude call.
+    // A caption-only (partial) note is retried instead, and replaced in place.
+    let replaces = null;
     const saved = url && !text && !photos?.length ? findDuplicate(notes, url) : null;
-    if (saved) throw new DuplicateError(saved);
+    if (saved && !saved.source?.partial) throw new DuplicateError(saved);
+    if (saved) replaces = saved;
     let source;
     if (photos?.length) {
         source = {
@@ -97,14 +100,16 @@ export async function capture({ url, text, title, depth, photos }, notes) {
         }
         // Short links (vm.tiktok.com, youtu.be) resolve to the saved address.
         const resolved = findDuplicate(notes, source.url);
-        if (resolved) throw new DuplicateError(resolved);
+        if (resolved && !resolved.source?.partial) throw new DuplicateError(resolved);
+        if (resolved) replaces = resolved;
         source.sharedUrl = url;
     }
     // Only the notes likely to connect are sent, plus the library's common
     // concept names, so the cost per breakdown stays flat as the library grows.
-    const related = relatedNotes(notes, source);
+    const others = replaces ? notes.filter((n) => n.id !== replaces.id) : notes;
+    const related = relatedNotes(others, source);
     const body = { source, library: libraryIndex(related), depth: depth || getSettings().depth };
-    if (related.length < notes.length) body.concepts = conceptVocabulary(notes);
+    if (related.length < others.length) body.concepts = conceptVocabulary(others);
     const result = await request('POST', '/analyze', body);
     setLastUsage(result.usage);
     if (source.images) {
@@ -112,7 +117,7 @@ export async function capture({ url, text, title, depth, photos }, notes) {
         const { images, ...rest } = source;
         source = { ...rest, text: result.analysis.sourceText || source.text };
     }
-    return { source, analysis: result.analysis, model: result.model, depth: result.depth, auto: result.auto, usage: result.usage };
+    return { source, analysis: result.analysis, model: result.model, depth: result.depth, auto: result.auto, usage: result.usage, replaces: replaces?.id || null };
 }
 
 export function getLastUsage() {
