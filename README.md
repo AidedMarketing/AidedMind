@@ -75,7 +75,9 @@ On the map:
 - The **layers button** switches between coloring by theme and by source (article, YouTube, TikTok, photo, text). The **diamond button** shows or hides shared ideas (grey diamonds when coloring by theme). The **corners button** fits everything on screen.
 - **Find on map** highlights notes by title.
 
-Themes also show up elsewhere: as colored filter chips at the top of the Library, as each Library row's colored topic, as a chip under each note's TL;DR (tap it to see the whole theme), and in Obsidian exports (`theme:` in the frontmatter). Settings → *Map* controls the coloring and how finely notes are grouped (*Broad*, *Balanced*, *Detailed*).
+Themes also show up elsewhere: as the topic filters in the Library, as each Library row's topic, as a chip under each note's TL;DR (tap it to see the whole theme), and in Obsidian exports (`theme:` in the frontmatter).
+
+**How things are marked.** Sources (Article, YouTube, TikTok, Photos, Text) always use a colored dot or icon tile. Topics always use a colored **#**, e.g. `# Journaling`, in the Library, on notes and under the map. Plain tags are small grey chips on the note page. Settings → *Map* controls the coloring and how finely notes are grouped (*Broad*, *Balanced*, *Detailed*).
 
 ## Using the app
 
@@ -91,7 +93,7 @@ Themes also show up elsewhere: as colored filter chips at the top of the Library
 | Link your own notes | In a note's **Notes** tab, write `[[Title of another note]]` |
 | Remove a wrong link | Open the note → **Links** tab → **×** on the link |
 | Move a note to the right theme | Open the note → ••• → **Topic** → pick or type its subject |
-| Find something | **Library** → search (titles, topics, summaries, concepts, tags, your notes), or filter by theme, source or tag |
+| Find something | **Library** → search (titles, topics, summaries, concepts, tags, your notes), or filter by source (top row, dots) or topic (second row, #). Tap a tag on a note to filter by it |
 | Sort the Library | **Library** → sort button next to search: newest, oldest, title A–Z, by theme or by source |
 | Explore topics | **Map** tab → tap a theme under the map |
 | Take notes to Obsidian | Settings → **Export to Obsidian (.zip)** |
