@@ -5,7 +5,11 @@ import { HttpError } from './http.js';
 
 export const MAX_SOURCE_CHARS = 600000; // ~150k tokens; larger sources are rejected, never silently cut
 const QUICK_MAX_CHARS = 350000; // Haiku 4.5 has a 200K context; longer sources go to Balanced
-const MAX_LIBRARY_NOTES = 400;
+// The app sends only the ~20 notes most related to the source (plus a list
+// of common concept names), so a breakdown costs the same with 50 or 5,000
+// notes. These caps guard against older app versions sending everything.
+const MAX_LIBRARY_NOTES = 60;
+const MAX_VOCABULARY = 200;
 
 // Breakdown styles. Each maps to a model and reasoning level; the model ids
 // can be overridden per style with AIDEDMIND_MODEL_QUICK / _BALANCED / _THOROUGH.
@@ -63,13 +67,13 @@ function supportsFallbacks(model) {
     return /^claude-(opus-5|fable-5)/.test(model);
 }
 
-export function buildRequest(source, library, config) {
+export function buildRequest(source, library, config, vocabulary = []) {
     const request = {
         model: config.model,
         max_tokens: 16000,
         system: SYSTEM_PROMPT,
         output_config: { format: { type: 'json_schema', schema: ANALYSIS_SCHEMA } },
-        messages: [{ role: 'user', content: buildUserContent(source, library, config.depth) }]
+        messages: [{ role: 'user', content: buildUserContent(source, library, config.depth, vocabulary) }]
     };
     if (config.thinking) request.thinking = { type: 'adaptive' };
     if (config.effort) request.output_config.effort = config.effort;
@@ -157,7 +161,7 @@ You receive one captured source (an article, a video transcript, a short-video c
 
 Produce a faithful breakdown of the source: a TL;DR, a sectioned summary, a hierarchical outline, key concepts, tags, notable quotes, and takeaways. The summary and outline are for skimming, so keep them concise; put the most care into the quotes and takeaways, which the reader values most. Stay grounded in what the source actually says; do not add outside facts. Quotes must be verbatim from the source. If the source is thin (for example only a caption), keep the breakdown proportionally short and say in the TL;DR that only partial content was available.
 
-For connections, only link to notes from the provided library index, using their exact ids, and only when there is a real conceptual relationship. Prefer a few strong links over many weak ones. Reuse concept names that already appear in the library index when they refer to the same idea, so the knowledge graph links up.
+For connections, only link to notes from the provided library index, using their exact ids, and only when there is a real conceptual relationship. Prefer a few strong links over many weak ones. The index holds the notes most related to this source, not the whole library. Reuse concept names that already appear in the library index or the known concepts list when they refer to the same idea, so the knowledge graph links up.
 
 When the source is photos (screenshots, book pages, slides, whiteboards, handwritten notes, charts), read them carefully: transcribe their text faithfully into sourceText, treat that text as the source for the breakdown, and explain what charts or diagrams show. Quotes must be verbatim from the photos. If a photo is unreadable, say so in the TL;DR rather than guessing.
 
@@ -176,7 +180,20 @@ export function compactLibrary(library) {
         .filter((note) => note.id);
 }
 
-function buildUserContent(source, library, depth = 'balanced') {
+export function compactVocabulary(concepts) {
+    const seen = new Set();
+    return (Array.isArray(concepts) ? concepts : [])
+        .map((c) => String(c || '').trim().slice(0, 60))
+        .filter((c) => {
+            const key = c.toLowerCase();
+            if (!c || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        })
+        .slice(0, MAX_VOCABULARY);
+}
+
+function buildUserContent(source, library, depth = 'balanced', vocabulary = []) {
     const header = [
         `Source type: ${source.sourceType}`,
         source.title ? `Title: ${source.title}` : null,
@@ -189,7 +206,7 @@ function buildUserContent(source, library, depth = 'balanced') {
     const content = [
         {
             type: 'text',
-            text: `<library_index>\n${JSON.stringify(library)}\n</library_index>`
+            text: `<library_index>\n${JSON.stringify(library)}\n</library_index>${vocabulary.length ? `\n<known_concepts>\n${JSON.stringify(vocabulary)}\n</known_concepts>` : ''}`
         }
     ];
     if (images.length) {
@@ -242,7 +259,7 @@ export function normalize(raw, libraryIds) {
     };
 }
 
-export async function analyze(source, rawLibrary, env, depth) {
+export async function analyze(source, rawLibrary, env, depth, rawVocabulary) {
     const hasImages = Array.isArray(source?.images) && source.images.length > 0;
     if (typeof source?.text !== 'string' || (!source.text.trim() && !hasImages)) throw new HttpError(400, 'Nothing to analyze.');
     if (source.text.length > MAX_SOURCE_CHARS) {
@@ -254,7 +271,7 @@ export async function analyze(source, rawLibrary, env, depth) {
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, baseURL: env.ANTHROPIC_BASE_URL || undefined, timeout: 5 * 60 * 1000 });
 
     const config = resolveDepth(depth, env, source);
-    const request = buildRequest(source, library, config);
+    const request = buildRequest(source, library, config, compactVocabulary(rawVocabulary));
 
     let message;
     try {

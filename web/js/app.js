@@ -1,5 +1,5 @@
 import { allNotes, saveNote, saveMany, deleteNote, newId } from './db.js';
-import { capture, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, serverBase, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
+import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, serverBase, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { toMarkdown, fileName } from './markdown.js';
 import { icon } from './icons.js';
@@ -195,6 +195,7 @@ function buildNote(result, title) {
         source: {
             sourceType: result.source.sourceType,
             url: result.source.url,
+            sharedUrl: result.source.sharedUrl || '',
             title: result.source.title,
             author: result.source.author,
             siteName: result.source.siteName,
@@ -254,6 +255,12 @@ async function startCapture(input, title = '', photos = []) {
         location.hash = `#/note/${encodeURIComponent(note.id)}`;
     } catch (error) {
         pending = null;
+        if (error instanceof DuplicateError) {
+            draft = { input: '', title: '', photos: [] };
+            toast('Already in your library');
+            location.hash = `#/note/${encodeURIComponent(error.note.id)}`;
+            return;
+        }
         draft.error = error.message;
         if (location.hash === '' || location.hash === '#/') captureView();
         else toast(error.message);
@@ -1017,6 +1024,7 @@ async function drainInbox({ manual = false } = {}) {
     inboxRunning = true;
     let saved = 0;
     let failed = 0;
+    let already = 0;
     try {
         inbox.checkError = '';
         const items = await fetchInbox();
@@ -1033,6 +1041,13 @@ async function drainInbox({ manual = false } = {}) {
                 inbox.pending = inbox.pending.filter((p) => p.id !== item.id);
                 saved++;
             } catch (error) {
+                if (error instanceof DuplicateError) {
+                    await removeInboxItem(item.id).catch(() => {});
+                    inbox.errors.delete(item.id);
+                    inbox.pending = inbox.pending.filter((p) => p.id !== item.id);
+                    already++;
+                    continue;
+                }
                 failed++;
                 const permanent = error.status && error.status < 500 && ![401, 402, 403, 429].includes(error.status);
                 if (permanent) {
@@ -1053,7 +1068,12 @@ async function drainInbox({ manual = false } = {}) {
     } finally {
         inboxRunning = false;
         setBanner(null);
-        if (saved) toast(`${saved} shared link${saved === 1 ? '' : 's'} added`);
+        if (saved || already) {
+            toast([
+                saved ? `${saved} shared link${saved === 1 ? '' : 's'} added` : '',
+                already ? `${already} already in your library` : ''
+            ].filter(Boolean).join(' · '));
+        }
         if (failed) {
             setBanner([
                 icon('inbox', { size: 18, strokeWidth: 2 }),

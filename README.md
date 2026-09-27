@@ -29,6 +29,8 @@ iPhone                                   Cloudflare (free plan)                 
 - **Nothing to babysit.** Cloudflare Workers don't sleep, the inbox and usage live in durable SQLite storage, and inbox items clean themselves up after 30 days.
 - **Low server cost.** The Worker only moves data and waits on Claude. Article pages are cleaned up on the phone (Readability), which keeps each request well inside the free plan's CPU limit.
 - **Your notes stay on your phone.** Each breakdown request carries a compact index of your library (titles, TL;DRs, concept names) so Claude can suggest connections; the server doesn't keep notes.
+- **Cost stays flat as the library grows.** Up to 20 notes the whole index is sent. Past that, the phone picks the 20 notes most related to the new source (shared concepts, tags and title words, rarer words counting more) and adds a list of your most-used concept names so the map keeps linking up. A breakdown costs about the same with 50 notes or 5,000.
+- **No paying twice.** A link that's already in your library (including short links, `youtu.be` vs `youtube.com`, and links with tracking parameters) opens the existing note instead of being broken down again. Use ••• → *Re-analyze* to redo one on purpose.
 
 ### Why a Shortcut?
 
@@ -141,6 +143,7 @@ web/
   js/app.js             views, routing, sheets, inbox sync, accounts
   js/readable.js        article HTML → clean text on the device
   js/photos.js          photo resize and thumbnails on the device
+  js/library.js         related-note picking, concept list, duplicate links
   js/graph.js           canvas map (touch, pinch, label placement)
   js/api.js, db.js, markdown.js, zip.js, icons.js
   vendor/Readability.js Mozilla Readability (Apache-2.0)

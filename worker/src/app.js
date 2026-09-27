@@ -115,7 +115,7 @@ const routes = [
     }, { auth: true }],
 
     ['POST', /^\/api\/analyze$/, async (request, env, user) => {
-        const { source, library, depth } = await readJson(request, MAX_ANALYZE_BYTES);
+        const { source, library, depth, concepts } = await readJson(request, MAX_ANALYZE_BYTES);
         if (!source || typeof source !== 'object') throw new HttpError(400, 'Send a source to analyze.');
         const store = userStore(env, user.id);
         const month = currentMonth();
@@ -134,7 +134,7 @@ const routes = [
                 text: String(source.text || ''),
                 images: cleanImages(source.images)
             };
-            const result = await analyze(clean, library, env, typeof depth === 'string' ? depth : undefined);
+            const result = await analyze(clean, library, env, typeof depth === 'string' ? depth : undefined, concepts);
             await store.recordTokens(month, result.tokens.input, result.tokens.output);
             await store.addCost(month, `claude:${result.model}:input`, result.tokens.input);
             await store.addCost(month, `claude:${result.model}:output`, result.tokens.output);
