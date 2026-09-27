@@ -31,6 +31,8 @@ test('markdown export uses wikilinks and frontmatter', () => {
     assert.match(md, /\[\[Anki tips\]\] \(supports\)/);
     assert.match(md, /- \[\[Memory\]\]/);
     assert.strictEqual(fileName({ title: 'a/b: c?' }), 'ab c.md');
+    assert.match(toMarkdown(notes[0], new Map(), { theme: 'Sleep · Health' }), /\ntheme: "Sleep · Health"\n/);
+    assert.doesNotMatch(md, /theme:/);
 });
 
 test('shared text with a link is fetched as a link', () => {
@@ -105,4 +107,19 @@ test('settings version matches the service worker cache version', async () => {
     for (const [, path] of sw.matchAll(/'\.\/(js\/[\w.-]+\.js)'/g)) {
         await readFile(new URL(`../${path}`, import.meta.url));
     }
+});
+
+test('map nodes carry their theme and color', async () => {
+    const { buildThemes } = await import('../js/themes.js');
+    const lib = [
+        { id: 'a', title: 'A', tags: ['sleep'], concepts: [], createdAt: '1' },
+        { id: 'b', title: 'B', tags: ['sleep'], concepts: [], createdAt: '2' },
+        { id: 'c', title: 'C', tags: ['golf'], concepts: [], createdAt: '3' }
+    ];
+    const themes = buildThemes(lib);
+    const graph = buildGraph(lib, { themes, showConcepts: false });
+    const a = graph.nodes.find((n) => n.id === 'a');
+    assert.strictEqual(a.theme, 'sleep');
+    assert.strictEqual(a.themeColor, themes.themes[0].color);
+    assert.strictEqual(graph.nodes.find((n) => n.id === 'c').theme, null);
 });

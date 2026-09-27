@@ -1,15 +1,17 @@
 # AidedMind
 Tool for saving, summarizing, breaking down, and mapping anything you find online
 
-Share a link from your iPhone (an article, a YouTube video, a TikTok) or paste any text, and AidedMind gives you:
+Share a link from your iPhone (an article, a YouTube video, a TikTok), take a photo, or paste any text, and AidedMind gives you:
 
 - **In short**: a two or three sentence TL;DR
 - **Summary**: section-by-section breakdown, takeaways and quotes worth keeping
 - **Outline**: a three-level outline of the whole piece
 - **Links**: connections to notes already in your library, each with a reason (supports / contradicts / extends / example-of), plus backlinks
-- **Map**: an Obsidian-style graph. Notes are dots colored by source; ideas shared by two or more notes are diamonds. Tap anything to preview it.
+- **Map**: an Obsidian-style graph of everything you've saved, grouped into colored **themes** (topics) automatically. Ideas shared by two or more notes are diamonds. Tap anything to preview it.
 
 Built for iPhone first (installable web app, A.M. family design: warm dark / warm light with lavender accents), running hands-off on Cloudflare's free plan. Your notes live only on your device. Export them as a `.zip` of Markdown files with `[[wikilinks]]` for Obsidian, or as a JSON backup.
+
+**Contents:** [How it works](#how-it-works) · [Sources](#what-each-source-gives-you) · [Map and themes](#map-and-themes) · [Using the app](#using-the-app) · [Setup](#one-time-setup-about-15-minutes) · [Settings reference](#settings-reference) · [Troubleshooting](#troubleshooting) · [Accounts](#accounts-and-the-path-to-paid) · [Configuration](#configuration) · [API](#api-reference) · [Development](#local-development)
 
 ## How it works
 
@@ -18,20 +20,21 @@ iPhone                                   Cloudflare (free plan)                 
 ┌───────────────────────────┐            ┌─────────────────────────────┐
 │ Share → "Save to          │ POST inbox │ Worker  /api/*              │
 │ AidedMind" Shortcut       │ ─────────▶ │  · auth + monthly quotas    │
-│                           │            │  · inbox, usage (SQLite     │
-│ AidedMind app             │ /source    │    Durable Objects)         │ ──▶ article page / YouTube captions / TikTok caption
-│  · cleans articles        │ /analyze   │  · Claude call              │ ──▶ Claude API (structured JSON)
-│  · library (IndexedDB)    │ ─────────▶ │ Static assets  web/         │
-│  · map, notes, export     │ ◀───────── │                             │
+│                           │            │  · inbox, usage, transcript │
+│ AidedMind app             │ /source    │    cache, cost ledger       │ ──▶ article page / YouTube / TikTok
+│  · cleans articles        │ /analyze   │    (SQLite Durable Objects) │ ──▶ Gemini / Supadata transcripts
+│  · library (IndexedDB)    │ ─────────▶ │  · Claude call              │ ──▶ Claude API (structured JSON)
+│  · map, themes, export    │ ◀───────── │ Static assets  web/         │
 └───────────────────────────┘            └─────────────────────────────┘
 ```
 
-- **Updates itself.** A new version downloads in the background when you open the app and reloads it on its own (or offers a *Reload* button if you're in the middle of something). Settings shows the version you're running.
 - **Nothing to babysit.** Cloudflare Workers don't sleep, the inbox and usage live in durable SQLite storage, and inbox items clean themselves up after 30 days.
+- **Updates itself.** A new version downloads in the background when you open the app and reloads it on its own (or offers a *Reload* button if you're in the middle of something). Settings → *About* shows the version you're running.
+- **Watches itself.** A daily GitHub check tests the live app, its storage and every API key, and emails you if anything fails.
 - **Low server cost.** The Worker only moves data and waits on Claude. Article pages are cleaned up on the phone (Readability), which keeps each request well inside the free plan's CPU limit.
-- **Your notes stay on your phone.** Each breakdown request carries a compact index of your library (titles, TL;DRs, concept names) so Claude can suggest connections; the server doesn't keep notes.
+- **Your notes stay on your phone.** Each breakdown request carries a compact index of related notes (titles, TL;DRs, concept names) so Claude can suggest connections; the server doesn't keep notes.
 - **Cost stays flat as the library grows.** Up to 20 notes the whole index is sent. Past that, the phone picks the 20 notes most related to the new source (shared concepts, tags and title words, rarer words counting more) and adds a list of your most-used concept names so the map keeps linking up. A breakdown costs about the same with 50 notes or 5,000.
-- **No paying twice.** A link that's already in your library (including short links, `youtu.be` vs `youtube.com`, and links with tracking parameters) opens the existing note instead of being broken down again. Use ••• → *Re-analyze* to redo one on purpose.
+- **No paying twice.** A link that's already in your library (including short links, `youtu.be` vs `youtube.com`, and links with tracking parameters) opens the existing note instead of being broken down again. Transcripts are cached for 30 days, so a retried link never pays for transcription twice.
 
 ### Why a Shortcut?
 
@@ -43,38 +46,112 @@ iOS doesn't let home-screen web apps appear in the Share menu, and it keeps thei
 |---|---|
 | Articles / blogs | Main text via Mozilla Readability on the phone; Substack posts fall back to Substack's post API. Paywalled or login-only pages: paste the text |
 | YouTube | 1. the video's own captions (free) → 2. **Gemini** watches the video, captions or not (needs `GEMINI_API_KEY`) → 3. Supadata captions-only (needs `SUPADATA_API_KEY`) → 4. title + description + chapters, marked partial |
-| TikTok | 1. **Supadata** transcribes what's said (needs `SUPADATA_API_KEY`) → 2. caption and description only, marked partial |
+| TikTok | 1. **Supadata** transcribes what's said (needs `SUPADATA_API_KEY`; short `vm.tiktok.com` links are resolved first) → 2. caption and description only, marked partial |
 | Photos | **Add photos** on the Add tab (camera or library, up to 8 per note): screenshots, book pages, slides, whiteboards, handwritten notes, charts. Claude reads the text, explains visuals and breaks it down in one request |
 | Anything else | Paste the text |
 
 Photos are resized on the phone to 1,568 px on the long edge (the most detail Claude uses) and sent as JPEG, roughly 1,600 tokens each (about $0.003 per photo on Sonnet 5). Only small thumbnails and the text Claude read are kept with the note; the photos themselves are never stored. Auto uses Balanced for photos and Thorough for 6 or more.
 
-Transcripts are cached for 30 days, so a retried or re-analyzed link never pays for transcription twice. Each note says where its transcript came from (bottom of its Notes tab).
+**Partial notes.** When only a caption or description could be read, the note says so and why (for example "Supadata is out of credits"). Each note's Notes tab says where its transcript came from. To retry, open the note → ••• → **Get the full transcript**, or share the link again; either way the note is updated in place and keeps anything you wrote in it.
 
 **Costs:** Gemini's YouTube-link input is free during Google's preview; afterwards it costs a few cents per video. Supadata's free tier is 100 credits a month (a transcribed TikTok is about 2 credits per minute). Settings → *This month* shows breakdowns, estimated Claude spend, Gemini videos and Supadata transcripts; the exact Claude bill is in the Anthropic Console.
+
+## Map and themes
+
+The Map tab shows every note as a dot. With **Color notes by: Theme** (the default), AidedMind groups your notes into topics and gives each one a color, a soft background area and a name, such as *Sleep · Health* or *Marketing · Growth*.
+
+- **How themes are found (on your phone, no AI cost).** Two notes count as related when Claude linked them, when you `[[wikilinked]]` one from the other in your own notes, or when they share tags or concepts. Rare tags and concepts count more than common ones, and ones on every note (or on most of a larger library) are ignored. A clustering method (Louvain community detection) then finds the groups of notes that are more connected to each other than to the rest.
+- **Names and colors.** Each theme is named after its most distinctive tags: common inside the theme, rare outside it. Its color follows its main name, so themes keep their colors as the library grows. The same library always gives the same themes.
+- **Unsorted.** Notes that don't share anything with the rest yet stay grey until related notes arrive.
+- **When they appear.** Themes need a few notes that share tags, ideas or links. They're most useful from about 15–20 notes.
+
+On the map:
+
+- **Tap a theme** in the row under the map to light up its notes; tap it again to list them. Tap empty space to clear.
+- **Tap a dot** to preview a note, or a diamond to see every note that shares that idea.
+- The **layers button** switches between coloring by theme and by source (article, YouTube, TikTok, photo, text). The **diamond button** shows or hides shared ideas. The **corners button** fits everything on screen.
+- **Find on map** highlights notes by title.
+
+Themes also show up elsewhere: as colored filter chips at the top of the Library, and as a chip under each note's TL;DR (tap it to see the whole theme). Settings → *Map* controls the coloring and how finely notes are grouped (*Broad*, *Balanced*, *Detailed*).
+
+## Using the app
+
+| To… | Do this |
+|---|---|
+| Save a link from any app | Share → **Save to AidedMind** (the Shortcut). It's broken down the next time you open the app |
+| Save a link or text in the app | **Add** tab → paste → **Break it down** |
+| Save photos | **Add** tab → **Add photos** (camera or library, up to 8) |
+| Check for shared links now | **Library** → inbox button (top right) |
+| Retry a link that failed | **Library** → *Shared links* → **Try again** |
+| Get a TikTok or video's full transcript later | Open the note → ••• → **Get the full transcript** |
+| Redo a breakdown in more depth | Open the note → ••• → **Re-analyze in depth (Thorough)** |
+| Link your own notes | In a note's **Notes** tab, write `[[Title of another note]]` |
+| Find something | **Library** → search (titles, summaries, concepts, tags, your notes), or filter by theme, source or tag |
+| Explore topics | **Map** tab → tap a theme under the map |
+| Take notes to Obsidian | Settings → **Export to Obsidian (.zip)** |
+| Back up / move to a new phone | Settings → **Back up library**, then **Restore from backup** on the new phone |
 
 ## One-time setup (about 15 minutes)
 
 After this, deploys, dependency updates and monitoring run by themselves.
 
 1. **Cloudflare:** create a free account → *Workers & Pages* → *Create* → *Import a repository* → pick `AidedMarketing/AidedMind`.
+   - Project name: `aidedmind` (it must match `name` in `worker/wrangler.jsonc`)
    - Root directory: `worker`
    - Build command: *(leave empty)* · Deploy command: `npx wrangler deploy`
    - Every push to `main` now deploys automatically. The storage (Durable Object) is created on first deploy.
-2. **Secrets:** in the Worker → *Settings* → *Variables and Secrets*, add:
+   - *Settings → Domains*: make sure the `workers.dev` route is **enabled**.
+   - *Settings → Builds → Previews Base*: turn **Builds for Preview branches** off. Preview builds aren't needed (GitHub's `test` check already confirms each change deploys) and Cloudflare's preview setup doesn't match this project's Worker name.
+2. **Secrets:** in the Worker → *Settings* → *Variables and Secrets* → *Add*, set **Type: Secret** for each (not Text: deploys replace Text variables with the ones in the repo, so a key saved as Text disappears on the next update):
    - `ANTHROPIC_API_KEY`: your Claude API key
    - `OWNER_TOKEN`: a long random string (your personal, unlimited access token). Generate one with `node -e "console.log(crypto.randomUUID()+crypto.randomUUID())"`
-3. **Optional video transcripts** (same place, as secrets):
-   - `GEMINI_API_KEY`: from aistudio.google.com → *Get API key*. Transcribes YouTube videos, including ones without captions.
+3. **Optional video transcripts** (same place, also as **Secrets**):
+   - `GEMINI_API_KEY`: from aistudio.google.com/apikey. Transcribes YouTube videos, including ones without captions.
    - `SUPADATA_API_KEY`: from supadata.ai (free plan). Transcribes what's said in TikToks.
-   - Each one switches on when its key is present; `/api/health` lists them under `services`, and `/api/health?deep=1` also tests each key and lists any that fail under `serviceProblems` (e.g. `api_key_rejected`, `out_of_credits`).
-   - When a transcript service fails, the note is marked partial and says why. Sharing the same link again retries it and updates that note in place.
+   - Each one switches on when its key is present. Settings → *Server status* shows what's on, and *Run a full check* tests each key.
 4. **Anthropic spend cap:** in the Anthropic Console → *Limits*, set a monthly spend limit so costs can never run away.
-5. **GitHub (hands-off updates):**
-   - *Settings → General*: turn on **Allow auto-merge**.
-   - *Settings → Rules → Rulesets*: add a rule for `main` that **requires the `test` status check**. Dependabot's weekly minor/patch updates then merge themselves once CI passes, and Cloudflare deploys them. Major version bumps wait for you.
-   - *Settings → Secrets and variables → Actions → Variables*: add `APP_URL` = your Worker URL (e.g. `https://aidedmind.<you>.workers.dev`). A daily health check then verifies the app, its storage, your Claude key and your Gemini and Supadata keys, and **GitHub emails you if any of them fails**. If you don't use a transcript service, add `EXPECT_SERVICES` listing the ones you do (e.g. `gemini`), or `none`.
+5. **GitHub (hands-off updates and monitoring):**
+   - *Settings → General → Pull Requests*: turn on **Allow auto-merge**.
+   - *Settings → Rules → Rulesets → New branch ruleset*: name `main`, enforcement **Active**, target the **default branch**, tick **Require status checks to pass** and add the `test` check. Leave *Require a pull request* unticked (or without required approvals), so Dependabot's weekly minor/patch updates merge themselves once CI passes. Major version bumps wait for you.
+   - *Settings → Secrets and variables → Actions → Variables*: add `APP_URL` = your Worker URL (e.g. `https://aidedmind.<you>.workers.dev`). A daily health check then verifies the app, its storage, your Claude key and your Gemini and Supadata keys, and **GitHub emails you if any of them fails**. If you don't use a transcript service, add `EXPECT_SERVICES` listing the ones you do (e.g. `gemini`), or `none`. Run it any time from *Actions → Health check → Run workflow*.
 6. **iPhone:** open the Worker URL in Safari → Share → **Add to Home Screen**. Open it, go to Settings, paste your `OWNER_TOKEN`, tap **Save & Test**, then follow *Save from the Share button*.
+
+## Settings reference
+
+Everything in the app's Settings tab. Choices are saved on the device.
+
+| Section | Setting | What it does |
+|---|---|---|
+| Breakdown style | Auto / Quick / Balanced / Thorough | Which Claude model breaks things down; see [Breakdown styles](#breakdown-styles). Default Auto |
+| Map | Color notes by: Theme / Source | Color the map by topic (with theme areas and names) or by where each note came from. Default Theme |
+| Map | Theme detail: Broad / Balanced / Detailed | Fewer, bigger themes or more, smaller ones. Shows how many themes your library has. Default Balanced |
+| Map | Shared ideas: Show / Hide | The diamonds linking notes that mention the same concept |
+| Connection | Server URL | Leave blank when the app is opened from your Worker URL (normal). Only for running the app from another address |
+| Connection | Access token | Your `OWNER_TOKEN`, or a token from *Accounts*. **Save & Test** checks it |
+| This month | (read-only) | Breakdowns used, estimated Claude spend, Gemini videos, Supadata transcripts |
+| Server status | (read-only) | Whether Claude, Gemini and Supadata are on. **Run a full check** tests storage and each key (free) |
+| Save from the Share button | (guide) | Step-by-step Shortcut setup with copy buttons for the inbox URL and your token |
+| Your data | Export to Obsidian / Back up / Restore | `.zip` of Markdown notes, or a JSON backup of everything (restore merges it back in) |
+| Accounts | (owner only) | Add accounts for other people and see each one's usage this month |
+| About | App version / Check for updates / Setup guide | Updates normally install by themselves when you open the app |
+
+## Troubleshooting
+
+| What you see | Why, and the fix |
+|---|---|
+| A video or TikTok note says *partial* / "caption only" | The transcript service failed or isn't set up; the note's **Why:** line says which. Fix the key if needed, then note → ••• → **Get the full transcript** |
+| Settings → *Server status* shows Gemini or Supadata **Off** after it worked before | The key was saved as a Text variable and a deploy removed it. Add it again with **Type: Secret** |
+| *Server status* says "key rejected" | The key is wrong or was revoked. Gemini keys come from aistudio.google.com/apikey (they usually start with `AIza`) |
+| "Supadata is out of credits" | The free plan's 100 monthly credits are used up. They reset monthly, or upgrade on supadata.ai |
+| The app doesn't show a new feature | Close and reopen it; updates install on open. Settings → *About* → **Check for updates** checks right away |
+| The Shortcut says "Saved" but nothing appears | Open the app and tap the inbox button in Library. If it still doesn't appear, check the token in the Shortcut matches Settings |
+| A shared link keeps failing | Library → *Shared links* shows the reason. For paywalled or login-only pages, copy the text and paste it on the Add tab |
+| "You've used all N breakdowns for this month" | That account's plan limit; the owner token has no limit. Limits reset on the 1st |
+| The daily health check email arrived | Open *Actions → Health check* in GitHub: the log names what failed (app, storage, Claude key, or a transcript key) |
+| Health page shows `anthropic_error_400` | Usually no credit on the Anthropic account. Add credit in the Anthropic Console |
+| No themes on the map | Themes need a few notes that share tags, ideas or links. Keep saving; *Theme detail → Detailed* also helps with small libraries |
+
+The live status page is `https://<your worker>/api/health?deep=1`.
 
 ## Accounts and the path to paid
 
@@ -83,35 +160,31 @@ The server already has everything a paid version needs except the payment step:
 - **Accounts:** each person gets their own access token, inbox and usage record. As the owner you see an **Accounts** section in Settings: add an account (their token is shown once) and see how many breakdowns each account used this month.
 - **Plans and quotas:** `free` (25 breakdowns/month), `pro` (400), `unlimited`, and your `owner` token. Limits are set in `worker/wrangler.jsonc` (`FREE_MONTHLY_CAPTURES`, `PRO_MONTHLY_CAPTURES`). A failed breakdown doesn't count against the quota.
 - **Owner API:** `GET/POST /api/admin/users`, `PATCH /api/admin/users/:id` (`{ "plan": "pro" }` or `{ "status": "paused" }`).
-- **Token usage per account per month** is recorded, so pricing can be set from real cost data.
+- **Token usage and cost per account per month** are recorded, so pricing can be set from real cost data.
 
 Next step when you're ready: a Stripe Checkout + webhook that creates an account (or upgrades its plan) when someone pays.
-
-## Local development
-
-```bash
-npm install                                    # installs worker dependencies
-cp worker/.dev.vars.example worker/.dev.vars   # fill in ANTHROPIC_API_KEY and OWNER_TOKEN
-npm run dev                                    # http://localhost:8787 (Cloudflare's runtime, local storage)
-npm test                                       # Worker + web tests (Node 22.5+)
-npm run check                                  # bundle exactly what Cloudflare will deploy
-```
 
 ## Configuration
 
 | Name | Where | |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | secret | required |
-| `OWNER_TOKEN` | secret | required; your unlimited access token |
+| `ANTHROPIC_API_KEY` | Cloudflare secret | required |
+| `OWNER_TOKEN` | Cloudflare secret | required; your unlimited access token |
+| `GEMINI_API_KEY` | Cloudflare secret, optional | YouTube transcripts via Gemini (including videos without captions) |
+| `SUPADATA_API_KEY` | Cloudflare secret, optional | TikTok (and fallback YouTube caption) transcripts |
 | `AIDEDMIND_DEFAULT_DEPTH` | `wrangler.jsonc` vars | breakdown style when the app doesn't send one: `auto` (default), `quick`, `balanced` or `thorough` |
 | `AIDEDMIND_MODEL_QUICK` / `_BALANCED` / `_THOROUGH` | `wrangler.jsonc` vars | defaults `claude-haiku-4-5` / `claude-sonnet-5` / `claude-opus-5-5` |
 | `FREE_MONTHLY_CAPTURES` / `PRO_MONTHLY_CAPTURES` | `wrangler.jsonc` vars | default 25 / 400 |
-| `GEMINI_API_KEY` | secret, optional | YouTube transcripts via Gemini |
 | `GEMINI_MODEL` | `wrangler.jsonc` vars | default `gemini-flash-latest` (Google's current Flash model) |
-| `SUPADATA_API_KEY` | secret, optional | TikTok (and fallback YouTube caption) transcripts |
+| `ANTHROPIC_BASE_URL`, `GEMINI_BASE_URL`, `SUPADATA_BASE_URL` | vars, optional | point the API calls elsewhere (used by the tests; leave unset) |
 | `APP_URL` | GitHub Actions variable | enables the daily health check |
+| `EXPECT_SERVICES` | GitHub Actions variable, optional | transcript services the health check requires: default `gemini,supadata`; `none` to skip |
 
-**Breakdown styles** (Settings → Breakdown style, per device):
+Anything in `wrangler.jsonc` vars is public (the repo is public): never put keys there. Keys go in Cloudflare as **Secrets**.
+
+### Breakdown styles
+
+Settings → *Breakdown style*, per device:
 
 | Style | Model | Use it for |
 |---|---|---|
@@ -122,35 +195,66 @@ npm run check                                  # bundle exactly what Cloudflare 
 
 Summaries and outlines are kept short for skimming; quotes and takeaways get the most attention. Analysis uses Claude structured outputs (the reply always matches the note schema); Thorough also uses Anthropic's server-side refusal fallback (`fallbacks: "default"`). Sources over ~600k characters are rejected rather than silently truncated.
 
+## API reference
+
+All routes are under your Worker URL. Every route except `/api/health` needs the header `X-AidedMind-Token: <token>` (or `Authorization: Bearer <token>`).
+
+| Method and path | Body | Returns |
+|---|---|---|
+| `GET /api/health` (`?deep=1`) | | `ok`, `checks` (keys; with `deep`, also storage and model access), `services` (`gemini`, `supadata`), and with `deep` any `serviceProblems`. Public, spends nothing |
+| `POST /api/auth-check` | `{}` | your plan and this month's usage and spend |
+| `POST /api/source` | `{ url }` | the source text (or article HTML for the app to clean up), with `transcriptSource`, `partial` and `transcriptError` for videos |
+| `POST /api/analyze` | `{ source, library, depth, concepts }` | the breakdown (`analysis`), model and style used, usage. Counts one breakdown |
+| `POST /api/inbox` | `{ url }` or `{ text, title }` | saves a shared link for the app (what the Shortcut calls) |
+| `GET /api/inbox` | | links waiting to be broken down |
+| `DELETE /api/inbox/:id` | | removes one |
+| `GET /api/admin/users` | | owner only: accounts and their usage |
+| `POST /api/admin/users` | `{ plan, label }` | owner only: creates an account; its token is shown once |
+| `PATCH /api/admin/users/:id` | `{ plan }` or `{ status }` | owner only: change plan, pause or resume |
+
 ## Security
 
 - The server only fetches public `http(s)` links (localhost, private and link-local addresses are refused), with a 3 MB / 15 s cap.
 - Every `/api` call except `/api/health` needs an access token; tokens are stored only as SHA-256 hashes and compared in constant time.
 - The app builds every element with `textContent` (no `innerHTML`), and the site sends a strict Content-Security-Policy (`web/_headers`).
+- Source content is treated as untrusted by Claude: instructions inside an article, transcript or photo are ignored.
+
+## Local development
+
+```bash
+npm install                                    # installs worker dependencies
+cp worker/.dev.vars.example worker/.dev.vars   # fill in ANTHROPIC_API_KEY and OWNER_TOKEN (transcript keys optional)
+npm run dev                                    # http://localhost:8787 (Cloudflare's runtime, local storage)
+npm test                                       # Worker + web tests (Node 22.5+)
+npm run check                                  # bundle exactly what Cloudflare will deploy
+```
+
+When changing anything in `web/`, bump `CACHE_NAME` in `web/service-worker.js` and `APP_VERSION` in `web/js/app.js` together (a test checks they match), and add new files to the service worker's list, so phones pick up the update.
 
 ## Project layout
 
 ```
 worker/
   wrangler.jsonc        Cloudflare config: static assets, Durable Object, vars
-  src/app.js            API routes: auth, quotas, source, analyze, inbox, admin
+  src/app.js            API routes: auth, quotas, source, analyze, inbox, admin, health
   src/extract.js        link → source (article HTML / YouTube / TikTok), fallback order
-  src/transcripts.js    Gemini, Supadata and YouTube description fallbacks
+  src/transcripts.js    Gemini, Supadata, YouTube description fallbacks, key checks
   src/costs.js          monthly spend estimate from the cost ledger
   src/analyze.js        Claude call, JSON schema, normalization
   src/store-core.js     SQLite tables: users, inbox, usage, transcript cache, cost ledger
   src/store.js          Durable Object wrapper
 web/
   index.html, app.css, manifest.webmanifest, service-worker.js, _headers
-  js/app.js             views, routing, sheets, inbox sync, accounts
+  js/app.js             views, routing, sheets, inbox sync, settings, accounts, updates
+  js/themes.js          map themes: note similarity, clustering, names, colors
+  js/graph.js           canvas map (themes, touch, pinch, label placement)
+  js/library.js         related-note picking, concept list, duplicate links
   js/readable.js        article HTML → clean text on the device
   js/photos.js          photo resize and thumbnails on the device
-  js/library.js         related-note picking, concept list, duplicate links
-  js/graph.js           canvas map (touch, pinch, label placement)
   js/api.js, db.js, markdown.js, zip.js, icons.js
   vendor/Readability.js Mozilla Readability (Apache-2.0)
 .github/
-  workflows/ci.yml                  tests + bundle check
+  workflows/ci.yml                  tests + bundle check (the required `test` check)
   workflows/health.yml              daily live check, emails you on failure
   workflows/dependabot-automerge.yml
   dependabot.yml
@@ -158,7 +262,7 @@ web/
 
 ## Roadmap
 
+- Review mode: spaced-repetition cards from your quotes and takeaways
 - Stripe checkout for paid plans
 - PDFs and podcasts
 - Optional encrypted sync between devices
-- Spaced-repetition review of takeaways

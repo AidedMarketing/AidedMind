@@ -9,7 +9,8 @@ function yamlString(value) {
     return JSON.stringify(String(value || ''));
 }
 
-export function toMarkdown(note, notesById) {
+// theme: optional theme name from the map, written to the frontmatter.
+export function toMarkdown(note, notesById, { theme = '' } = {}) {
     const linkTo = (id) => {
         const target = notesById.get(id);
         return target ? `[[${fileName(target).replace(/\.md$/, '')}]]` : null;
@@ -22,6 +23,7 @@ export function toMarkdown(note, notesById) {
         note.source?.author ? `author: ${yamlString(note.source.author)}` : null,
         `captured: ${note.createdAt}`,
         `tags: [${(note.tags || []).map(yamlString).join(', ')}]`,
+        theme ? `theme: ${yamlString(theme)}` : null,
         '---',
         '',
         `# ${note.title}`,

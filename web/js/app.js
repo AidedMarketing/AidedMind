@@ -1,6 +1,7 @@
 import { allNotes, saveNote, saveMany, deleteNote, newId } from './db.js';
-import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, serverBase, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
+import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, serverBase, fetchHealth, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
+import { buildThemes, THEME_DETAIL } from './themes.js';
 import { toMarkdown, fileName } from './markdown.js';
 import { icon } from './icons.js';
 import { createZip } from './zip.js';
@@ -30,12 +31,28 @@ const DEPTH_INFO = {
     thorough: { label: 'Thorough', detail: 'Deepest reasoning (Claude Opus). Slower and uses the most; for long or dense pieces.' }
 };
 
+// Themes are recomputed only when the library or the detail setting changes.
+let themeCache = { notes: null, detail: null, value: null };
+function currentThemes() {
+    const detail = getSettings().themeDetail;
+    if (themeCache.notes !== notes || themeCache.detail !== detail) {
+        themeCache = { notes, detail, value: buildThemes(notes, { detail }) };
+    }
+    return themeCache.value;
+}
+
+function themeOf(noteId) {
+    const themes = currentThemes();
+    const id = themes.byNote.get(noteId);
+    return id ? themes.themes.find((t) => t.id === id) : null;
+}
+
 function depthLabel(depth) {
     return DEPTH_INFO[depth]?.label || DEPTH_INFO.auto.label;
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '11';
+const APP_VERSION = '12';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -413,6 +430,9 @@ function libraryView(params) {
     setNav({ title: 'Library', right: navButton('', () => drainInbox({ manual: true }), 'inbox') });
     let activeTag = params.get('tag') || '';
     let activeType = '';
+    let activeTheme = params.get('theme') || '';
+    const { themes, byNote } = currentThemes();
+    if (activeTheme && !themes.some((t) => t.id === activeTheme)) activeTheme = '';
     const search = h('input', { type: 'search', placeholder: 'Search', 'aria-label': 'Search library', enterkeyhint: 'search' });
     search.value = params.get('q') || '';
     const list = h('div');
@@ -429,6 +449,7 @@ function libraryView(params) {
         const matches = notes.filter((note) => {
             if (activeTag && !(note.tags || []).includes(activeTag)) return false;
             if (activeType && (note.source?.sourceType || 'text') !== activeType) return false;
+            if (activeTheme && byNote.get(note.id) !== activeTheme) return false;
             if (!q) return true;
             const haystack = [
                 note.title, note.tldr, note.userNotes, note.source?.author,
@@ -440,7 +461,13 @@ function libraryView(params) {
         });
 
         chips.replaceChildren(
-            h('button', { type: 'button', class: `chip${!activeType && !activeTag ? ' active' : ''}`, onclick: () => { activeType = ''; activeTag = ''; refresh(); } }, 'All'),
+            h('button', { type: 'button', class: `chip${!activeType && !activeTag && !activeTheme ? ' active' : ''}`, onclick: () => { activeType = ''; activeTag = ''; activeTheme = ''; refresh(); } }, 'All'),
+            ...themes.slice(0, 8).map((theme) => h('button', {
+                type: 'button',
+                class: `chip${theme.id === activeTheme ? ' active' : ''}`,
+                style: { '--dot': `var(--theme-${theme.color})` },
+                onclick: () => { activeTheme = activeTheme === theme.id ? '' : theme.id; refresh(); }
+            }, h('span', { class: 'dot' }), theme.label)),
             ...presentTypes.map((type) => h('button', {
                 type: 'button',
                 class: `chip${type === activeType ? ' active' : ''}`,
@@ -529,7 +556,14 @@ function noteView(id) {
             note.source.transcriptError ? h('span', { class: 'partial-reason' }, ` Why: ${note.source.transcriptError}`) : null,
             note.source.url ? ' Share the link again to retry.' : null
         ) : null,
-        note.tags?.length ? h('div', { class: 'chips wrap' }, note.tags.map((tag) => h('a', { class: 'chip', href: `#/library?tag=${encodeURIComponent(tag)}` }, `#${tag}`))) : null,
+        (() => {
+            const theme = themeOf(note.id);
+            const chips = [
+                theme ? h('a', { class: 'chip', href: `#/library?theme=${encodeURIComponent(theme.id)}`, style: { '--dot': `var(--theme-${theme.color})` }, 'aria-label': `Theme: ${theme.label}` }, h('span', { class: 'dot' }), theme.label) : null,
+                ...(note.tags || []).map((tag) => h('a', { class: 'chip', href: `#/library?tag=${encodeURIComponent(tag)}` }, `#${tag}`))
+            ].filter(Boolean);
+            return chips.length ? h('div', { class: 'chips wrap' }, chips) : null;
+        })(),
         href ? h('a', { class: 'btn small-btn', href, target: '_blank', rel: 'noopener noreferrer', style: { 'margin-top': '14px' } }, icon('external', { size: 16, strokeWidth: 2 }), 'Open original') : null,
         h('div', { class: 'sticky-tabs' }, segmented),
         panel
@@ -587,9 +621,11 @@ function notePanel(name, note, byId) {
             ] : null
         ];
         requestAnimationFrame(() => {
-            const data = buildGraph(notes, { showConcepts: getSettings().showConcepts, focusId: note.id, depth: 2 });
+            const settings = getSettings();
+            const themes = currentThemes();
+            const data = buildGraph(notes, { showConcepts: settings.showConcepts, focusId: note.id, depth: 2, themes });
             if (data.nodes.length > 1 && canvas.isConnected) {
-                new GraphView(canvas, { focusId: note.id, onOpen: openNode }).setData(data);
+                new GraphView(canvas, { focusId: note.id, onOpen: openNode, colorBy: settings.mapColor, themes: themes.themes }).setData(data);
             } else {
                 canvas.previousElementSibling?.remove();
                 canvas.remove();
@@ -625,7 +661,7 @@ function noteActions(note, byId) {
                 href ? actionRow('Share link', 'share', () => shareOrCopy({ title: note.title, url: href })) : null,
                 actionRow('Export as Markdown', 'download', () => {
                     closeSheet();
-                    shareFile(new File([toMarkdown(note, byId)], fileName(note), { type: 'text/markdown' }));
+                    shareFile(new File([toMarkdown(note, byId, { theme: themeOf(note.id)?.label })], fileName(note), { type: 'text/markdown' }));
                 }),
                 note.source?.partial && href ? actionRow('Get the full transcript', 'refresh', () => retryTranscript(note)) : null,
                 actionRow(`Re-analyze (${depthLabel(getSettings().depth)})`, 'refresh', () => reanalyze(note)),
@@ -742,6 +778,19 @@ function previewNode(node) {
     );
 }
 
+function themeSheet(theme) {
+    const members = theme.noteIds.map((id) => notes.find((n) => n.id === id)).filter(Boolean);
+    openSheet(
+        h('div', { class: 'source-line' }, h('span', { class: 'theme-dot', style: { '--dot': `var(--theme-${theme.color})` } }), h('span', {}, `Theme · ${members.length} notes`)),
+        h('h3', { style: { 'margin-top': '8px' } }, theme.label),
+        theme.tags.length ? h('p', { class: 'small muted' }, theme.tags.map((t) => `#${t}`).join('  ')) : null,
+        h('div', { class: 'stack' },
+            h('div', { class: 'group' }, members.slice(0, 12).map(noteRow)),
+            h('a', { class: 'btn primary block', href: `#/library?theme=${encodeURIComponent(theme.id)}` }, members.length > 12 ? `See all ${members.length} in Library` : 'Open in Library')
+        )
+    );
+}
+
 function graphView() {
     setNav({ hidden: true });
     const settings = getSettings();
@@ -753,11 +802,52 @@ function graphView() {
         );
         return;
     }
+    const themes = currentThemes();
+    const byTheme = settings.mapColor === 'theme';
     const canvas = h('canvas', { 'aria-label': 'Map of your notes' });
     const search = h('input', { type: 'search', placeholder: 'Find on map', 'aria-label': 'Find on map', enterkeyhint: 'search' });
-    const conceptsButton = h('button', { type: 'button', class: `float-button glass${settings.showConcepts ? ' on' : ''}`, 'aria-label': 'Toggle shared concepts' }, icon('concept', { size: 20, strokeWidth: 2 }));
+    const colorButton = h('button', {
+        type: 'button',
+        class: `float-button glass${byTheme ? ' on' : ''}`,
+        'aria-label': byTheme ? 'Color by source' : 'Color by theme',
+        'aria-pressed': String(byTheme)
+    }, icon('themes', { size: 20, strokeWidth: 2 }));
+    const conceptsButton = h('button', { type: 'button', class: `float-button glass${settings.showConcepts ? ' on' : ''}`, 'aria-label': 'Toggle shared ideas', 'aria-pressed': String(settings.showConcepts) }, icon('concept', { size: 20, strokeWidth: 2 }));
     const fitButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Fit to screen' }, icon('fit', { size: 20, strokeWidth: 2 }));
     const types = [...new Set(notes.map((n) => n.source?.sourceType || 'text'))];
+    const unsorted = notes.length - themes.byNote.size;
+
+    let graph = null;
+    let activeTheme = null;
+    const legend = h('div', { class: 'graph-legend' });
+    const paintLegend = () => {
+        legend.replaceChildren();
+        if (byTheme && themes.themes.length) {
+            // Tap a theme to light it up on the map; tap it again for its notes.
+            themes.themes.forEach((theme) => legend.append(h('button', {
+                type: 'button',
+                class: `legend-item glass${activeTheme === theme.id ? ' active' : ''}`,
+                style: { '--dot': `var(--theme-${theme.color})` },
+                onclick: () => {
+                    if (activeTheme === theme.id) {
+                        themeSheet(theme);
+                        return;
+                    }
+                    activeTheme = theme.id;
+                    search.value = '';
+                    graph.highlightTheme(theme.id);
+                    paintLegend();
+                }
+            }, h('i'), theme.label, h('span', { class: 'count' }, String(theme.noteIds.length)))));
+            if (unsorted) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': 'var(--theme-none)' } }, h('i'), 'Unsorted', h('span', { class: 'count' }, String(unsorted))));
+        } else {
+            types.forEach((type) => legend.append(h('span', { class: 'legend-item glass', style: { '--dot': `var(--node-${type})` } }, h('i'), SOURCE_LABELS[type])));
+            if (byTheme && notes.length >= 3) {
+                legend.append(h('span', { class: 'legend-item glass' }, 'Themes appear as your notes start to connect'));
+            }
+        }
+        if (settings.showConcepts) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': 'var(--node-concept)' } }, h('i', { class: 'diamond' }), 'Shared idea'));
+    };
 
     closeSheet();
     view.classList.add('full');
@@ -765,22 +855,39 @@ function graphView() {
         canvas,
         h('div', { class: 'graph-top' },
             h('label', { class: 'search glass' }, icon('search', { size: 18, strokeWidth: 2.2 }), search),
+            colorButton,
             conceptsButton,
             fitButton
         ),
-        h('div', { class: 'graph-legend' },
-            types.map((type) => h('span', { class: 'legend-item glass', style: { '--dot': `var(--node-${type})` } }, h('i'), SOURCE_LABELS[type])),
-            settings.showConcepts ? h('span', { class: 'legend-item glass', style: { '--dot': 'var(--node-concept)' } }, h('i', { class: 'diamond' }), 'Shared idea') : null
-        )
+        legend
     ));
 
-    const graph = new GraphView(canvas, { onOpen: previewNode });
-    graph.setData(buildGraph(notes, { showConcepts: settings.showConcepts }));
-    search.addEventListener('input', () => graph.setHighlight(search.value));
+    graph = new GraphView(canvas, { onOpen: previewNode, colorBy: settings.mapColor, themes: themes.themes });
+    graph.setData(buildGraph(notes, { showConcepts: settings.showConcepts, themes }));
+    paintLegend();
+    search.addEventListener('input', () => {
+        if (activeTheme) {
+            activeTheme = null;
+            paintLegend();
+        }
+        graph.setHighlight(search.value);
+    });
+    canvas.addEventListener('click', (event) => {
+        // Tapping empty map space (not a dot, not a drag) clears a theme highlight.
+        const rect = canvas.getBoundingClientRect();
+        if (activeTheme && !graph.nodeAt(event.clientX - rect.left, event.clientY - rect.top)) {
+            activeTheme = null;
+            graph.highlightTheme(null);
+            paintLegend();
+        }
+    });
     fitButton.addEventListener('click', () => graph.fit());
+    colorButton.addEventListener('click', () => {
+        saveSettings({ ...getSettings(), mapColor: byTheme ? 'source' : 'theme' });
+        graphView();
+    });
     conceptsButton.addEventListener('click', () => {
-        settings.showConcepts = !settings.showConcepts;
-        saveSettings(settings);
+        saveSettings({ ...getSettings(), showConcepts: !settings.showConcepts });
         graphView();
     });
 }
@@ -808,6 +915,94 @@ function copyField(value, label) {
 
 function isStandalone() {
     return window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+}
+
+// iOS-style segmented control. options: [[value, label], ...]
+function segmentedControl(label, options, value, onChange) {
+    const control = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': label });
+    const paint = (current) => [...control.children].forEach((b) => {
+        const on = b.dataset.value === current;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', String(on));
+    });
+    options.forEach(([key, text]) => control.append(h('button', {
+        type: 'button',
+        role: 'radio',
+        'data-value': key,
+        onclick: () => {
+            paint(key);
+            onChange(key);
+        }
+    }, text)));
+    paint(value);
+    return control;
+}
+
+const SERVICE_PROBLEMS = {
+    api_key_rejected: 'key rejected',
+    out_of_credits: 'out of credits',
+    model_not_available: 'model not available',
+    unreachable: 'not reachable'
+};
+
+// Server status: what's switched on, and (on request) whether each key works.
+function serverStatusSection() {
+    const box = h('div', { class: 'group' }, h('div', { class: 'group-row' }, h('span', { class: 'row-label muted' }, 'Checking…')));
+    const footer = h('p', { class: 'group-footer' });
+    const row = (label, state, ok) => h('div', { class: 'group-row' },
+        h('span', { class: 'row-label' }, label),
+        h('span', { class: `row-value ${ok ? 'ok' : 'muted'}` }, state));
+    const paint = (health, deep) => {
+        const problems = { ...(health.problems || {}), ...(health.serviceProblems || {}) };
+        const serviceState = (name, on) => {
+            if (!on) return ['Off', false];
+            if (problems[name]) return [`On, ${SERVICE_PROBLEMS[problems[name]] || problems[name]}`, false];
+            return [deep ? 'On, key works' : 'On', true];
+        };
+        const claude = health.checks?.anthropicKey
+            ? (deep ? (health.checks.model ? ['Working', true] : [`Problem: ${problems.model || 'check failed'}`, false]) : ['Connected', true])
+            : ['No API key on the server', false];
+        const gemini = serviceState('gemini', health.services?.gemini);
+        const supadata = serviceState('supadata', health.services?.supadata);
+        box.replaceChildren(
+            row('Claude breakdowns', ...claude),
+            row('YouTube without captions (Gemini)', ...gemini),
+            row('TikTok speech (Supadata)', ...supadata),
+            actionRow('Run a full check', 'refresh', () => load(true))
+        );
+        const off = !health.services?.gemini || !health.services?.supadata;
+        footer.textContent = [
+            deep
+                ? `Full check done: storage ${health.checks?.storage ? 'OK' : 'failing'}, server version ${health.version}.`
+                : 'A full check also tests storage and each API key. It\'s free.',
+            off ? 'To turn a service on, add its key as a Secret in Cloudflare (see Setup guide below).' : ''
+        ].filter(Boolean).join(' ');
+    };
+    const load = (deep) => {
+        if (deep) box.firstChild?.replaceChildren(h('span', { class: 'row-label muted' }, 'Running full check…'));
+        fetchHealth({ deep }).then((health) => paint(health, deep)).catch((error) => {
+            box.replaceChildren(h('div', { class: 'group-row' }, h('span', { class: 'row-label error' }, error.message)));
+        });
+    };
+    load(false);
+    return [h('div', { class: 'section-label' }, 'Server status'), box, footer];
+}
+
+async function checkForUpdates() {
+    const registration = await navigator.serviceWorker?.getRegistration?.();
+    if (!registration) {
+        toast('Updates aren\'t available in this browser view');
+        return;
+    }
+    toast('Checking for updates…');
+    try {
+        await registration.update();
+        const incoming = registration.installing || registration.waiting;
+        // A found update installs and reloads the app on its own.
+        if (!incoming) toast(`You're on the latest version (${APP_VERSION})`);
+    } catch {
+        toast('Couldn\'t check for updates. Try again when you\'re online.');
+    }
 }
 
 function settingsView() {
@@ -865,25 +1060,38 @@ function settingsView() {
         h('div', { class: 'section-label' }, 'Breakdown style'),
         (() => {
             const detail = h('p', { class: 'small muted', style: { margin: '10px 2px 0' } }, DEPTH_INFO[settings.depth]?.detail || DEPTH_INFO.auto.detail);
-            const control = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'Breakdown style' });
-            const paint = () => [...control.children].forEach((b) => {
-                const on = b.dataset.depth === settings.depth;
-                b.classList.toggle('active', on);
-                b.setAttribute('aria-checked', String(on));
+            const control = segmentedControl('Breakdown style', Object.entries(DEPTH_INFO).map(([key, info]) => [key, info.label]), settings.depth, (key) => {
+                saveSettings({ ...getSettings(), depth: key });
+                detail.textContent = DEPTH_INFO[key].detail;
             });
-            Object.entries(DEPTH_INFO).forEach(([key, info]) => control.append(h('button', {
-                type: 'button',
-                role: 'radio',
-                'data-depth': key,
-                onclick: () => {
-                    settings.depth = key;
-                    saveSettings({ ...getSettings(), depth: key });
-                    detail.textContent = info.detail;
-                    paint();
-                }
-            }, info.label)));
-            paint();
             return h('div', { class: 'card' }, control, detail, h('p', { class: 'small muted', style: { margin: '8px 2px 0' } }, 'Any note can be re-done in depth later from its ••• menu.'));
+        })(),
+
+        h('div', { class: 'section-label' }, 'Map'),
+        (() => {
+            const themes = currentThemes();
+            const detailText = h('p', { class: 'small muted', style: { margin: '10px 2px 0' } });
+            const paintDetail = () => {
+                const current = currentThemes();
+                const count = current.themes.length;
+                detailText.textContent = `${THEME_DETAIL[getSettings().themeDetail]?.detail || ''} ${count
+                    ? `Your library has ${count} theme${count === 1 ? '' : 's'}${notes.length - current.byNote.size ? `; ${notes.length - current.byNote.size} note${notes.length - current.byNote.size === 1 ? '' : 's'} not in a theme yet` : ''}.`
+                    : 'Themes appear once a few notes share tags, ideas or links.'}`;
+            };
+            paintDetail();
+            return h('div', { class: 'card' },
+                h('div', { class: 'small muted', style: { margin: '0 2px 6px' } }, 'Color notes by'),
+                segmentedControl('Color notes by', [['theme', 'Theme'], ['source', 'Source']], settings.mapColor, (value) => saveSettings({ ...getSettings(), mapColor: value })),
+                h('div', { class: 'small muted', style: { margin: '14px 2px 6px' } }, 'Theme detail'),
+                segmentedControl('Theme detail', Object.entries(THEME_DETAIL).map(([key, info]) => [key, info.label]), settings.themeDetail, (value) => {
+                    saveSettings({ ...getSettings(), themeDetail: value });
+                    paintDetail();
+                }),
+                detailText,
+                h('div', { class: 'small muted', style: { margin: '14px 2px 6px' } }, 'Shared ideas'),
+                segmentedControl('Shared ideas', [['show', 'Show'], ['hide', 'Hide']], settings.showConcepts ? 'show' : 'hide', (value) => saveSettings({ ...getSettings(), showConcepts: value === 'show' })),
+                h('p', { class: 'small muted', style: { margin: '8px 2px 0' } }, `Shared ideas are the diamonds linking notes that mention the same concept.${themes.themes.length ? ' Tap a theme under the map to light it up; tap it again to see its notes.' : ''}`)
+            );
         })(),
 
         h('div', { class: 'section-label' }, 'Connection'),
@@ -912,6 +1120,7 @@ function settingsView() {
         h('button', { class: 'btn primary block', type: 'submit', style: { 'margin-top': '12px' } }, 'Save & Test'),
         status),
         spendBox,
+        settings.token ? serverStatusSection() : null,
 
         h('div', { class: 'section-label' }, 'Save from the Share button'),
         h('div', { class: 'card' },
@@ -942,8 +1151,16 @@ function settingsView() {
             ))),
             actionRow('Restore from backup', 'refresh', () => fileInput.click())
         ),
-        h('p', { class: 'group-footer' }, `${notes.length} note${notes.length === 1 ? '' : 's'}, stored only on this device. App version ${APP_VERSION}.`),
+        h('p', { class: 'group-footer' }, `${notes.length} note${notes.length === 1 ? '' : 's'}, stored only on this device. Back up now and then: deleting the app deletes its notes.`),
         accounts,
+
+        h('div', { class: 'section-label' }, 'About'),
+        h('div', { class: 'group' },
+            h('div', { class: 'group-row' }, h('span', { class: 'row-label' }, 'App version'), h('span', { class: 'row-value muted' }, APP_VERSION)),
+            actionRow('Check for updates', 'refresh', () => checkForUpdates()),
+            actionRow('Setup guide and help', 'external', () => window.open('https://github.com/AidedMarketing/AidedMind#readme', '_blank', 'noopener'))
+        ),
+        h('p', { class: 'group-footer' }, 'Updates install on their own when you open the app.'),
         fileInput
     );
     if (usage?.limit === null) renderAccounts(accounts);
@@ -997,7 +1214,7 @@ function exportVault() {
         let name = fileName(note);
         for (let i = 2; used.has(name.toLowerCase()); i++) name = fileName(note).replace(/\.md$/, ` ${i}.md`);
         used.add(name.toLowerCase());
-        return { name: `AidedMind/${name}`, content: toMarkdown(note, byId) };
+        return { name: `AidedMind/${name}`, content: toMarkdown(note, byId, { theme: themeOf(note.id)?.label }) };
     });
     const zip = createZip(files);
     shareFile(new File([zip], `AidedMind-${new Date().toISOString().slice(0, 10)}.zip`, { type: 'application/zip' }));
