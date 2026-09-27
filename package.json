@@ -1,0 +1,15 @@
+{
+    "name": "aidedmind",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Personal knowledge PWA: capture links, get AI breakdowns, explore an Obsidian-style graph",
+    "scripts": {
+        "start": "npm --prefix server start",
+        "postinstall": "npm --prefix server install",
+        "test": "npm --prefix server test && node --test web/test/*.test.mjs"
+    },
+    "engines": {
+        "node": ">=20"
+    },
+    "license": "MIT"
+}

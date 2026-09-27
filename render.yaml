@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: aidedmind
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: AIDEDMIND_ACCESS_TOKEN
+        generateValue: true
+      # Free plan disks are wiped on restart; see README "Inbox storage".
+      - key: AIDEDMIND_INBOX_PATH
+        value: server/data/inbox.json
+      - key: NODE_VERSION
+        value: "20"
