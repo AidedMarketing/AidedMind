@@ -309,7 +309,7 @@ function captureView() {
 // ---------- Library ----------
 
 function libraryView(params) {
-    setNav({ title: 'Library' });
+    setNav({ title: 'Library', right: navButton('', () => drainInbox({ manual: true }), 'inbox') });
     let activeTag = params.get('tag') || '';
     let activeType = '';
     const search = h('input', { type: 'search', placeholder: 'Search', 'aria-label': 'Search library', enterkeyhint: 'search' });
@@ -354,7 +354,7 @@ function libraryView(params) {
         );
 
         if (!notes.length) {
-            list.replaceChildren(h('div', { class: 'empty' }, icon('library', { size: 44, strokeWidth: 1.4 }), h('strong', {}, 'Nothing saved yet'), 'Paste a link on the Add tab, or share one with the Shortcut.'));
+            list.replaceChildren(h('div', { class: 'empty' }, icon('library', { size: 44, strokeWidth: 1.4 }), h('strong', {}, 'Nothing saved yet'), 'Paste a link on the Add tab, or share one with the Shortcut. Tap the inbox button above to check for shared links.'));
             return;
         }
         if (!matches.length) {
@@ -379,6 +379,7 @@ function libraryView(params) {
         h('h1', { class: 'large-title' }, 'Library'),
         h('label', { class: 'search' }, icon('search', { size: 18, strokeWidth: 2.2 }), search),
         notes.length ? chips : null,
+        sharedItemsSection(),
         list
     );
 }
@@ -751,7 +752,7 @@ function settingsView() {
                 h('li', {}, 'Add the action ', h('b', {}, 'Get Contents of URL'), ' and paste this URL:', copyField(inboxUrl, 'Inbox URL')),
                 h('li', {}, 'Expand it: set Method to ', h('b', {}, 'POST'), '. Under Headers add ', h('b', {}, 'X-AidedMind-Token'), ' with your token:', settings.token ? copyField(settings.token, 'Token') : h('div', { class: 'small error' }, 'Save your token above first.')),
                 h('li', {}, 'Set Request Body to ', h('b', {}, 'JSON'), ', add a Text field named ', h('b', {}, 'url'), ' and set its value to ', h('b', {}, 'Shortcut Input'), '.'),
-                h('li', {}, 'Optional: add ', h('b', {}, 'Show Notification'), ' so you see “Saved”.')
+                h('li', {}, 'Add ', h('b', {}, 'Show Notification'), ' and set its text to the ', h('b', {}, 'Contents of URL'), ' variable, so you see the server\'s real reply (including any error) instead of a fixed message.')
             ),
             h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'Now in TikTok, YouTube or Safari: Share → Save to AidedMind.')
         ),
@@ -847,38 +848,129 @@ function setBanner(content) {
     append(banner, [content]);
 }
 
-async function drainInbox() {
-    if (inboxRunning || !getSettings().token || !navigator.onLine) return;
+const FAILED_KEY = 'aidedmind.failedShares';
+const inbox = { pending: [], errors: new Map(), checkError: '', checkedAt: null };
+
+function failedShares() {
+    try {
+        return JSON.parse(localStorage.getItem(FAILED_KEY) || '[]');
+    } catch {
+        return [];
+    }
+}
+
+function saveFailedShares(list) {
+    try {
+        localStorage.setItem(FAILED_KEY, JSON.stringify(list.slice(-50)));
+    } catch {
+        // storage unavailable
+    }
+}
+
+function removeFailedShare(id) {
+    saveFailedShares(failedShares().filter((item) => item.id !== id));
+}
+
+function refreshInboxViews() {
+    if (!pending && (location.hash.startsWith('#/library') || location.hash === '' || location.hash === '#/')) route();
+}
+
+// Pulls links saved by the iOS Shortcut and breaks each one down. A link the
+// server can never read is kept locally with its reason (retry or remove it
+// from the Library); a temporary failure stays in the inbox for next time.
+async function drainInbox({ manual = false } = {}) {
+    if (inboxRunning) return;
+    if (!getSettings().token) {
+        if (manual) toast('Add your access token in Settings first');
+        return;
+    }
     inboxRunning = true;
     let saved = 0;
+    let failed = 0;
     try {
+        inbox.checkError = '';
         const items = await fetchInbox();
+        inbox.pending = items;
+        inbox.checkedAt = Date.now();
+        if (!items.length && manual) toast('No shared links waiting');
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
-            setBanner([h('div', { class: 'pulse' }, icon('inbox', { size: 16 })), h('span', {}, `Breaking down ${items.length > 1 ? `${i + 1} of ${items.length} shared items` : 'your shared link'}…`)]);
+            setBanner([h('div', { class: 'pulse' }, icon('inbox', { size: 16 })), h('span', {}, `Breaking down ${items.length > 1 ? `${i + 1} of ${items.length} shared links` : 'your shared link'}…`)]);
             try {
                 await runCapture({ input: [item.url, item.text].filter(Boolean).join(' '), title: item.title });
                 await removeInboxItem(item.id);
+                inbox.errors.delete(item.id);
+                inbox.pending = inbox.pending.filter((p) => p.id !== item.id);
                 saved++;
             } catch (error) {
-                if (error.status && error.status < 500 && ![401, 402, 403, 429].includes(error.status)) {
-                    await removeInboxItem(item.id);
-                    toast(`Couldn't read ${hostOf(item.url) || 'a shared item'}: ${error.message}`);
+                failed++;
+                const permanent = error.status && error.status < 500 && ![401, 402, 403, 429].includes(error.status);
+                if (permanent) {
+                    saveFailedShares([...failedShares().filter((f) => f.id !== item.id), {
+                        id: item.id, url: item.url, text: item.text, title: item.title, error: error.message, at: new Date().toISOString()
+                    }]);
+                    await removeInboxItem(item.id).catch(() => {});
+                    inbox.pending = inbox.pending.filter((p) => p.id !== item.id);
                 } else {
-                    throw error;
+                    inbox.errors.set(item.id, error.message);
+                    if (error.status === 401 || error.status === 402) break;
                 }
             }
         }
     } catch (error) {
-        if (error.status !== 401) toast(`Inbox: ${error.message}`);
+        inbox.checkError = error.message;
+        if (manual) toast(error.message);
     } finally {
         inboxRunning = false;
         setBanner(null);
-        if (saved) {
-            toast(`${saved} shared item${saved === 1 ? '' : 's'} added`);
-            if (!pending) route();
+        if (saved) toast(`${saved} shared link${saved === 1 ? '' : 's'} added`);
+        if (failed) {
+            setBanner([
+                icon('inbox', { size: 18, strokeWidth: 2 }),
+                h('span', { style: { flex: '1' } }, `${failed} shared link${failed === 1 ? '' : 's'} couldn't be broken down.`),
+                h('a', { href: '#/library', onclick: () => setBanner(null) }, 'View')
+            ]);
         }
+        refreshInboxViews();
     }
+}
+
+function sharedItemsSection() {
+    const failed = failedShares();
+    const waiting = inbox.pending;
+    if (!failed.length && !waiting.length && !inbox.checkError) return null;
+    const label = (item) => item.title || hostOf(item.url) || (item.url || item.text || '').slice(0, 60) || 'Shared item';
+    const row = (item, status, actions) => h('div', { class: 'group-row' },
+        h('span', { class: 'row-icon' }, icon('inbox', { size: 16, strokeWidth: 2 })),
+        h('span', { class: 'row-label' },
+            h('div', { style: { 'font-weight': '600', 'overflow-wrap': 'anywhere' } }, label(item)),
+            h('div', { class: 'small', style: { color: status.error ? 'var(--danger)' : 'var(--text-2)' } }, status.text),
+            h('div', { class: 'row', style: { display: 'flex', gap: '8px', 'margin-top': '8px' } }, actions)
+        )
+    );
+    return [
+        h('div', { class: 'section-label' }, 'Shared links'),
+        h('div', { class: 'group' },
+            inbox.checkError ? h('div', { class: 'group-body small error' }, `Couldn't check your inbox: ${inbox.checkError}`) : null,
+            waiting.map((item) => row(item,
+                inbox.errors.has(item.id) ? { text: `Will retry: ${inbox.errors.get(item.id)}`, error: true } : { text: 'Waiting to be broken down' },
+                [h('button', { type: 'button', class: 'btn small-btn', onclick: () => drainInbox({ manual: true }) }, 'Try now')]
+            )),
+            failed.map((item) => row(item, { text: item.error, error: true }, [
+                h('button', {
+                    type: 'button',
+                    class: 'btn small-btn',
+                    onclick: () => {
+                        removeFailedShare(item.id);
+                        location.hash = '#/';
+                        startCapture([item.url, item.text].filter(Boolean).join(' '), item.title || '');
+                    }
+                }, 'Try again'),
+                h('button', { type: 'button', class: 'btn small-btn', onclick: () => { removeFailedShare(item.id); route(); } }, 'Remove')
+            ]))
+        ),
+        failed.length ? h('p', { class: 'group-footer' }, 'If a site keeps refusing, open it, copy the text, and paste it on the Add tab.') : null
+    ];
 }
 
 // ---------- Routing & startup ----------

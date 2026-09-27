@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { classifyUrl, youtubeId, decodeEntities, isPrivateAddress, assertPublicUrl } from '../src/extract.js';
+import { classifyUrl, youtubeId, decodeEntities, isPrivateAddress, assertPublicUrl, substackApiUrl, fetchSource } from '../src/extract.js';
 import { normalize, compactLibrary, analyze, ANALYSIS_SCHEMA } from '../src/analyze.js';
 import { sqlStore } from './helpers.js';
 
@@ -73,4 +73,32 @@ test('store: quota reservation and inbox expiry', () => {
     store.sql.exec('INSERT INTO inbox (id, url, received_at) VALUES (?, ?, ?)', 'old', 'https://example.com/old', '2020-01-01T00:00:00.000Z');
     assert.deepStrictEqual(store.inboxList().map((i) => i.url), ['https://example.com/new']);
     assert.strictEqual(store.inboxAdd({ url: '', text: '  ' }), null);
+});
+
+test('substack posts map to the post API', () => {
+    assert.strictEqual(substackApiUrl('https://writer.substack.com/p/my-post?utm_source=share'), 'https://writer.substack.com/api/v1/posts/my-post');
+    assert.strictEqual(substackApiUrl('https://www.customdomain.com/p/another-one'), 'https://www.customdomain.com/api/v1/posts/another-one');
+    assert.strictEqual(substackApiUrl('https://example.com/blog/post'), null);
+});
+
+test('blocked substack page falls back to the post API', async (t) => {
+    const realFetch = globalThis.fetch;
+    t.after(() => { globalThis.fetch = realFetch; });
+    const seen = [];
+    globalThis.fetch = async (url) => {
+        seen.push(String(url));
+        if (String(url).includes('/api/v1/posts/')) {
+            return new Response(JSON.stringify({ title: 'A <Post>', subtitle: 'Sub', body_html: '<p>Body text</p>', canonical_url: 'https://writer.substack.com/p/a-post', publishedBylines: [{ name: 'Writer' }] }),
+                { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response('blocked', { status: 403 });
+    };
+    const source = await fetchSource('https://writer.substack.com/p/a-post');
+    assert.deepStrictEqual(seen, ['https://writer.substack.com/p/a-post', 'https://writer.substack.com/api/v1/posts/a-post']);
+    assert.strictEqual(source.url, 'https://writer.substack.com/p/a-post');
+    assert.match(source.html, /<h1>A &lt;Post&gt;<\/h1><h2>Sub<\/h2><p>Body text<\/p>/);
+    assert.match(source.html, /content="Writer"/);
+
+    globalThis.fetch = async () => new Response('blocked', { status: 403 });
+    await assert.rejects(fetchSource('https://example.com/not-substack'), /responded with 403/);
 });
