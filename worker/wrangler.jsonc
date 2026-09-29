@@ -21,7 +21,7 @@
         "AIDEDMIND_MODEL_QUICK": "claude-haiku-4-5",
         "AIDEDMIND_MODEL_BALANCED": "claude-sonnet-5-5",
         "AIDEDMIND_MODEL_THOROUGH": "claude-opus-5-5",
-        // Video transcripts: Gemini watches YouTube videos without captions.
+        // Gemini watches YouTube videos and backs up breakdowns during Claude outages.
         // "gemini-flash-latest" always points at Google's current Flash model.
         "GEMINI_MODEL": "gemini-flash-latest",
         "FREE_MONTHLY_CAPTURES": "25",
@@ -30,7 +30,7 @@
     // Secrets (set in the Cloudflare dashboard or with `wrangler secret put`):
     //   ANTHROPIC_API_KEY  - Claude API key
     //   OWNER_TOKEN        - your personal access token (unlimited plan)
-    //   GEMINI_API_KEY     - optional: transcribe YouTube videos without captions
+    //   GEMINI_API_KEY     - optional: transcribe videos and back up breakdowns
     //   SUPADATA_API_KEY   - optional: transcribe what's said in TikToks
     "observability": { "enabled": true }
 }

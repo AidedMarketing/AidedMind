@@ -31,7 +31,8 @@ const DEPTH_INFO = {
     auto: { label: 'Auto', detail: 'Picks for each link: Quick for TikToks and short posts, Balanced for most articles, videos and photos, Thorough for very long pieces or 6+ photos.' },
     quick: { label: 'Quick', detail: 'Fastest and cheapest (Claude Haiku). Short summary; great for TikToks and short posts.' },
     balanced: { label: 'Balanced', detail: 'Fast, with a tight summary and strong quotes and takeaways (Claude Sonnet 5.5). Best for most things.' },
-    thorough: { label: 'Thorough', detail: 'Deepest reasoning (Claude Opus). Slower and uses the most; for long or dense pieces.' }
+    thorough: { label: 'Thorough', detail: 'Deepest reasoning (Claude Opus). Slower and uses the most; for long or dense pieces.' },
+    expanded: { label: 'More detail', detail: 'A fuller breakdown of this note, using the same source text.' }
 };
 
 // Themes are recomputed only when the library or the detail setting changes.
@@ -55,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '20';
+const APP_VERSION = '21';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -240,7 +241,10 @@ function buildNote(result, title) {
             thumbnail: result.source.thumbnail,
             partial: result.source.partial,
             transcriptSource: result.source.transcriptSource || '',
-            transcriptError: result.source.transcriptError || ''
+            transcriptError: result.source.transcriptError || '',
+            captureKind: result.source.captureKind || '',
+            imageCount: result.source.imageCount || 0,
+            wordCount: result.source.wordCount || (result.source.sourceType === 'article' ? (result.source.text.match(/\S+/g) || []).length : 0)
         },
         sourceText: result.source.text,
         title: title || a.title || result.source.title || 'Untitled',
@@ -264,7 +268,7 @@ function buildNote(result, title) {
 // Any of: `input` (what you typed or pasted), an explicit `url` and/or `text`,
 // photos, `retry` (fetch a partial note's link again) or `replace` (redo a
 // partial note with text you pasted).
-async function runCapture({ input = '', url: explicitUrl, text: explicitText, title, photos = [], retry = null, replace = null }) {
+async function runCapture({ input = '', url: explicitUrl, text: explicitText, title, photos = [], retry = null, replace = null, augment = null }) {
     let result;
     if (retry) {
         result = await capture({ url: retry.source?.sharedUrl || retry.source?.url, retry }, notes);
@@ -272,7 +276,7 @@ async function runCapture({ input = '', url: explicitUrl, text: explicitText, ti
         if (!explicitText?.trim()) throw new Error('Paste the article text first.');
         result = await capture({ url: replace.source?.url, text: explicitText.trim(), replace }, notes);
     } else if (photos.length) {
-        result = await capture({ text: input.trim(), title, photos }, notes);
+        result = await capture({ text: input.trim(), title, photos, augment }, notes);
         result.photos = photos.map((photo) => photo.thumb);
     } else if (explicitUrl !== undefined || explicitText !== undefined) {
         if (!explicitUrl && !explicitText) throw new Error('Nothing to save.');
@@ -297,6 +301,7 @@ async function finishNote(result, title) {
             createdAt: previous.createdAt,
             userNotes: previous.userNotes || '',
             removedLinks: previous.removedLinks || [],
+            photos: [...(previous.photos || []), ...(note.photos || [])],
             ...(previous.topicByUser ? { topic: previous.topic, topicByUser: true } : {})
         };
         note.connections = keepAllowedLinks(note, note.connections);
@@ -699,6 +704,8 @@ function noteView(id) {
             // Sharing the link again only helps when the service that failed might work next time.
             note.source.url && note.source.transcriptSource !== 'paywall' ? ' Share the link again to retry.' : null
         ) : null,
+        note.source?.wordCount ? h('p', { class: 'small muted' }, `${note.source.wordCount.toLocaleString()} words captured${note.source.captureKind === 'safari' ? ' from Safari' : ''}.${note.source.imageCount ? ` This page has images AidedMind may not have read (${note.source.imageCount}).` : ''}`,
+            note.source.imageCount ? h('button', { type: 'button', class: 'btn small-btn', onclick: () => addScreenshots(note) }, 'Add screenshots') : null) : null,
         (() => {
             const theme = themeOf(note.id);
             const chips = [
@@ -918,7 +925,8 @@ function noteActions(note, byId) {
                 note.source?.partial && href && note.source.transcriptSource !== 'paywall' ? actionRow('Get the full transcript', 'refresh', () => retryTranscript(note)) : null,
                 note.source?.partial ? actionRow(note.source.transcriptSource === 'paywall' ? 'Paste the full article' : 'Paste the full text', 'clipboard', () => pasteFullTextSheet(note)) : null,
                 actionRow(`Re-analyze (${depthLabel(getSettings().depth)})`, 'refresh', () => reanalyze(note)),
-                note.depth !== 'thorough' ? actionRow('Re-analyze in depth (Thorough)', 'sparkle', () => reanalyze(note, 'thorough')) : null
+                !note.source?.partial ? actionRow('Give me more detail', 'sparkle', () => reanalyze(note, 'expanded')) : null,
+                type === 'article' ? actionRow('Add screenshots', 'camera', () => addScreenshots(note)) : null
             ),
             h('div', { class: 'group' },
                 actionRow('Delete note', 'trash', async () => {
@@ -936,6 +944,30 @@ function noteActions(note, byId) {
             h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel')
         )
     );
+}
+
+function addScreenshots(note) {
+    closeSheet();
+    const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
+    document.body.append(input);
+    input.addEventListener('change', async () => {
+        const files = [...input.files].slice(0, MAX_PHOTOS);
+        input.remove();
+        if (!files.length || pending) return;
+        try {
+            toast('Preparing screenshots…');
+            const photos = await Promise.all(files.map(preparePhoto));
+            pending = runCapture({ augment: note, title: note.title, photos });
+            await pending;
+            toast('Note updated with screenshots');
+        } catch (error) { toast(error.message); }
+        finally {
+            pending = null;
+            if (location.hash.includes(encodeURIComponent(note.id))) route();
+        }
+    }, { once: true });
+    input.addEventListener('cancel', () => input.remove(), { once: true });
+    input.click();
 }
 
 // Fetches a caption-only note's link again (the transcript services may have
@@ -1183,7 +1215,7 @@ function graphView() {
 
 // Run JavaScript on Web Page: reads the article from the page in your own
 // Safari (where you're logged in) and hands it back to the Shortcut.
-const PAGE_SCRIPT = 'var e=document.querySelector("article")||document.querySelector("main")||document.body;var t=(e.innerText||"").trim();completion(JSON.stringify({url:location.href,title:document.title,text:t.length>=200?t.slice(0,400000):""}));';
+const PAGE_SCRIPT = 'var a=Array.from(document.querySelectorAll("article"));var e=a.sort(function(x,y){return(y.innerText||"").length-(x.innerText||"").length})[0]||document.querySelector("main")||document.body;var t=(e.innerText||"").trim();var w=(t.match(/\\S+/g)||[]).length;var review=t.length>=200&&(w<200||/subscribe to (continue|read)|free article limit|reached your (free )?(article|reading)? ?limit|sign in to (continue|read)/i.test(t.slice(-1500)));completion(JSON.stringify({url:location.href,title:document.title,text:t.length>=200?t.slice(0,400000):"",capture:{kind:"safari",words:w,images:e.querySelectorAll("img").length,review:review}}));';
 
 function copyField(value, label) {
     return h('div', { class: 'copy-field' },
@@ -1321,7 +1353,7 @@ function settingsView() {
         fileInput.value = '';
     });
 
-    const inboxUrl = `${serverBase()}/api/inbox`;
+    const inboxUrl = `${serverBase()}/api/inbox?shortcut=1`;
     const usage = getLastUsage();
     const spendBox = h('div');
     const fillSpend = (u) => {
@@ -1333,6 +1365,7 @@ function settingsView() {
             const usd = spend.claudeUsd > 0 && spend.claudeUsd < 0.01 ? 'under $0.01' : `about $${spend.claudeUsd.toFixed(2)}`;
             lines.push(`Claude: ${usd}${spend.unpricedModels?.length ? ' (plus unpriced models)' : ''}`);
             if (spend.geminiVideos) lines.push(`Gemini: ${spend.geminiVideos} video${spend.geminiVideos === 1 ? '' : 's'} transcribed`);
+            if (spend.geminiBreakdowns) lines.push(`Gemini backup: ${spend.geminiBreakdowns} breakdown${spend.geminiBreakdowns === 1 ? '' : 's'}`);
             if (spend.supadataRequests) lines.push(`Supadata: ${spend.supadataRequests} transcript${spend.supadataRequests === 1 ? '' : 's'} (100 free credits a month)`);
         }
         append(spendBox, [
@@ -1440,7 +1473,8 @@ function settingsView() {
                 h('li', {}, h('b', {}, 'Safari branch: '), 'Add ', h('b', {}, 'Run JavaScript on Web Page'), ' with this script:', copyField(PAGE_SCRIPT, 'Script'), ' Then add Get Contents of URL, Method POST, Request Body File = JavaScript Result.'),
                 h('li', {}, h('b', {}, 'App branch: '), 'Add Get URLs from Shortcut Input. Add Get Contents of URL, Method POST, Request Body JSON with a Text field named ', h('b', {}, 'url'), ' set to the first URL. For a plain text share with no URL, send it as a Text field named ', h('b', {}, 'text'), '.'),
                 h('li', {}, 'For both Get Contents of URL actions use this inbox URL:', copyField(inboxUrl, 'Inbox URL'), ' Add the header ', h('b', {}, 'X-AidedMind-Token'), ' with your token:', settings.token ? copyField(settings.token, 'Token') : h('div', { class: 'small error' }, 'Save your token above first.')),
-                h('li', {}, 'After each POST, show a notification with its Contents of URL so you see whether the link was saved.')
+                h('li', {}, 'After each POST, use Show Content with the Content of URL. It now says only “Saved to AidedMind” when the server has stored the share. If the request fails, the Shortcut shows an error instead of a false success.'),
+                h('li', {}, 'Test once from Safari and once from Substack. In Library → Shared links, check that the title appears. A short Safari capture asks you to review its text before a breakdown uses it.')
             ),
             h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'From a paid article inside Substack, the app may share only a link. AidedMind keeps it in Library → Shared links as Needs article text when the server cannot read it. Tap Add text there to finish the same item.')
         ),
@@ -1586,6 +1620,7 @@ let inboxPollTimer;
 function inboxAction(item) {
     if (item.status === 'done' && item.result) return 'import';
     if (item.status === 'failed') {
+        if (item.errorKind === 'needs_review') return 'needs_review';
         if (item.errorKind === 'needs_text') return 'needs_text';
         return item.errorKind === 'retry_in_app' ? 'attention' : 'report';
     }
@@ -1595,6 +1630,7 @@ function inboxAction(item) {
 
 function addTextToShare(item) {
     const field = h('textarea', { class: 'field', rows: '8', placeholder: 'Paste the article text you can read', 'aria-label': 'Article text' });
+    field.value = item.text || '';
     openSheet(
         h('h3', {}, 'Add article text'),
         h('p', { class: 'small muted' }, 'This link is saved. If the article opens in your app, copy its text here. AidedMind will finish the same shared item.'),
@@ -1660,9 +1696,9 @@ async function drainInbox({ manual = false } = {}) {
     try {
         inbox.checkError = '';
         const items = await fetchInbox();
-        inbox.pending = items.filter((item) => ['wait', 'needs_text', 'attention'].includes(inboxAction(item)));
+        inbox.pending = items.filter((item) => ['wait', 'needs_text', 'needs_review', 'attention'].includes(inboxAction(item)));
         inbox.checkedAt = Date.now();
-        const work = items.filter((item) => !['wait', 'needs_text', 'attention'].includes(inboxAction(item)));
+        const work = items.filter((item) => !['wait', 'needs_text', 'needs_review', 'attention'].includes(inboxAction(item)));
         if (!items.length && manual) toast('No shared links waiting');
         for (let i = 0; i < work.length; i++) {
             const item = work[i];
@@ -1755,6 +1791,19 @@ function sharedItemsSection() {
         } catch (error) { toast(error.message); }
     } }, 'Try again');
     const addText = (item) => h('button', { type: 'button', class: 'btn small-btn', onclick: () => addTextToShare(item) }, 'Add text');
+    const reviewItem = (item) => h('button', { type: 'button', class: 'btn small-btn', onclick: () => {
+        const preview = h('textarea', { class: 'field', rows: '9', readonly: true, 'aria-label': 'Captured article text' });
+        preview.value = item.text || '';
+        openSheet(h('h3', {}, 'Check captured text'),
+            h('p', { class: 'small muted' }, `Safari captured ${(item.capture?.words || 0).toLocaleString()} words. Make sure this is the article you meant to save.`),
+            preview,
+            h('button', { type: 'button', class: 'btn primary block', onclick: async () => {
+                try { await updateInboxItem(item.id, { confirm: true }); closeSheet(); toast('Breakdown queued'); await drainInbox(); }
+                catch (error) { toast(error.message); }
+            } }, 'Use this text'),
+            h('button', { type: 'button', class: 'btn block', onclick: () => { closeSheet(); addTextToShare(item); } }, 'Add more text'),
+            h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Later'));
+    } }, 'Check text');
     const removeItem = (item) => h('button', { type: 'button', class: 'btn small-btn', onclick: async () => {
         try { await removeInboxItem(item.id); await drainInbox(); }
         catch (error) { toast(error.message); }
@@ -1773,14 +1822,18 @@ function sharedItemsSection() {
             inbox.checkError ? h('div', { class: 'group-body small error' }, `Couldn't check your inbox: ${inbox.checkError}`) : null,
             waiting.map((item) => {
                 const action = inboxAction(item);
-                const status = action === 'needs_text'
+                const status = action === 'needs_review'
+                    ? { text: `${item.capture?.words || 'A short amount of'} words captured. Check the text before AidedMind breaks it down.` }
+                    : action === 'needs_text'
                     ? { text: `Needs article text. ${item.error || 'AidedMind could not read this link.'}`, error: true }
                     : action === 'attention'
                         ? { text: `Automatic attempts stopped. ${item.error || 'AidedMind could not read the article.'} Add text or try again later.`, error: true }
                         : item.status === 'processing'
                             ? { text: 'Reading this article now…' }
                             : { text: `${item.error ? `${item.error} ` : 'Saved. Waiting for breakdown. '}${retryTime(item)}` };
-                const actions = action === 'attention'
+                const actions = action === 'needs_review'
+                    ? [openArticle(item), reviewItem(item), removeItem(item)]
+                    : action === 'attention'
                     ? [openArticle(item), addText(item), retryItem(item), removeItem(item)]
                     : action === 'needs_text'
                         ? [openArticle(item), addText(item), removeItem(item)]

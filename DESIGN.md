@@ -54,6 +54,7 @@ Use the existing system body and display stacks so controls feel native on iPhon
 ## Layout
 
 The app uses a narrow phone-first shell, bottom tabs, cards and grouped rows. Respect the safe-area variables in `web/app.css`. Shared links use the established group-row structure so statuses and actions remain scannable without a separate dashboard.
+Scrollable collections use the global thin scrollbar treatment in `web/app.css`, with a visible thumb drawn from existing surface and line tokens.
 
 ## Elevation & Depth
 

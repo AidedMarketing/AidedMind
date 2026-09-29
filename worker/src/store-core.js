@@ -17,7 +17,9 @@ const INBOX_COLUMNS = {
     error: "TEXT NOT NULL DEFAULT ''",
     error_kind: "TEXT NOT NULL DEFAULT ''",
     result: "TEXT NOT NULL DEFAULT ''",
-    quota_limit: 'INTEGER NOT NULL DEFAULT -1'
+    quota_limit: 'INTEGER NOT NULL DEFAULT -1',
+    capture_meta: "TEXT NOT NULL DEFAULT '{}'",
+    capture_confirmed: 'INTEGER NOT NULL DEFAULT 0'
 };
 
 export class StoreCore {
@@ -102,7 +104,7 @@ export class StoreCore {
     // the app collects it) or failed. `queued` items with a limit of null
     // are unlimited (owner and unlimited plans).
 
-    inboxAdd({ url, text, title }, { limit = null, queue = true } = {}) {
+    inboxAdd({ url, text, title, capture }, { limit = null, queue = true } = {}) {
         const clean = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
         const now = new Date().toISOString();
         const item = {
@@ -113,9 +115,14 @@ export class StoreCore {
             received_at: now
         };
         if (!item.url && !item.text) return null;
-        this.sql.exec(`INSERT INTO inbox (id, url, text, title, received_at, status, queued, next_attempt_at, quota_limit)
-            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
-        item.id, item.url, item.text, item.title, now, queue ? 1 : 0, now, limit === null ? -1 : Number(limit));
+        const meta = capture?.kind === 'safari' ? {
+            kind: 'safari', words: Math.min(200000, Math.max(0, Number(capture.words) || 0)),
+            images: Math.min(200, Math.max(0, Number(capture.images) || 0)),
+            review: Boolean(capture.review && item.text)
+        } : {};
+        this.sql.exec(`INSERT INTO inbox (id, url, text, title, received_at, status, queued, next_attempt_at, quota_limit, capture_meta)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+        item.id, item.url, item.text, item.title, now, queue ? 1 : 0, now, limit === null ? -1 : Number(limit), JSON.stringify(meta));
         this.sql.exec(`DELETE FROM inbox WHERE id NOT IN (SELECT id FROM inbox ORDER BY received_at DESC LIMIT ${INBOX_MAX})`);
         return { ...item, status: 'pending', queued: Boolean(queue) };
     }
@@ -145,6 +152,7 @@ export class StoreCore {
                 nextRetryAt: row.status === 'pending' && row.queued === 1 ? row.next_attempt_at : null,
                 error: row.error,
                 errorKind: row.error_kind,
+                capture: JSON.parse(row.capture_meta || '{}'),
                 result
             };
         });
@@ -156,16 +164,16 @@ export class StoreCore {
         return before > 0;
     }
 
-    inboxUpdate(id, { text = '', title = '' } = {}) {
+    inboxUpdate(id, { text = '', title = '', confirm = false } = {}) {
         const [item] = this.rows('SELECT status FROM inbox WHERE id = ?', id);
         if (!item || !['failed', 'pending'].includes(item.status)) return false;
         const content = String(text || '').trim().slice(0, MAX_TEXT);
         if (content) {
-            this.sql.exec("UPDATE inbox SET text = ?, title = CASE WHEN ? = '' THEN title ELSE ? END, received_at = ?, status = 'pending', attempts = 0, next_attempt_at = ?, error = '', error_kind = '' WHERE id = ?",
+            this.sql.exec("UPDATE inbox SET text = ?, title = CASE WHEN ? = '' THEN title ELSE ? END, received_at = ?, status = 'pending', attempts = 0, next_attempt_at = ?, capture_confirmed = 1, error = '', error_kind = '' WHERE id = ?",
                 content, String(title || '').trim(), String(title || '').trim().slice(0, 300), new Date().toISOString(), new Date().toISOString(), id);
         } else {
-            this.sql.exec("UPDATE inbox SET status = 'pending', attempts = 0, next_attempt_at = ?, error = '', error_kind = '' WHERE id = ?",
-                new Date().toISOString(), id);
+            this.sql.exec("UPDATE inbox SET status = 'pending', attempts = 0, next_attempt_at = ?, capture_confirmed = CASE WHEN ? THEN 1 ELSE capture_confirmed END, error = '', error_kind = '' WHERE id = ?",
+                new Date().toISOString(), confirm ? 1 : 0, id);
         }
         return true;
     }
@@ -174,13 +182,15 @@ export class StoreCore {
     // "lease" keeps another run from taking it, and expires if this one dies.
     inboxClaim(nowMs, leaseMs) {
         const now = new Date(nowMs).toISOString();
-        const [row] = this.rows(`SELECT id, url, text, title, attempts, quota_limit FROM inbox
+        const [row] = this.rows(`SELECT id, url, text, title, attempts, quota_limit, capture_meta, capture_confirmed FROM inbox
             WHERE queued = 1 AND status IN ('pending', 'processing') AND next_attempt_at <= ?
             ORDER BY received_at LIMIT 1`, now);
         if (!row) return null;
         this.sql.exec("UPDATE inbox SET status = 'processing', attempts = attempts + 1, next_attempt_at = ? WHERE id = ?",
             new Date(nowMs + leaseMs).toISOString(), row.id);
-        return { id: row.id, url: row.url, text: row.text, title: row.title, attempts: row.attempts + 1, quotaLimit: row.quota_limit < 0 ? null : row.quota_limit };
+        return { id: row.id, url: row.url, text: row.text, title: row.title, attempts: row.attempts + 1,
+            capture_meta: row.capture_meta, capture_confirmed: row.capture_confirmed,
+            quotaLimit: row.quota_limit < 0 ? null : row.quota_limit };
     }
 
     // When the next queued item is due (ms since epoch), or null.

@@ -203,6 +203,9 @@ test('auto style picks from what was shared', async (t) => {
     // An explicit style is honored and not marked auto.
     const fixed = await (await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: { source: { text: words(300) }, library: [], depth: 'thorough' } })).json();
     assert.deepStrictEqual([fixed.depth, fixed.auto], ['thorough', false]);
+    const fuller = await (await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: { source: { text: words(2500) }, library: [], depth: 'expanded' } })).json();
+    assert.deepStrictEqual([fuller.depth, fuller.auto, stub.requests.at(-1).body.model], ['expanded', false, 'claude-sonnet-5-5']);
+    assert.match(JSON.stringify(stub.requests.at(-1).body.messages), /fuller reading/);
 });
 
 test('accounts: owner creates users, free plan quota enforced, failures refunded', async (t) => {
@@ -282,11 +285,19 @@ test('photos: sent to Claude as images, auto style by count, text read back', as
     assert.match(content[3].text, /The user added this context:\nFrom chapter 3/);
     assert.match(content[4].text, /Transcribe the photos into sourceText/);
 
+    const article = await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: {
+        source: { sourceType: 'article', title: 'Story', url: 'https://example.com/story', text: 'The original article paragraph.', images: [photo] }, library: []
+    } });
+    assert.strictEqual(article.status, 200);
+    const articleContent = stub.requests.at(-1).body.messages[0].content;
+    assert.deepStrictEqual(articleContent.map((b) => b.type), ['text', 'document', 'text', 'image', 'text', 'text']);
+    assert.match(articleContent[1].source.data, /original article paragraph/);
+
     assert.strictEqual((await (await send(Array(6).fill(photo))).json()).depth, 'thorough');
     assert.strictEqual((await send(Array(9).fill(photo))).status, 413);
     assert.strictEqual((await send([{ mediaType: 'image/tiff', data: photo.data }])).status, 415);
     assert.strictEqual((await send([{ mediaType: 'image/png', data: 'not base64!' }])).status, 400);
     // Rejected photos don't use up the monthly quota.
     const usage = await env.STORE.get('user:owner').usageFor(new Date().toISOString().slice(0, 7));
-    assert.strictEqual(usage.captures, 2);
+    assert.strictEqual(usage.captures, 3);
 });

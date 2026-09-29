@@ -5,6 +5,8 @@ import { toMarkdown, fileName } from '../js/markdown.js';
 import { splitInput } from '../js/api.js';
 import { relatedNotes, conceptVocabulary, canonicalUrl, findDuplicate, urlHash, knownUrlHashes } from '../js/library.js';
 import { sourceTypeForUrl } from '../js/api.js';
+import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
 
 const notes = [
     { id: 'a', title: 'Spacing effect', source: { sourceType: 'article' }, concepts: [{ name: 'Memory' }], connections: [{ noteId: 'b', relation: 'supports', reason: 'r' }], tags: ['learning'], createdAt: '2026-01-01', tldr: 't' },
@@ -12,6 +14,22 @@ const notes = [
     { id: 'c', title: 'Sleep and recall', source: { sourceType: 'tiktok' }, concepts: [], connections: [], createdAt: '2026-01-03', tldr: 't' },
     { id: 'd', title: 'Unrelated', source: { sourceType: 'text' }, concepts: [], connections: [], createdAt: '2026-01-04', tldr: 't' }
 ];
+
+test('Safari Shortcut flags a short capture and chooses the largest article', async () => {
+    const app = await readFile(new URL('../js/app.js', import.meta.url), 'utf8');
+    const literal = app.match(/^const PAGE_SCRIPT = ('.*');$/m)?.[1];
+    assert.ok(literal);
+    const script = vm.runInNewContext(literal);
+    const article = (text, images) => ({ innerText: text, querySelectorAll: () => Array(images).fill({}) });
+    const small = article('Related teaser. '.repeat(20), 0);
+    const story = article('A short article paragraph with meaningful detail. '.repeat(18), 2);
+    let result;
+    vm.runInNewContext(script, { document: { querySelectorAll: () => [small, story] }, location: { href: 'https://example.com/story' },
+        completion: (value) => { result = JSON.parse(value); } });
+    assert.strictEqual(result.capture.review, true);
+    assert.strictEqual(result.capture.images, 2);
+    assert.match(result.text, /meaningful detail/);
+});
 
 test('graph links notes, wikilinks and shared concepts', () => {
     const graph = buildGraph(notes);

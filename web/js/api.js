@@ -100,16 +100,22 @@ export function sourceTypeForUrl(url) {
 // retry: an existing note to fetch again and replace (e.g. caption-only).
 // replace: an existing note to replace with the text given (e.g. a paywalled
 // article whose full text you pasted).
-export async function capture({ url, text, title, depth, photos, retry, replace }, notes) {
+export async function capture({ url, text, title, depth, photos, retry, replace, augment }, notes) {
     // Links already saved open the existing note: no fetch, no Claude call.
     // A partial note (caption only, paywalled) is redone instead, and
     // replaced in place.
-    let replaces = retry || replace || null;
+    let replaces = retry || replace || augment || null;
     const saved = url && !photos?.length && !retry && !replace ? findDuplicate(notes, url) : null;
     if (saved && !saved.source?.partial && !text) throw new DuplicateError(saved);
     if (saved?.source?.partial) replaces = saved;
     let source;
-    if (photos?.length) {
+    if (augment && photos?.length) {
+        source = {
+            ...augment.source, sourceType: 'article', title: title || augment.title,
+            text: augment.sourceText || '',
+            images: photos.map((photo) => ({ mediaType: photo.mediaType, data: photo.data }))
+        };
+    } else if (photos?.length) {
         source = {
             sourceType: 'photo',
             url: '',
@@ -148,7 +154,8 @@ export async function capture({ url, text, title, depth, photos, retry, replace 
     if (source.images) {
         // Keep what Claude read from the photos, never the photos themselves.
         const { images, ...rest } = source;
-        source = { ...rest, text: result.analysis.sourceText || source.text };
+        source = { ...rest, text: augment ? [source.text, result.analysis.sourceText].filter(Boolean).join('\n\n') : result.analysis.sourceText || source.text,
+            imageCount: source.imageCount };
     }
     return { source, analysis: result.analysis, model: result.model, depth: result.depth, auto: result.auto, usage: result.usage, replaces: replaces?.id || null };
 }
