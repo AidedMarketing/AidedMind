@@ -142,6 +142,7 @@ export class StoreCore {
                 queued: row.queued === 1,
                 status: row.status === 'done' && !result ? 'failed' : row.status,
                 attempts: row.attempts,
+                nextRetryAt: row.status === 'pending' && row.queued === 1 ? row.next_attempt_at : null,
                 error: row.error,
                 errorKind: row.error_kind,
                 result

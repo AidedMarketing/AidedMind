@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { DatabaseSync } from 'node:sqlite';
 import app from '../src/app.js';
 import { StoreCore } from '../src/store-core.js';
-import { processInbox, MAX_ATTEMPTS, RETRY_DELAYS_MS } from '../src/inbox-processor.js';
+import { processInbox, MAX_ATTEMPTS, RETRY_DELAYS_MS, RATE_LIMIT_MAX_ATTEMPTS } from '../src/inbox-processor.js';
 import { fakeEnv, anthropicStub, call, sqlAdapter, sqlStore } from './helpers.js';
 import { urlHash } from '../../web/js/library.js';
 
@@ -132,6 +132,36 @@ test('Claude outage keeps the share queued without using quota, then recovers', 
     assert.strictEqual(await processInbox(core, env, { now: () => now }), 1);
     assert.strictEqual(only(core).status, 'done');
     assert.strictEqual(core.usageFor(month()).captures, 1);
+});
+
+test('site rate limits expose the next retry, then keep the same link available for manual recovery', async (t) => {
+    const { env, core } = await setup(t);
+    let blocked = true;
+    mockFetch(t, { 'https://news.example/a': () => blocked
+        ? new Response('slow down', { status: 429 })
+        : new Response(page(words(30)), { headers: { 'content-type': 'text/html' } }) });
+    const saved = core.inboxAdd({ url: 'https://news.example/a' }, { limit: 5 });
+    let now = Date.now();
+    for (let attempt = 1; attempt <= RATE_LIMIT_MAX_ATTEMPTS; attempt++) {
+        assert.strictEqual(await processInbox(core, env, { now: () => now }), 1);
+        const item = only(core);
+        assert.strictEqual(item.id, saved.id);
+        assert.strictEqual(item.attempts, attempt);
+        assert.strictEqual(core.usageFor(month()).captures, 0);
+        if (attempt === RATE_LIMIT_MAX_ATTEMPTS) {
+            assert.deepStrictEqual([item.status, item.errorKind, item.nextRetryAt], ['failed', 'retry_in_app', null]);
+        } else {
+            assert.strictEqual(item.status, 'pending');
+            const delay = Math.min(60 * 60 * 1000, 2 * 60 * 1000 * 2 ** (attempt - 1));
+            assert.strictEqual(new Date(item.nextRetryAt).getTime(), now + delay);
+            assert.strictEqual(await processInbox(core, env, { now: () => now }), 0);
+            now += delay + 1000;
+        }
+    }
+    blocked = false;
+    assert.strictEqual(core.inboxUpdate(saved.id, {}), true);
+    assert.strictEqual(await processInbox(core, env, { now: () => now }), 1);
+    assert.strictEqual(only(core).status, 'done');
 });
 
 test('failures that will not get better fail at once, with a reason', async (t) => {

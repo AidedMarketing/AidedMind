@@ -55,7 +55,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '18';
+const APP_VERSION = '19';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -1587,7 +1587,7 @@ function inboxAction(item) {
     if (item.status === 'done' && item.result) return 'import';
     if (item.status === 'failed') {
         if (item.errorKind === 'needs_text') return 'needs_text';
-        return item.errorKind === 'retry_in_app' ? 'foreground' : 'report';
+        return item.errorKind === 'retry_in_app' ? 'attention' : 'report';
     }
     if (!item.queued) return 'foreground'; // shared before the server worked in the background
     return 'wait';
@@ -1660,11 +1660,10 @@ async function drainInbox({ manual = false } = {}) {
     try {
         inbox.checkError = '';
         const items = await fetchInbox();
-        inbox.pending = items.filter((item) => ['wait', 'needs_text'].includes(inboxAction(item)));
+        inbox.pending = items.filter((item) => ['wait', 'needs_text', 'attention'].includes(inboxAction(item)));
         inbox.checkedAt = Date.now();
-        const work = items.filter((item) => !['wait', 'needs_text'].includes(inboxAction(item)));
+        const work = items.filter((item) => !['wait', 'needs_text', 'attention'].includes(inboxAction(item)));
         if (!items.length && manual) toast('No shared links waiting');
-        else if (!work.length && inbox.pending.length && manual) toast('No finished links yet. Open a saved article below or add text if it needs access.');
         for (let i = 0; i < work.length; i++) {
             const item = work[i];
             const action = inboxAction(item);
@@ -1742,6 +1741,24 @@ function sharedItemsSection() {
         const href = safeHref(item.url);
         return href ? h('a', { class: 'btn small-btn', href, target: '_blank', rel: 'noopener noreferrer' }, 'Open article') : null;
     };
+    const retryTime = (item) => {
+        const when = Date.parse(item.nextRetryAt || '');
+        if (!Number.isFinite(when)) return 'AidedMind will retry automatically.';
+        if (when <= Date.now()) return 'AidedMind will retry soon.';
+        return `AidedMind will retry around ${new Date(when).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+    };
+    const retryItem = (item) => h('button', { type: 'button', class: 'btn small-btn', onclick: async () => {
+        try {
+            await updateInboxItem(item.id, {});
+            toast('Retry queued.');
+            await drainInbox();
+        } catch (error) { toast(error.message); }
+    } }, 'Try again');
+    const addText = (item) => h('button', { type: 'button', class: 'btn small-btn', onclick: () => addTextToShare(item) }, 'Add text');
+    const removeItem = (item) => h('button', { type: 'button', class: 'btn small-btn', onclick: async () => {
+        try { await removeInboxItem(item.id); await drainInbox(); }
+        catch (error) { toast(error.message); }
+    } }, 'Remove');
     const row = (item, status, actions) => h('div', { class: 'group-row' },
         h('span', { class: 'row-icon' }, icon('inbox', { size: 16, strokeWidth: 2 })),
         h('span', { class: 'row-label' },
@@ -1754,25 +1771,22 @@ function sharedItemsSection() {
         h('div', { class: 'section-label' }, 'Shared links'),
         h('div', { class: 'group' },
             inbox.checkError ? h('div', { class: 'group-body small error' }, `Couldn't check your inbox: ${inbox.checkError}`) : null,
-            waiting.map((item) => row(item,
-                inboxAction(item) === 'needs_text' ? { text: `Needs article text. ${item.error || 'AidedMind could not read this link.'}`, error: true }
-                    : inbox.errors.has(item.id) ? { text: `Will retry: ${inbox.errors.get(item.id)}`, error: true }
-                        : item.error ? { text: `${item.error} AidedMind will try again automatically.` }
-                            : { text: item.status === 'processing' ? 'Being broken down…' : 'Saved. Waiting for breakdown.' },
-                inboxAction(item) === 'needs_text'
-                    ? [
-                        openArticle(item),
-                        h('button', { type: 'button', class: 'btn small-btn', onclick: () => addTextToShare(item) }, 'Add text'),
-                        h('button', { type: 'button', class: 'btn small-btn', onclick: async () => {
-                            try { await removeInboxItem(item.id); await drainInbox(); }
-                            catch (error) { toast(error.message); }
-                        } }, 'Remove')
-                    ]
-                    : [
-                        openArticle(item),
-                        h('button', { type: 'button', class: 'btn small-btn', onclick: () => drainInbox({ manual: true }) }, 'Refresh status')
-                    ]
-            )),
+            waiting.map((item) => {
+                const action = inboxAction(item);
+                const status = action === 'needs_text'
+                    ? { text: `Needs article text. ${item.error || 'AidedMind could not read this link.'}`, error: true }
+                    : action === 'attention'
+                        ? { text: `Automatic attempts stopped. ${item.error || 'AidedMind could not read the article.'} Add text or try again later.`, error: true }
+                        : item.status === 'processing'
+                            ? { text: 'Reading this article now…' }
+                            : { text: `${item.error ? `${item.error} ` : 'Saved. Waiting for breakdown. '}${retryTime(item)}` };
+                const actions = action === 'attention'
+                    ? [openArticle(item), addText(item), retryItem(item), removeItem(item)]
+                    : action === 'needs_text'
+                        ? [openArticle(item), addText(item), removeItem(item)]
+                        : [openArticle(item), item.status === 'pending' ? addText(item) : null];
+                return row(item, status, actions);
+            }),
             failed.map((item) => row(item, { text: item.error, error: true }, [
                 openArticle(item),
                 h('button', {
