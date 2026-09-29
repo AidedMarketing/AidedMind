@@ -6,7 +6,7 @@ The Share Sheet action saves first. A successful Shortcut response means the ser
 
 - A pending or processing item stays in Library → Shared links with its article link. A scheduled retry shows its next approximate time.
 - A short Safari capture waits for **Check text** before analysis. The preview offers **Use this text**, **Add more text**, and **Later**; review does not use a breakdown or quota.
-- A link that cannot be read offers **Open article** and **Add text** on the same item. Temporary site limits retry in the background; exhausted retries offer **Try again**.
+- A link that cannot be read offers **Open article** and **Add text** on the same item. Temporary site limits show the next retry time and allow Add text immediately; exhausted retries offer **Try again**. Substack app shares stop their automatic attempts after roughly 14 minutes rather than waiting an hour.
 - A completed item imports into the local Library without duplicating a saved link. Personal notes and place in the Library survive updates to a partial note.
 
 ## Notes

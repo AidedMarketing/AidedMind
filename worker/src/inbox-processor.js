@@ -20,6 +20,7 @@ import { canonicalUrl } from '../../web/js/library.js';
 export const MAX_ATTEMPTS = 3;
 export const RETRY_DELAYS_MS = [60 * 1000, 5 * 60 * 1000];
 export const RATE_LIMIT_MAX_ATTEMPTS = 6;
+export const SUBSTACK_RATE_LIMIT_MAX_ATTEMPTS = 4;
 const PROVIDER_RETRY_MAX_MS = 60 * 60 * 1000;
 const LEASE_MS = 12 * 60 * 1000; // an item claimed by a run that died is picked up again after this
 const STORED_TEXT_MAX = 400000; // one SQLite row holds the whole finished note
@@ -105,7 +106,13 @@ function fail(core, item, error, nowMs) {
         return core.inboxFail(item.id, { error: message, kind: 'needs_text' });
     }
     if (error?.upstreamStatus === 429) {
-        if (item.attempts < RATE_LIMIT_MAX_ATTEMPTS) {
+        // Four attempts cover about 14 minutes for a Substack app share.
+        // After that, keep the link with Add text / Try again instead of
+        // making the person watch an hour of automatic retries.
+        const substackShare = /^https?:\/\/(?:open\.)?substack\.com\//i.test(item.url)
+            || /^https?:\/\/[^/]+\.substack\.com\//i.test(item.url);
+        const maxAttempts = substackShare ? SUBSTACK_RATE_LIMIT_MAX_ATTEMPTS : RATE_LIMIT_MAX_ATTEMPTS;
+        if (item.attempts < maxAttempts) {
             const delay = Math.min(PROVIDER_RETRY_MAX_MS, 2 * 60 * 1000 * 2 ** (item.attempts - 1));
             return core.inboxRetry(item.id, nowMs + delay, message);
         }

@@ -337,7 +337,9 @@ async function extractArticle(rawUrl) {
     try {
         page = await fetchPage(rawUrl);
     } catch (error) {
-        if (error.upstreamStatus) {
+        // An app share already tried this post API above. Repeating it within
+        // the same attempt only adds traffic while the publisher is throttling.
+        if (error.upstreamStatus && !own) {
             const fallback = await substackFallback(rawUrl);
             if (fallback) return fallback;
         }
