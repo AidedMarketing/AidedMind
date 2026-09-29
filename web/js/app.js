@@ -1,5 +1,5 @@
 import { allNotes, saveNote, saveMany, deleteNote, newId } from './db.js';
-import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, updateInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
+import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, queueInboxItem, removeInboxItem, updateInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { buildThemes, THEME_DETAIL } from './themes.js';
 import { knownTopics, conceptVocabulary, knownUrlHashes, findDuplicate } from './library.js';
@@ -349,6 +349,19 @@ async function startCapture(input, title = '', photos = []) {
             toast('Already in your library');
             location.hash = `#/note/${encodeURIComponent(error.note.id)}`;
             return;
+        }
+        if (error.code === 'provider_unavailable' && !photos.length) {
+            const { url, text } = splitInput(input);
+            try {
+                await queueInboxItem({ url, text, title });
+                draft = { input: '', title: '', photos: [] };
+                toast('Saved in Shared links. AidedMind will finish it when Claude is available.');
+                location.hash = '#/library';
+                drainInbox();
+                return;
+            } catch (queueError) {
+                error = queueError;
+            }
         }
         draft.error = error.message;
         if (location.hash === '' || location.hash === '#/') captureView();

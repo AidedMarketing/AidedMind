@@ -109,7 +109,7 @@ Themes also show up elsewhere: as the topic filters in the Library, as each Libr
 |---|---|
 | Save a link from any app | Share → **Save to AidedMind** (the Shortcut). It's saved right away; open the app to see its progress |
 | Save a paywalled article | Share → **Save to AidedMind**. If the publication app only shares its link, open Library → *Shared links* → **Add text** if needed. In Safari while logged in, the same Shortcut can send the visible article text |
-| Save a link or text in the app | **Add** tab → paste → **Break it down** |
+| Save a link or text in the app | **Add** tab → paste → **Break it down**. If Claude is unavailable, the item is saved in *Shared links* for a later breakdown |
 | Save photos | **Add** tab → **Add photos** (camera or library, up to 8) |
 | Collect finished notes now | **Library** → inbox button (top right). The app also checks whenever it opens and every 20 seconds while something is still being broken down |
 | Retry a link that failed | **Library** → *Shared links* → **Try again** |

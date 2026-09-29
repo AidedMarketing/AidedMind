@@ -300,6 +300,7 @@ export async function callClaude(env, request, { timeout, what }) {
         if (error instanceof Anthropic.RateLimitError) {
             const unavailable = new HttpError(429, 'Claude is busy right now. Try again shortly.');
             unavailable.errorKind = 'provider_unavailable';
+            unavailable.extra = { code: 'provider_unavailable' };
             throw unavailable;
         }
         if (error instanceof Anthropic.BadRequestError) {
@@ -310,6 +311,7 @@ export async function callClaude(env, request, { timeout, what }) {
         if (error instanceof Anthropic.APIError) {
             const unavailable = new HttpError(502, 'Claude is having trouble right now. Try again shortly.');
             unavailable.errorKind = 'provider_unavailable';
+            unavailable.extra = { code: 'provider_unavailable' };
             throw unavailable;
         }
         throw error;

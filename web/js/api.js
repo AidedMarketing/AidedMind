@@ -47,6 +47,7 @@ async function request(method, path, body) {
     if (!response.ok) {
         const error = new Error(data.error || plainServerError(response.status));
         error.status = response.status;
+        error.code = data.code;
         throw error;
     }
     return data;
@@ -214,6 +215,10 @@ export async function suggestConnections(analysis, source, notes) {
 export async function fetchInbox() {
     const data = await request('GET', '/inbox');
     return data.items || [];
+}
+
+export function queueInboxItem(item) {
+    return request('POST', '/inbox', item);
 }
 
 export function removeInboxItem(id) {
