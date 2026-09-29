@@ -19,6 +19,7 @@ import { canonicalUrl } from '../../web/js/library.js';
 
 export const MAX_ATTEMPTS = 3;
 export const RETRY_DELAYS_MS = [60 * 1000, 5 * 60 * 1000];
+export const RATE_LIMIT_MAX_ATTEMPTS = 6;
 const PROVIDER_RETRY_MAX_MS = 60 * 60 * 1000;
 const LEASE_MS = 12 * 60 * 1000; // an item claimed by a run that died is picked up again after this
 const STORED_TEXT_MAX = 400000; // one SQLite row holds the whole finished note
@@ -99,14 +100,19 @@ function fail(core, item, error, nowMs) {
     if ([401, 403].includes(error?.upstreamStatus)) {
         return core.inboxFail(item.id, { error: message, kind: 'needs_text' });
     }
+    if (error?.upstreamStatus === 429) {
+        if (item.attempts < RATE_LIMIT_MAX_ATTEMPTS) {
+            const delay = Math.min(PROVIDER_RETRY_MAX_MS, 2 * 60 * 1000 * 2 ** (item.attempts - 1));
+            return core.inboxRetry(item.id, nowMs + delay, message);
+        }
+        return core.inboxFail(item.id, { error: message, kind: 'retry_in_app' });
+    }
     const transient = !status || status === 429 || status === 408 || status >= 500;
     if (!transient || PERMANENT_UPSTREAM.has(error.upstreamStatus)) {
         return core.inboxFail(item.id, { error: message, kind: 'permanent' });
     }
     if (item.attempts < MAX_ATTEMPTS) {
-        // A site that says "too many requests" needs longer to cool off.
-        const slowDown = error.upstreamStatus === 429 ? 2 : 1;
-        return core.inboxRetry(item.id, nowMs + RETRY_DELAYS_MS[item.attempts - 1] * slowDown, message);
+        return core.inboxRetry(item.id, nowMs + RETRY_DELAYS_MS[item.attempts - 1], message);
     }
     return core.inboxFail(item.id, { error: message, kind: 'retry_in_app' });
 }
