@@ -11,7 +11,7 @@ const ANALYSIS = {
     title: 'Habit loops', topic: 'Habits', tldr: 'Small cues drive routines.', summary: [{ heading: 'h', body: 'b' }], outline: [],
     concepts: [{ name: 'Cue', description: 'd' }], tags: ['habits'], quotes: ['q'], takeaways: ['t'], connections: [{ noteId: 'ghost', relation: 'related', reason: 'r' }], sourceText: ''
 };
-const reply = (model = 'claude-sonnet-5') => ({ json: { id: 'm', type: 'message', role: 'assistant', model, content: [{ type: 'text', text: JSON.stringify(ANALYSIS) }], stop_reason: 'end_turn', usage: { input_tokens: 500, output_tokens: 100 } } });
+const reply = (model = 'claude-sonnet-5-5') => ({ json: { id: 'm', type: 'message', role: 'assistant', model, content: [{ type: 'text', text: JSON.stringify(ANALYSIS) }], stop_reason: 'end_turn', usage: { input_tokens: 500, output_tokens: 100 } } });
 
 const words = (n) => Array.from({ length: n }, (_, i) => `<p>Paragraph ${i} explains one idea about habits in a full sentence that is long enough to count as prose.</p>`).join('');
 const page = (inner, head = '') => `<html><head><title>Story</title><meta property="og:title" content="Habit loops">${head}</head><body><nav><a>Home</a></nav><article>${inner}</article></body></html>`;
@@ -58,7 +58,7 @@ test('a shared article is broken down in the background and waits for the app', 
     assert.strictEqual(source.partial, false);
     assert.strictEqual(analysis.topic, 'Habits');
     assert.deepStrictEqual(analysis.connections, []); // no library on the server
-    assert.strictEqual(model, 'claude-sonnet-5');
+    assert.strictEqual(model, 'claude-sonnet-5-5');
     assert.strictEqual(depth, 'balanced');
 
     const sent = stub.requests[0].body;
@@ -66,7 +66,7 @@ test('a shared article is broken down in the background and waits for the app', 
     assert.match(known, /<known_topics>\n\["Habits","Sleep"\]/);
     assert.match(known, /<known_concepts>\n\["Cue"\]/);
     assert.deepStrictEqual(core.usageFor(month()), { captures: 1, inputTokens: 500, outputTokens: 100 });
-    assert.ok(core.costsFor(month()).some((row) => row.item === 'claude:claude-sonnet-5:input' && row.amount === 500));
+    assert.ok(core.costsFor(month()).some((row) => row.item === 'claude:claude-sonnet-5-5:input' && row.amount === 500));
 });
 
 test('a paywalled article becomes a short partial note, marked as paywalled', async (t) => {
