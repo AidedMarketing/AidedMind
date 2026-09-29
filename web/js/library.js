@@ -141,3 +141,25 @@ export function findDuplicate(notes, ...urls) {
         [note.source?.url, note.source?.sharedUrl].some((u) => keys.has(canonicalUrl(u)))
     ) || null;
 }
+
+// A short fingerprint of a link (first 8 bytes of SHA-256 of its canonical
+// form). The server compares these to skip links already in your library
+// without ever being told which links you saved.
+export async function urlHash(url) {
+    const key = canonicalUrl(url);
+    if (!key) return '';
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+    return [...new Uint8Array(digest).slice(0, 8)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Fingerprints of the links of finished notes (a partial note is left out, so
+// sharing its link again retries it instead of being skipped).
+export async function knownUrlHashes(notes, { limit = 3000 } = {}) {
+    const urls = [];
+    (Array.isArray(notes) ? notes : []).forEach((note) => {
+        if (note.source?.partial) return;
+        [note.source?.url, note.source?.sharedUrl].forEach((u) => { if (u) urls.push(u); });
+    });
+    const hashes = await Promise.all(urls.slice(0, limit).map(urlHash));
+    return [...new Set(hashes.filter(Boolean))];
+}

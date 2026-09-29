@@ -11,7 +11,7 @@ Share a link from your iPhone (an article, a YouTube video, a TikTok), take a ph
 
 Built for iPhone first (installable web app, A.M. family design: warm dark / warm light with lavender accents), running hands-off on Cloudflare's free plan. Your notes live only on your device. Export them as a `.zip` of Markdown files with `[[wikilinks]]` for Obsidian, or as a JSON backup.
 
-**Contents:** [How it works](#how-it-works) · [Sources](#what-each-source-gives-you) · [Map and themes](#map-and-themes) · [Using the app](#using-the-app) · [Setup](#one-time-setup-about-15-minutes) · [Settings reference](#settings-reference) · [Troubleshooting](#troubleshooting) · [Accounts](#accounts-and-the-path-to-paid) · [Configuration](#configuration) · [API](#api-reference) · [Development](#local-development)
+**Contents:** [How it works](#how-it-works) · [Background breakdowns](#background-breakdowns) · [Sources](#what-each-source-gives-you) · [Paywalls](#paywalled-articles) · [Map and themes](#map-and-themes) · [Using the app](#using-the-app) · [Setup](#one-time-setup-about-15-minutes) · [Settings reference](#settings-reference) · [Troubleshooting](#troubleshooting) · [Accounts](#accounts-and-the-path-to-paid) · [Configuration](#configuration) · [API](#api-reference) · [Development](#local-development)
 
 ## How it works
 
@@ -30,6 +30,7 @@ iPhone                                   Cloudflare (free plan)                 
 
 - **Nothing to babysit.** Cloudflare Workers don't sleep, the inbox and usage live in durable SQLite storage, and inbox items clean themselves up after 30 days.
 - **Updates itself.** A new version downloads in the background when you open the app and reloads it on its own (or offers a *Reload* button if you're in the middle of something). Settings → *About* shows the version you're running.
+- **Works while the app is closed.** A link you share is broken down on the server right away (Cloudflare's Durable Object alarms), retried if something hiccups, and waits as a finished note until you open the app, which collects it and links it to your other notes. See [Background breakdowns](#background-breakdowns).
 - **Watches itself.** A daily GitHub check tests the live app, its storage and every API key, and emails you if anything fails.
 - **Low server cost.** The Worker only moves data and waits on Claude. Article pages are cleaned up on the phone (Readability), which keeps each request well inside the free plan's CPU limit.
 - **Your notes stay on your phone.** Each breakdown request carries a compact index of related notes (titles, TL;DRs, concept names) so Claude can suggest connections; the server doesn't keep notes.
@@ -38,19 +39,41 @@ iPhone                                   Cloudflare (free plan)                 
 
 ### Why a Shortcut?
 
-iOS doesn't let home-screen web apps appear in the Share menu, and it keeps their storage separate from Safari. So the **Save to AidedMind** Shortcut posts the link to your inbox, and the app picks it up (and breaks it down) the next time you open it. Settings → *Save from the Share button* walks you through building it, with copy buttons for the URL and token.
+iOS doesn't let home-screen web apps appear in the Share menu, and it keeps their storage separate from Safari. So the **Save to AidedMind** Shortcut posts the link to your server, which breaks it down while the app is closed; the app collects the finished note the next time you open it. Settings → *Save from the Share button* walks you through building it, with copy buttons for the URL and token. A second Shortcut, **Save Page to AidedMind**, handles [paywalled articles](#paywalled-articles).
+
+### Background breakdowns
+
+Sharing a link no longer waits for the app:
+
+1. The Shortcut posts the link. The server queues it and answers "Saved" straight away.
+2. A background run on your Cloudflare storage fetches the source (article, YouTube, TikTok), reads the article's text, and breaks it down with Claude, using the breakdown style you chose in Settings. Temporary problems (Claude busy, a network blip) are retried after 1 and 5 minutes; permanent ones (a site that refuses, a private video, your monthly limit) stop with a reason.
+3. The finished note waits on the server (up to 30 days). When you open the app it's added to your library, the server copy is deleted, and a small call links it to related notes (the server doesn't have your library, so this step happens here).
+
+What the server holds, and only briefly: queued links, and finished notes until the app collects them. It also keeps a small settings record synced by the app: your breakdown style, the topic and concept *names* in use (so new notes reuse them), and short fingerprints of the links you've already saved (so sharing a repeat costs nothing). No note is stored there.
+
+If the server can't finish something, the app picks it up when opened, as before. The Library shows anything still in progress under *Shared links*.
 
 ## What each source gives you
 
 | Source | How AidedMind reads it (in order, cheapest first) |
 |---|---|
-| Articles / blogs | Main text via Mozilla Readability on the phone; Substack posts fall back to Substack's post API. Paywalled or login-only pages: paste the text |
+| Articles / blogs | Main text via Mozilla Readability on the phone (or, for links broken down while the app is closed, the server's own article reader); Substack posts fall back to Substack's post API. Paywalled pages: see [Paywalled articles](#paywalled-articles) |
 | YouTube | 1. the video's own captions (free) → 2. **Gemini** watches the video, captions or not (needs `GEMINI_API_KEY`) → 3. Supadata captions-only (needs `SUPADATA_API_KEY`) → 4. title + description + chapters, marked partial |
 | TikTok | 1. **Supadata** transcribes what's said (needs `SUPADATA_API_KEY`; short `vm.tiktok.com` links are resolved first) → 2. caption and description only, marked partial |
 | Photos | **Add photos** on the Add tab (camera or library, up to 8 per note): screenshots, book pages, slides, whiteboards, handwritten notes, charts. Claude reads the text, explains visuals and breaks it down in one request |
 | Anything else | Paste the text |
 
 Photos are resized on the phone to 1,568 px on the long edge (the most detail Claude uses) and sent as JPEG, roughly 1,600 tokens each (about $0.003 per photo on Sonnet 5). Only small thumbnails and the text Claude read are kept with the note; the photos themselves are never stored. Auto uses Balanced for photos and Thorough for 6 or more.
+
+### Paywalled articles
+
+AidedMind's server isn't logged in as you, so on a paywalled site it only receives what the site shows everyone: the free opening. It can't use your subscription: your phone's Safari logins live in Safari, and neither the installed app nor the server can see them. What it does instead:
+
+- **It says so.** A note whose article looks paywalled (the page says it, or the text is short and ends with "subscribe to continue") is marked *partial* with a Quick, cheap breakdown of the free part, instead of pretending it read everything.
+- **Save Page shortcut (best).** In Safari, while you're logged in, Share → **Save Page to AidedMind** sends the article text from *your* browser to your server. Settings → *Paywalled articles* walks you through building it (one script, one POST).
+- **Paste the full text (works anywhere).** Open the partial note → ••• → **Paste the full article**. In Safari, choose Select All → Copy on the article, then paste. The note keeps its place and anything you wrote.
+
+AidedMind doesn't try to get around paywalls (no crawler tricks, no archive sites): it only ever uses what you can see yourself.
 
 **Partial notes.** When only a caption or description could be read, the note says so and why (for example "Supadata is out of credits"). Each note's Notes tab says where its transcript came from. To retry, open the note → ••• → **Get the full transcript**, or share the link again; either way the note is updated in place and keeps anything you wrote in it.
 
@@ -83,10 +106,11 @@ Themes also show up elsewhere: as the topic filters in the Library, as each Libr
 
 | To… | Do this |
 |---|---|
-| Save a link from any app | Share → **Save to AidedMind** (the Shortcut). It's broken down the next time you open the app |
+| Save a link from any app | Share → **Save to AidedMind** (the Shortcut). It's broken down right away; open the app to see it |
+| Save a paywalled article | In Safari, logged in: Share → **Save Page to AidedMind**. Or open the partial note → ••• → **Paste the full article** |
 | Save a link or text in the app | **Add** tab → paste → **Break it down** |
 | Save photos | **Add** tab → **Add photos** (camera or library, up to 8) |
-| Check for shared links now | **Library** → inbox button (top right) |
+| Collect finished notes now | **Library** → inbox button (top right). The app also checks whenever it opens and every 20 seconds while something is still being broken down |
 | Retry a link that failed | **Library** → *Shared links* → **Try again** |
 | Get a TikTok or video's full transcript later | Open the note → ••• → **Get the full transcript** |
 | Redo a breakdown in more depth | Open the note → ••• → **Re-analyze in depth (Thorough)** |
@@ -153,8 +177,10 @@ Everything in the app's Settings tab. Choices are saved on the device.
 | *Server status* says "key rejected" | The key is wrong or was revoked. Gemini keys come from aistudio.google.com/apikey (they usually start with `AIza`) |
 | "Supadata is out of credits" | The free plan's 100 monthly credits are used up. They reset monthly, or upgrade on supadata.ai |
 | The app doesn't show a new feature | Close and reopen it; updates install on open. Settings → *About* → **Check for updates** checks right away |
-| The Shortcut says "Saved" but nothing appears | Open the app and tap the inbox button in Library. If it still doesn't appear, check the token in the Shortcut matches Settings |
-| A shared link keeps failing | Library → *Shared links* shows the reason. For paywalled or login-only pages, copy the text and paste it on the Add tab |
+| The Shortcut says "Saved" but nothing appears | The server is still breaking it down (a long video can take a few minutes): it shows under *Shared links* in the Library, then appears on its own. If nothing shows anywhere, check the token in the Shortcut matches Settings |
+| A note says it's paywalled / partial | Only the free part was readable. Use **Save Page to AidedMind** in Safari while logged in, or ••• → **Paste the full article** on the note |
+| A shared link keeps failing | Library → *Shared links* shows the reason. For paywalled or login-only pages use the Save Page shortcut, or copy the text and paste it on the Add tab |
+| The Save Page shortcut saves nothing or an empty note | It must be run from Safari's Share menu on the article itself (not from another app), and its script step must be **Run JavaScript on Web Page** with the copied script. Long pages are cut at 400,000 characters |
 | "You've used all N breakdowns for this month" | That account's plan limit; the owner token has no limit. Limits reset on the 1st |
 | The daily health check email arrived | Open *Actions → Health check* in GitHub: the log names what failed (app, storage, Claude key, or a transcript key) |
 | Health page shows `anthropic_error_400` | Usually no credit on the Anthropic account. Add credit in the Anthropic Console |
@@ -217,9 +243,11 @@ All routes are under your Worker URL. Every route except `/api/health` needs the
 | `POST /api/source` | `{ url }` | the source text (or article HTML for the app to clean up), with `transcriptSource`, `partial` and `transcriptError` for videos |
 | `POST /api/analyze` | `{ source, library, depth, concepts, topics }` | the breakdown (`analysis`, including its `topic`), model and style used, usage. Counts one breakdown |
 | `POST /api/topics` | `{ notes: [{ id, title, tldr, tags }], topics }` | `{ assignments: { id: topic } }` for up to 150 notes, using the Quick model. Counts one breakdown |
-| `POST /api/inbox` | `{ url }` or `{ text, title }` | saves a shared link for the app (what the Shortcut calls) |
-| `GET /api/inbox` | | links waiting to be broken down |
-| `DELETE /api/inbox/:id` | | removes one |
+| `POST /api/inbox` | `{ url }`, `{ url, title, text }` (page text you captured), or just the text as the body | queues a link to be broken down in the background (what the Shortcuts call). Uses one breakdown when it runs |
+| `GET /api/inbox` | | every item with its `status` (`pending`, `processing`, `done`, `failed`), `error`, and for finished items the `result` (source and breakdown) |
+| `DELETE /api/inbox/:id` | | removes one (the app does this after collecting a note) |
+| `PUT /api/preferences` | `{ depth, topics, concepts, urls }` | breakdown style, topic and concept names, and link fingerprints, used by background breakdowns |
+| `POST /api/connections` | `{ note, library }` | suggested links from a finished note to related notes in `library`, using the Quick model; no breakdown is counted |
 | `GET /api/admin/users` | | owner only: accounts and their usage |
 | `POST /api/admin/users` | `{ plan, label }` | owner only: creates an account; its token is shown once |
 | `PATCH /api/admin/users/:id` | `{ plan }` or `{ status }` | owner only: change plan, pause or resume |
@@ -229,6 +257,7 @@ All routes are under your Worker URL. Every route except `/api/health` needs the
 - The server only fetches public `http(s)` links (localhost, private and link-local addresses are refused), with a 3 MB / 15 s cap.
 - Every `/api` call except `/api/health` needs an access token; tokens are stored only as SHA-256 hashes and compared in constant time.
 - The app builds every element with `textContent` (no `innerHTML`), and the site sends a strict Content-Security-Policy (`web/_headers`).
+- The server keeps queued links and finished notes only until the app collects them (30 days at most), plus a small settings record of names and link fingerprints (see [Background breakdowns](#background-breakdowns)). Your library itself never leaves your phone.
 - Source content is treated as untrusted by Claude: instructions inside an article, transcript or photo are ignored.
 
 ## Local development
@@ -250,6 +279,9 @@ worker/
   wrangler.jsonc        Cloudflare config: static assets, Durable Object, vars
   src/app.js            API routes: auth, quotas, source, analyze, inbox, admin, health
   src/extract.js        link → source (article HTML / YouTube / TikTok), fallback order
+  src/article.js        reads the article out of a page's HTML on the server
+  src/inbox-processor.js  breaks queued links down in the background, with retries
+  src/connections.js    links a finished note to related library notes
   src/transcripts.js    Gemini, Supadata, YouTube description fallbacks, key checks
   src/costs.js          monthly spend estimate from the cost ledger
   src/analyze.js        Claude call, JSON schema (incl. topic), normalization
@@ -262,6 +294,7 @@ web/
   js/themes.js          map themes: topics, note similarity, clustering, names, colors
   js/graph.js           canvas map (themes, touch, pinch, label placement)
   js/library.js         related-note picking, concept and topic lists, duplicate links
+  js/paywall.js         spots paywalled articles (shared by the phone and the server)
   js/readable.js        article HTML → clean text on the device
   js/photos.js          photo resize and thumbnails on the device
   js/api.js, db.js, markdown.js, zip.js, icons.js

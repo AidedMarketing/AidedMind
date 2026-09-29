@@ -48,3 +48,11 @@ export function summarizeCosts(rows = []) {
         supadataRequests
     };
 }
+
+// Records one Claude call in the usage totals and the cost ledger. `store` is
+// the user's storage (a Durable Object stub or the storage core itself).
+export async function recordClaude(store, month, model, tokens) {
+    await store.recordTokens(month, tokens.input, tokens.output);
+    await store.addCost(month, `claude:${model}:input`, tokens.input);
+    await store.addCost(month, `claude:${model}:output`, tokens.output);
+}

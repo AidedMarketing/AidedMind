@@ -2,16 +2,19 @@
 // only /api/* reaches this code.
 import { analyze, checkModel } from './analyze.js';
 import { fetchSource } from './extract.js';
-import { HttpError, json, readJson, sha256Hex, digestsEqual, randomToken } from './http.js';
-import { summarizeCosts } from './costs.js';
+import { HttpError, json, readJson, sha256Hex, digestsEqual, randomToken, currentMonth } from './http.js';
+import { summarizeCosts, recordClaude } from './costs.js';
 import { checkServices } from './transcripts.js';
 import { assignTopics } from './topics.js';
+import { suggestConnections } from './connections.js';
+import { compactVocabulary, DEPTH_CHOICES } from './analyze.js';
 
+export { currentMonth };
 export const VERSION = '0.2.0';
 
 const CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-AidedMind-Token, Authorization',
     'Access-Control-Max-Age': '86400'
 };
@@ -20,7 +23,30 @@ const CORS_HEADERS = {
 export const MAX_PHOTOS = 8;
 const MAX_IMAGE_BASE64 = 5 * 1024 * 1024; // Claude's per-image limit
 const MAX_ANALYZE_BYTES = 16 * 1024 * 1024;
+const MAX_INBOX_BYTES = 3 * 1024 * 1024;
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+// The Shortcut may send JSON, or (when it posts a captured page as a file) a
+// body that is only text: accept both.
+async function readInboxBody(request) {
+    const length = Number(request.headers.get('content-length') || 0);
+    if (length > MAX_INBOX_BYTES) throw new HttpError(413, 'That page is too large to save.');
+    const raw = await request.text();
+    if (raw.length > MAX_INBOX_BYTES) throw new HttpError(413, 'That page is too large to save.');
+    if (!raw.trim()) return {};
+    const attempt = (text) => {
+        try {
+            return JSON.parse(text);
+        } catch {
+            return undefined;
+        }
+    };
+    let value = attempt(raw);
+    // A JSON string that itself holds the JSON (how some Shortcut steps pass text along).
+    if (typeof value === 'string' && value.trim().startsWith('{')) value = attempt(value) ?? value;
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    return { text: value === undefined ? raw : String(value) };
+}
 
 export function cleanImages(images) {
     if (images === undefined || images === null) return [];
@@ -35,10 +61,6 @@ export function cleanImages(images) {
         }
         return { mediaType, data };
     });
-}
-
-export function currentMonth(date = new Date()) {
-    return date.toISOString().slice(0, 7);
 }
 
 export function monthlyLimit(plan, env) {
@@ -138,13 +160,12 @@ const routes = [
                 title: String(source.title || ''),
                 author: String(source.author || ''),
                 partial: Boolean(source.partial),
+                transcriptSource: String(source.transcriptSource || '').slice(0, 40),
                 text: String(source.text || ''),
                 images: cleanImages(source.images)
             };
             const result = await analyze(clean, library, env, typeof depth === 'string' ? depth : undefined, { concepts, topics });
-            await store.recordTokens(month, result.tokens.input, result.tokens.output);
-            await store.addCost(month, `claude:${result.model}:input`, result.tokens.input);
-            await store.addCost(month, `claude:${result.model}:output`, result.tokens.output);
+            await recordClaude(store, month, result.model, result.tokens);
             return json({ analysis: result.analysis, model: result.model, depth: result.depth, auto: result.auto, usage: { month, captures: reservation.captures, limit } });
         } catch (error) {
             await store.releaseCapture(month);
@@ -165,9 +186,7 @@ const routes = [
         }
         try {
             const result = await assignTopics(notes, topics, env);
-            await store.recordTokens(month, result.tokens.input, result.tokens.output);
-            await store.addCost(month, `claude:${result.model}:input`, result.tokens.input);
-            await store.addCost(month, `claude:${result.model}:output`, result.tokens.output);
+            await recordClaude(store, month, result.model, result.tokens);
             return json({ assignments: result.assignments, usage: { month, captures: reservation.captures, limit } });
         } catch (error) {
             await store.releaseCapture(month);
@@ -175,12 +194,41 @@ const routes = [
         }
     }, { auth: true }],
 
-    // iOS Shortcut target: holds shared links until the app opens.
+    // Suggests links from a note the server broke down in the background to
+    // the notes in your library (the server doesn't keep the library).
+    ['POST', /^\/api\/connections$/, async (request, env, user) => {
+        const { note, library } = await readJson(request, 1024 * 1024);
+        const store = userStore(env, user.id);
+        const result = await suggestConnections(note, library, env);
+        if (result.model) await recordClaude(store, currentMonth(), result.model, result.tokens);
+        return json({ connections: result.connections });
+    }, { auth: true }],
+
+    // The app tells the server its breakdown style and the topic and concept
+    // names in use, so links broken down while the app is closed match them.
+    ['PUT', /^\/api\/preferences$/, async (request, env, user) => {
+        const { depth, topics, concepts, urls } = await readJson(request, 256 * 1024);
+        const prefs = {};
+        if (typeof depth === 'string' && DEPTH_CHOICES.includes(depth)) prefs.depth = depth;
+        prefs.topics = compactVocabulary(topics, 100);
+        prefs.concepts = compactVocabulary(concepts, 200);
+        // Fingerprints of links already in the library (never the links).
+        prefs.urls = [...new Set((Array.isArray(urls) ? urls : []).filter((u) => typeof u === 'string' && /^[0-9a-f]{16}$/.test(u)))].slice(0, 3000);
+        await userStore(env, user.id).metaSet('prefs', prefs);
+        return json({ ok: true });
+    }, { auth: true }],
+
+    // iOS Shortcut target. The link (or the page text the Shortcut captured
+    // from your own Safari) is broken down on the server right away; the
+    // finished note waits here until the app opens.
     ['POST', /^\/api\/inbox$/, async (request, env, user) => {
-        const body = await readJson(request);
-        const item = await userStore(env, user.id).inboxAdd({ url: body.url, text: body.text, title: body.title });
+        const body = await readInboxBody(request);
+        const item = await userStore(env, user.id).inboxAdd(
+            { url: body.url, text: body.text, title: body.title },
+            { limit: monthlyLimit(user.plan, env) }
+        );
         if (!item) throw new HttpError(400, 'Nothing to save: send a url or text.');
-        return json({ ok: true, id: item.id, message: 'Saved to AidedMind. Open the app to see the breakdown.' }, 201);
+        return json({ ok: true, id: item.id, message: 'Saved to AidedMind. It\'s being broken down now and will be in your library when you open the app.' }, 201);
     }, { auth: true }],
 
     ['GET', /^\/api\/inbox$/, async (request, env, user) => {

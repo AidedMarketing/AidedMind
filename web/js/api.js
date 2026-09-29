@@ -1,5 +1,6 @@
 // Talks to the AidedMind server. Settings live in localStorage.
 import { relatedNotes, conceptVocabulary, knownTopics, findDuplicate } from './library.js';
+import { looksPaywalled } from './paywall.js';
 
 const SETTINGS_KEY = 'aidedmind.settings';
 const USAGE_KEY = 'aidedmind.usage';
@@ -72,14 +73,30 @@ export class DuplicateError extends Error {
 
 // Step 1: turn a link or pasted text into source text (articles are fetched by
 // the server and cleaned up here). Step 2: ask the server for the breakdown.
+// The kind of source a link points to, from its address alone.
+export function sourceTypeForUrl(url) {
+    let host = '';
+    try {
+        host = new URL(url).hostname.toLowerCase().replace(/^www\.|^m\./, '');
+    } catch {
+        return 'text';
+    }
+    if (host === 'youtube.com' || host === 'youtu.be' || host === 'music.youtube.com') return 'youtube';
+    if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) return 'tiktok';
+    return 'article';
+}
+
 // retry: an existing note to fetch again and replace (e.g. caption-only).
-export async function capture({ url, text, title, depth, photos, retry }, notes) {
+// replace: an existing note to replace with the text given (e.g. a paywalled
+// article whose full text you pasted).
+export async function capture({ url, text, title, depth, photos, retry, replace }, notes) {
     // Links already saved open the existing note: no fetch, no Claude call.
-    // A caption-only (partial) note is retried instead, and replaced in place.
-    let replaces = retry || null;
-    const saved = url && !text && !photos?.length && !retry ? findDuplicate(notes, url) : null;
-    if (saved && !saved.source?.partial) throw new DuplicateError(saved);
-    if (saved) replaces = saved;
+    // A partial note (caption only, paywalled) is redone instead, and
+    // replaced in place.
+    let replaces = retry || replace || null;
+    const saved = url && !photos?.length && !retry && !replace ? findDuplicate(notes, url) : null;
+    if (saved && !saved.source?.partial && !text) throw new DuplicateError(saved);
+    if (saved?.source?.partial) replaces = saved;
     let source;
     if (photos?.length) {
         source = {
@@ -91,12 +108,15 @@ export async function capture({ url, text, title, depth, photos, retry }, notes)
             images: photos.map((photo) => ({ mediaType: photo.mediaType, data: photo.data }))
         };
     } else if (text) {
-        source = { sourceType: 'text', url: url || '', title: title || '', author: '', text };
+        source = { sourceType: url ? sourceTypeForUrl(url) : 'text', url: url || '', title: title || '', author: '', text };
     } else {
         const fetched = await request('POST', '/source', { url });
         if (fetched.html) {
             const { readableFromHtml } = await import('./readable.js');
-            source = { sourceType: 'article', url: fetched.url, ...readableFromHtml(fetched.html, fetched.url) };
+            const article = readableFromHtml(fetched.html, fetched.url);
+            // Only the free start of the article: say so instead of pretending.
+            const paywalled = looksPaywalled(fetched.html, article.text);
+            source = { sourceType: 'article', url: fetched.url, ...article, partial: paywalled, transcriptSource: paywalled ? 'paywall' : '' };
         } else {
             source = fetched;
         }
@@ -156,6 +176,29 @@ export async function assignTopics(notes, topics) {
     });
     setLastUsage(result.usage);
     return result.assignments || {};
+}
+
+// Tells the server the breakdown style and the topic and concept names in use,
+// so links it breaks down while the app is closed match your library.
+export async function putPreferences(prefs) {
+    await request('PUT', '/preferences', prefs);
+}
+
+// Links from a note the server broke down in the background to your library.
+export async function suggestConnections(analysis, source, notes) {
+    if (!notes.length) return [];
+    const related = relatedNotes(notes, { title: analysis.title, text: `${analysis.tldr} ${(analysis.concepts || []).map((c) => c.name).join(' ')} ${source.text || ''}` });
+    const result = await request('POST', '/connections', {
+        note: {
+            title: analysis.title,
+            topic: analysis.topic || '',
+            tldr: analysis.tldr,
+            concepts: (analysis.concepts || []).map((c) => c.name),
+            tags: analysis.tags || []
+        },
+        library: libraryIndex(related)
+    });
+    return result.connections || [];
 }
 
 export async function fetchInbox() {
