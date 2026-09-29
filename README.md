@@ -63,7 +63,7 @@ The Library shows anything still in progress under *Shared links*. It never star
 | Photos | **Add photos** on the Add tab (camera or library, up to 8 per note): screenshots, book pages, slides, whiteboards, handwritten notes, charts. Claude reads the text, explains visuals and breaks it down in one request |
 | Anything else | Paste the text |
 
-Photos are resized on the phone to 1,568 px on the long edge (the most detail Claude uses) and sent as JPEG, roughly 1,600 tokens each (about $0.003 per photo on Sonnet 5). Only small thumbnails and the text Claude read are kept with the note; the photos themselves are never stored. Auto uses Balanced for photos and Thorough for 6 or more.
+Photos are resized on the phone to 1,568 px on the long edge (the most detail Claude uses) and sent as JPEG, roughly 1,600 tokens each (about $0.003 per photo on Sonnet 5.5). Only small thumbnails and the text Claude read are kept with the note; the photos themselves are never stored. Auto uses Balanced for photos and Thorough for 6 or more.
 
 ### Paywalled articles
 
@@ -212,7 +212,7 @@ Next step when you're ready: a Stripe Checkout + webhook that creates an account
 | `GEMINI_API_KEY` | Cloudflare secret, optional | YouTube transcripts via Gemini (including videos without captions) |
 | `SUPADATA_API_KEY` | Cloudflare secret, optional | TikTok (and fallback YouTube caption) transcripts |
 | `AIDEDMIND_DEFAULT_DEPTH` | `wrangler.jsonc` vars | breakdown style when the app doesn't send one: `auto` (default), `quick`, `balanced` or `thorough` |
-| `AIDEDMIND_MODEL_QUICK` / `_BALANCED` / `_THOROUGH` | `wrangler.jsonc` vars | defaults `claude-haiku-4-5` / `claude-sonnet-5` / `claude-opus-5-5` |
+| `AIDEDMIND_MODEL_QUICK` / `_BALANCED` / `_THOROUGH` | `wrangler.jsonc` vars | defaults `claude-haiku-4-5` / `claude-sonnet-5-5` / `claude-opus-5-5` |
 | `FREE_MONTHLY_CAPTURES` / `PRO_MONTHLY_CAPTURES` | `wrangler.jsonc` vars | default 25 / 400 |
 | `GEMINI_MODEL` | `wrangler.jsonc` vars | default `gemini-flash-latest` (Google's current Flash model) |
 | `ANTHROPIC_BASE_URL`, `GEMINI_BASE_URL`, `SUPADATA_BASE_URL` | vars, optional | point the API calls elsewhere (used by the tests; leave unset) |
@@ -229,7 +229,7 @@ Settings → *Breakdown style*, per device:
 |---|---|---|
 | Auto (default) | picks per link: Quick under ~600 words or TikTok captions, Thorough from ~12,000 words, otherwise Balanced | everything; no extra call or cost |
 | Quick | Claude Haiku 4.5, no extended thinking | TikToks, short posts; fastest and cheapest |
-| Balanced | Claude Sonnet 5, medium effort | most articles and videos |
+| Balanced | Claude Sonnet 5.5, medium effort | most articles and videos |
 | Thorough | Claude Opus 5.5, medium effort | long or dense pieces; also available per note via ••• → *Re-analyze in depth* |
 
 Summaries and outlines are kept short for skimming; quotes and takeaways get the most attention. Analysis uses Claude structured outputs (the reply always matches the note schema); Thorough also uses Anthropic's server-side refusal fallback (`fallbacks: "default"`). Sources over ~600k characters are rejected rather than silently truncated.
