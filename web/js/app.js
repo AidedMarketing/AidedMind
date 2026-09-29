@@ -55,7 +55,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '15';
+const APP_VERSION = '16';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -1731,7 +1731,7 @@ function sharedItemsSection() {
             inbox.checkError ? h('div', { class: 'group-body small error' }, `Couldn't check your inbox: ${inbox.checkError}`) : null,
             waiting.map((item) => row(item,
                 inbox.errors.has(item.id) ? { text: `Will retry: ${inbox.errors.get(item.id)}`, error: true }
-                    : item.error ? { text: `Trying again: ${item.error}` }
+                    : item.error ? { text: `${item.error} AidedMind will try again shortly.` }
                         : { text: item.status === 'processing' ? 'Being broken down…' : 'Queued. It\'s broken down in the background' },
                 [h('button', { type: 'button', class: 'btn small-btn', onclick: () => drainInbox({ manual: true }) }, 'Check now')]
             )),

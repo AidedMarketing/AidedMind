@@ -22,6 +22,16 @@ function endpoint(path) {
     return `${base}/api${path}`;
 }
 
+// A reply with no message of its own, said in words a person can act on.
+export function plainServerError(status) {
+    if (status === 401) return 'Your access token wasn\'t accepted. Check it in Settings.';
+    if (status === 402) return 'You\'ve used this month\'s breakdowns. They reset on the 1st.';
+    if (status === 413) return 'That\'s too large to send. Try something shorter.';
+    if (status === 429) return 'The server is busy right now. Try again in a minute.';
+    if (status >= 500) return 'The AidedMind server had a problem. Try again in a minute.';
+    return 'The AidedMind server couldn\'t do that. Try again in a minute.';
+}
+
 async function request(method, path, body) {
     let response;
     try {
@@ -35,7 +45,7 @@ async function request(method, path, body) {
     }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-        const error = new Error(data.error || `Server error (${response.status}).`);
+        const error = new Error(data.error || plainServerError(response.status));
         error.status = response.status;
         throw error;
     }
@@ -228,7 +238,7 @@ export async function fetchHealth({ deep = false } = {}) {
         throw new Error('Can\'t reach your AidedMind server.');
     }
     const data = await response.json().catch(() => null);
-    if (!data) throw new Error(`Server error (${response.status}).`);
+    if (!data) throw new Error(plainServerError(response.status));
     return data;
 }
 

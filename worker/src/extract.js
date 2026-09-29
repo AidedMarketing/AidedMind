@@ -66,6 +66,18 @@ async function readLimited(response) {
     return new TextDecoder().decode(bytes);
 }
 
+// What went wrong reading a page, in words a person can act on. The technical
+// detail (status code, error text) goes to the log, never to the screen.
+export function describeUpstreamFailure(hostname, status) {
+    const site = String(hostname || 'That site').replace(/^www\./, '');
+    if (status === 429) return `${site} is limiting how often AidedMind can read it right now (too many requests).`;
+    if (status === 401 || status === 403) return `${site} wouldn't let AidedMind read this page. It may need a login, or it blocks automated readers. Paste the text instead if you can see it.`;
+    if (status === 404 || status === 410) return `${site} says this page doesn't exist any more. Check the link.`;
+    if (status === 451) return `${site} can't show this page to AidedMind for legal reasons.`;
+    if (status >= 500) return `${site} is having problems right now.`;
+    return `${site} wouldn't let AidedMind read this page.`;
+}
+
 export async function fetchPage(rawUrl, accept = 'text/html,application/xhtml+xml,*/*;q=0.8') {
     const url = assertPublicUrl(rawUrl);
     let response;
@@ -76,10 +88,16 @@ export async function fetchPage(rawUrl, accept = 'text/html,application/xhtml+xm
             headers: { 'User-Agent': USER_AGENT, Accept: accept, 'Accept-Language': 'en;q=0.9,*;q=0.5' }
         });
     } catch (error) {
-        throw new HttpError(502, `Could not reach ${url.hostname}: ${error.message}`);
+        console.warn(`fetch ${url.hostname} failed: ${error.message}`);
+        const slow = error.name === 'TimeoutError' || error.name === 'AbortError';
+        const site = url.hostname.replace(/^www\./, '');
+        throw new HttpError(502, slow
+            ? `${site} took too long to respond.`
+            : `Couldn't connect to ${site}. The site may be down, or the link may be wrong.`);
     }
     if (!response.ok) {
-        const error = new HttpError(502, `${url.hostname} responded with ${response.status}.`);
+        console.warn(`fetch ${url.hostname} responded ${response.status}`);
+        const error = new HttpError(502, describeUpstreamFailure(url.hostname, response.status));
         error.upstreamStatus = response.status;
         throw error;
     }
@@ -268,8 +286,24 @@ function escapeHtml(text) {
 // public post API.
 export function substackApiUrl(rawUrl) {
     const url = new URL(rawUrl);
+    const shared = substackShared(url);
+    if (shared) return `https://${shared.publication}.substack.com/api/v1/posts/${shared.slug}`;
     const match = url.pathname.match(/^\/p\/([\w-]+)/);
     return match ? `${url.origin}/api/v1/posts/${match[1]}` : null;
+}
+
+// The Share button gives open.substack.com/pub/<newsletter>/p/<post>, which
+// Substack throttles hard. The post itself lives on the newsletter's own
+// address, so go there directly.
+function substackShared(url) {
+    if (url.hostname !== 'open.substack.com') return null;
+    const match = url.pathname.match(/^\/pub\/([\w-]+)\/p\/([\w-]+)/);
+    return match ? { publication: match[1], slug: match[2] } : null;
+}
+
+export function substackPageUrl(rawUrl) {
+    const shared = substackShared(new URL(rawUrl));
+    return shared ? `https://${shared.publication}.substack.com/p/${shared.slug}` : null;
 }
 
 async function substackFallback(rawUrl) {
@@ -289,6 +323,12 @@ async function substackFallback(rawUrl) {
 }
 
 async function extractArticle(rawUrl) {
+    const own = substackPageUrl(rawUrl);
+    if (own) {
+        const post = await substackFallback(own);
+        if (post) return post;
+        rawUrl = own; // read the page on the newsletter's own address instead
+    }
     let page;
     try {
         page = await fetchPage(rawUrl);
@@ -304,7 +344,7 @@ async function extractArticle(rawUrl) {
     if (type.startsWith('text/plain')) {
         return { sourceType: 'article', url: page.url, title: page.url, author: '', text: page.body.trim() };
     }
-    if (type && !/html|xml/.test(type)) throw new HttpError(415, `AidedMind cannot read ${type} content.`);
+    if (type && !/html|xml/.test(type)) throw new HttpError(415, 'That link isn\'t a web page or an article AidedMind can read. Paste the text instead.');
     return { sourceType: 'article', url: page.url, html: page.body };
 }
 

@@ -126,7 +126,8 @@ test('failures that will not get better fail at once, with a reason', async (t) 
     await processInbox(core, env);
     const [blocked, spa, invalid] = core.inboxList();
     assert.deepStrictEqual([blocked.status, blocked.errorKind], ['failed', 'permanent']);
-    assert.match(blocked.error, /403/);
+    assert.match(blocked.error, /blocked\.example wouldn't let AidedMind read this page/);
+    assert.doesNotMatch(blocked.error, /\d{3}/);
     assert.deepStrictEqual([spa.status, spa.errorKind], ['failed', 'retry_in_app']); // the phone may read it
     assert.deepStrictEqual([invalid.status, invalid.errorKind], ['failed', 'permanent']);
     assert.strictEqual(stub.requests.length, 0);

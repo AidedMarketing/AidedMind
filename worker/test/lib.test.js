@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { classifyUrl, youtubeId, decodeEntities, isPrivateAddress, assertPublicUrl, substackApiUrl, fetchSource } from '../src/extract.js';
+import { classifyUrl, youtubeId, decodeEntities, isPrivateAddress, assertPublicUrl, substackApiUrl, substackPageUrl, fetchSource } from '../src/extract.js';
 import { normalize, compactLibrary, analyze, ANALYSIS_SCHEMA, autoDepth, countWords } from '../src/analyze.js';
 import { sqlStore } from './helpers.js';
 
@@ -100,7 +100,57 @@ test('blocked substack page falls back to the post API', async (t) => {
     assert.match(source.html, /content="Writer"/);
 
     globalThis.fetch = async () => new Response('blocked', { status: 403 });
-    await assert.rejects(fetchSource('https://example.com/not-substack'), /responded with 403/);
+    await assert.rejects(fetchSource('https://example.com/not-substack'), (error) => {
+        assert.match(error.message, /example\.com wouldn't let AidedMind read this page/);
+        assert.doesNotMatch(error.message, /403/);
+        return true;
+    });
+});
+
+test('substack share links go to the newsletter\'s own address', () => {
+    assert.strictEqual(substackApiUrl('https://open.substack.com/pub/writer/p/my-post?r=abc&utm_campaign=post'), 'https://writer.substack.com/api/v1/posts/my-post');
+    assert.strictEqual(substackPageUrl('https://open.substack.com/pub/writer/p/my-post?r=abc'), 'https://writer.substack.com/p/my-post');
+    assert.strictEqual(substackPageUrl('https://writer.substack.com/p/my-post'), null);
+    assert.strictEqual(substackPageUrl('https://open.substack.com/pub/writer'), null);
+});
+
+test('a throttled substack share link is read from the newsletter\'s own address', async (t) => {
+    const real = globalThis.fetch;
+    t.after(() => { globalThis.fetch = real; });
+    const seen = [];
+    globalThis.fetch = async (input) => {
+        const url = String(input);
+        seen.push(url);
+        if (url.startsWith('https://open.substack.com')) return new Response('slow down', { status: 429 });
+        if (url === 'https://writer.substack.com/api/v1/posts/my-post') {
+            return new Response(JSON.stringify({ title: 'My post', body_html: '<p>Hello world.</p>', canonical_url: 'https://writer.substack.com/p/my-post' }), { headers: { 'content-type': 'application/json' } });
+        }
+        return new Response('nope', { status: 404 });
+    };
+    const source = await fetchSource('https://open.substack.com/pub/writer/p/my-post?r=abc');
+    assert.strictEqual(source.url, 'https://writer.substack.com/p/my-post');
+    assert.match(source.html, /Hello world/);
+    assert.ok(!seen.some((u) => u.startsWith('https://open.substack.com')), 'the throttled address is never touched');
+});
+
+test('site problems are explained in plain words, with no status codes', async (t) => {
+    const real = globalThis.fetch;
+    t.after(() => { globalThis.fetch = real; });
+    const say = async (respond) => {
+        globalThis.fetch = async () => respond();
+        try {
+            await fetchSource('https://www.example.com/post');
+        } catch (error) {
+            return error.message;
+        }
+        return '';
+    };
+    assert.match(await say(() => new Response('', { status: 429 })), /example\.com is limiting how often AidedMind can read it right now/);
+    assert.match(await say(() => new Response('', { status: 404 })), /doesn't exist any more/);
+    assert.match(await say(() => new Response('', { status: 503 })), /having problems right now/);
+    assert.match(await say(() => { throw new TypeError('fetch failed: ECONNRESET'); }), /Couldn't connect to example\.com/);
+    assert.match(await say(() => { const e = new Error('The operation timed out'); e.name = 'TimeoutError'; throw e; }), /took too long to respond/);
+    for (const status of [429, 404, 503, 401]) assert.doesNotMatch(await say(() => new Response('', { status })), /\d{3}/);
 });
 
 test('auto depth thresholds', () => {

@@ -293,10 +293,17 @@ export async function callClaude(env, request, { timeout, what }) {
             ? await client.beta.messages.create(request)
             : await client.messages.create(request);
     } catch (error) {
-        if (error instanceof Anthropic.AuthenticationError) throw new HttpError(500, 'The server\'s Anthropic API key was rejected.');
+        // Plain words for the screen; the technical detail goes to the log.
+        const detail = String(error?.error?.error?.message || error?.message || '').slice(0, 300);
+        if (error instanceof Anthropic.APIError) console.warn(`claude ${error.status}: ${detail}`);
+        if (error instanceof Anthropic.AuthenticationError) throw new HttpError(500, 'The server\'s Anthropic API key was rejected. Check ANTHROPIC_API_KEY in Cloudflare.');
         if (error instanceof Anthropic.RateLimitError) throw new HttpError(429, 'Claude is busy right now. Try again in a minute.');
-        if (error instanceof Anthropic.BadRequestError) throw new HttpError(502, `Claude rejected the request: ${error.message}`);
-        if (error instanceof Anthropic.APIError) throw new HttpError(502, `Claude API error (${error.status}): ${error.message}`);
+        if (error instanceof Anthropic.BadRequestError) {
+            if (/credit balance/i.test(detail)) throw new HttpError(502, 'The Anthropic account is out of credit. Add credit in the Anthropic Console, then try again.');
+            throw new HttpError(502, 'Claude couldn\'t process this content. Try again, or paste a shorter version of the text.');
+        }
+        if (error instanceof Anthropic.PermissionDeniedError) throw new HttpError(502, 'The Anthropic account isn\'t allowed to use this model. Check its access in the Anthropic Console.');
+        if (error instanceof Anthropic.APIError) throw new HttpError(502, 'Claude is having trouble right now. This usually clears up within a few minutes.');
         throw error;
     }
     if (message.stop_reason === 'refusal') throw new HttpError(422, `Claude declined to ${what}.`);

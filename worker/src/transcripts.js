@@ -84,7 +84,8 @@ const SUPADATA_REASONS = {
 
 function supadataReason(status, data) {
     const detail = String(data?.message || data?.details || data?.error?.message || data?.error || '').slice(0, 200);
-    return SUPADATA_REASONS[status] || `Supadata couldn't transcribe this video (${status}${detail ? `: ${detail}` : ''}).`;
+    if (!SUPADATA_REASONS[status]) console.warn(`supadata ${status}: ${detail || 'no message'}`);
+    return SUPADATA_REASONS[status] || 'Supadata couldn\'t transcribe this video. It may be private, too long, or not available in your region.';
 }
 
 // report(reason) is told why no transcript came back, so the note can say so.
