@@ -252,6 +252,30 @@ test('a Substack app share uses both public routes once, then one per spaced ret
     assert.strictEqual(core.usageFor(month()).captures, 0);
 });
 
+test('a direct Substack share queues a throttled fallback and finishes on the same item', async (t) => {
+    const { env, core } = await setup(t);
+    let blocked = true;
+    const api = 'https://writer.substack.com/api/v1/posts/story';
+    const calls = mockFetch(t, {
+        'https://writer.substack.com/p/story': html('missing', 404),
+        [api]: () => blocked
+            ? new Response('slow down', { status: 429, headers: { 'Retry-After': '600' } })
+            : new Response(JSON.stringify({ title: 'Story', body_html: words(30) }), { headers: { 'content-type': 'application/json' } })
+    });
+    const saved = core.inboxAdd({ url: 'https://writer.substack.com/p/story' });
+    let now = Date.now();
+    await processInbox(core, env, { now: () => now });
+    assert.strictEqual(only(core).status, 'pending');
+    assert.strictEqual(new Date(only(core).nextRetryAt).getTime(), now + 600000);
+    assert.strictEqual(core.usageFor(month()).captures, 0);
+    now += 600001;
+    blocked = false;
+    await processInbox(core, env, { now: () => now });
+    assert.deepStrictEqual([only(core).id, only(core).status], [saved.id, 'done']);
+    assert.deepStrictEqual(calls, ['https://writer.substack.com/p/story', api, api]);
+    assert.strictEqual(core.usageFor(month()).captures, 1);
+});
+
 test('failures that will not get better fail at once, with a reason', async (t) => {
     const { stub, env, core } = await setup(t);
     mockFetch(t, { 'https://blocked.example/a': html('Forbidden', 403), 'https://spa.example/a': html('<html><body><div id="app"></div></body></html>') });

@@ -344,7 +344,10 @@ async function extractArticle(rawUrl, { attempt = 1 } = {}) {
         const pageOnly = attempt > 1 && attempt % 2 === 1;
         const post = pageOnly ? null : await substackFallback(own);
         if (post && !post.error) return post;
-        if (apiOnly && post?.error?.upstreamStatus === 429) throw post.error;
+        if (apiOnly) {
+            if (post?.error) throw post.error;
+            throw new HttpError(422, 'Substack did not provide article text. Add text to this saved link.');
+        }
         rawUrl = own; // read the page on the newsletter's own address instead
         try {
             const page = await fetchPage(rawUrl);
@@ -363,7 +366,8 @@ async function extractArticle(rawUrl, { attempt = 1 } = {}) {
         if (attempt % 2 === 0) {
             const post = await substackFallback(rawUrl);
             if (post && !post.error) return post;
-            if (post?.error?.upstreamStatus === 429) throw post.error;
+            if (post?.error) throw post.error;
+            throw new HttpError(422, 'Substack did not provide article text. Add text to this saved link.');
         } else {
             return articleFromPage(await fetchPage(rawUrl));
         }
@@ -377,6 +381,7 @@ async function extractArticle(rawUrl, { attempt = 1 } = {}) {
         if (error.upstreamStatus && !own) {
             const fallback = await substackFallback(rawUrl);
             if (fallback && !fallback.error) return fallback;
+            if (fallback?.error?.upstreamStatus === 429 && error.upstreamStatus !== 429) throw fallback.error;
             if (fallback?.error?.retryAfterMs && error.upstreamStatus === 429) {
                 error.retryAfterMs = Math.max(error.retryAfterMs || 0, fallback.error.retryAfterMs);
             }
