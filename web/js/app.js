@@ -56,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '21';
+const APP_VERSION = '22';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -1830,7 +1830,7 @@ function sharedItemsSection() {
                         ? { text: `Automatic attempts stopped. ${item.error || 'AidedMind could not read the article.'} Add text or try again later.`, error: true }
                         : item.status === 'processing'
                             ? { text: 'Reading this article now…' }
-                            : { text: `${item.error ? `${item.error} ` : 'Saved. Waiting for breakdown. '}${retryTime(item)}` };
+                            : { text: `${item.error ? `${item.error} ` : 'Saved. Waiting for breakdown. '}${retryTime(item)}${item.error?.includes('too many requests') ? ' You can add article text now if you can read it in the app.' : ''}` };
                 const actions = action === 'needs_review'
                     ? [openArticle(item), reviewItem(item), removeItem(item)]
                     : action === 'attention'

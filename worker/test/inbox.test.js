@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { DatabaseSync } from 'node:sqlite';
 import app from '../src/app.js';
 import { StoreCore } from '../src/store-core.js';
-import { processInbox, MAX_ATTEMPTS, RETRY_DELAYS_MS, RATE_LIMIT_MAX_ATTEMPTS } from '../src/inbox-processor.js';
+import { processInbox, MAX_ATTEMPTS, RETRY_DELAYS_MS, RATE_LIMIT_MAX_ATTEMPTS, SUBSTACK_RATE_LIMIT_MAX_ATTEMPTS } from '../src/inbox-processor.js';
 import { fakeEnv, anthropicStub, call, sqlAdapter, sqlStore } from './helpers.js';
 import { urlHash } from '../../web/js/library.js';
 
@@ -196,6 +196,32 @@ test('site rate limits expose the next retry, then keep the same link available 
     assert.strictEqual(core.inboxUpdate(saved.id, {}), true);
     assert.strictEqual(await processInbox(core, env, { now: () => now }), 1);
     assert.strictEqual(only(core).status, 'done');
+});
+
+test('a Substack app share stops the long rate-limit wait and avoids repeat API calls', async (t) => {
+    const { env, core } = await setup(t);
+    const api = 'https://writer.substack.com/api/v1/posts/story';
+    const pageUrl = 'https://writer.substack.com/p/story';
+    const calls = mockFetch(t, {
+        [api]: () => new Response('slow down', { status: 429 }),
+        [pageUrl]: () => new Response('slow down', { status: 429 })
+    });
+    const saved = core.inboxAdd({ url: 'https://open.substack.com/pub/writer/p/story' });
+    let now = Date.now();
+    for (let attempt = 1; attempt <= SUBSTACK_RATE_LIMIT_MAX_ATTEMPTS; attempt++) {
+        await processInbox(core, env, { now: () => now });
+        const item = only(core);
+        assert.strictEqual(item.id, saved.id);
+        assert.strictEqual(item.attempts, attempt);
+        assert.deepStrictEqual(calls.slice(-2), [api, pageUrl], 'one API and one page request per attempt');
+        if (attempt === SUBSTACK_RATE_LIMIT_MAX_ATTEMPTS) {
+            assert.deepStrictEqual([item.status, item.errorKind], ['failed', 'retry_in_app']);
+        } else {
+            assert.strictEqual(item.status, 'pending');
+            now = new Date(item.nextRetryAt).getTime() + 1000;
+        }
+    }
+    assert.strictEqual(core.usageFor(month()).captures, 0);
 });
 
 test('failures that will not get better fail at once, with a reason', async (t) => {
