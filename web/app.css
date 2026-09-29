@@ -49,6 +49,14 @@
     --font-serif: ui-serif, "New York", Georgia, serif;
 }
 
+/* Keep horizontal collections and long notes visibly scrollable in both themes. */
+* { scrollbar-color: var(--line-strong) var(--surface); scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 7px; height: 7px; }
+*::-webkit-scrollbar-track { background: var(--surface); }
+*::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+@media (forced-colors: active) { * { scrollbar-color: auto; } }
+
 @media (prefers-color-scheme: light) {
     :root {
         color-scheme: light;
@@ -378,12 +386,10 @@ textarea.field { resize: none; min-height: 88px; line-height: 1.4; }
     display: flex;
     gap: 8px;
     overflow-x: auto;
-    scrollbar-width: none;
     margin: 12px -16px 0;
     padding: 0 16px 2px;
 }
 
-.chips::-webkit-scrollbar { display: none; }
 .chips.wrap { flex-wrap: wrap; overflow: visible; margin: 12px 0 0; padding: 0; }
 
 .chip {
@@ -748,12 +754,10 @@ details.card[open] summary { margin-bottom: 12px; }
     /* One row that scrolls sideways when there are many themes. */
     flex-wrap: nowrap;
     overflow-x: auto;
-    scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
     pointer-events: auto;
 }
 
-.graph-legend::-webkit-scrollbar { display: none; }
 .graph-legend .legend-item { flex: none; white-space: nowrap; }
 
 .graph-legend button.legend-item {
@@ -908,11 +912,9 @@ details.card[open] summary { margin-bottom: 12px; }
     display: flex;
     gap: 8px;
     overflow-x: auto;
-    scrollbar-width: none;
     padding-bottom: 2px;
 }
 
-.photo-strip::-webkit-scrollbar { display: none; }
 .photo-thumb { position: relative; flex: none; }
 .photo-thumb img { display: block; width: 76px; height: 76px; object-fit: cover; border-radius: 12px; background: var(--surface-2); }
 .photo-thumb button {

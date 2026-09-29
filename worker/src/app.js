@@ -224,10 +224,13 @@ const routes = [
     ['POST', /^\/api\/inbox$/, async (request, env, user) => {
         const body = await readInboxBody(request);
         const item = await userStore(env, user.id).inboxAdd(
-            { url: body.url, text: body.text, title: body.title },
+            { url: body.url, text: body.text, title: body.title, capture: body.capture },
             { limit: monthlyLimit(user.plan, env) }
         );
         if (!item) throw new HttpError(400, 'Nothing to save: send a url or text.');
+        if (new URL(request.url).searchParams.get('shortcut') === '1') {
+            return new Response('Saved to AidedMind', { status: 201, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+        }
         return json({ ok: true, id: item.id, message: 'Saved to AidedMind. Check Shared links for progress or to add article text if needed.' }, 201);
     }, { auth: true }],
 
@@ -240,9 +243,9 @@ const routes = [
     }, { auth: true }],
 
     ['PATCH', /^\/api\/inbox\/([\w-]+)$/, async (request, env, user, match) => {
-        const { text = '', title = '' } = await readJson(request, MAX_INBOX_BYTES);
+        const { text = '', title = '', confirm = false } = await readJson(request, MAX_INBOX_BYTES);
         if (text && typeof text !== 'string') throw new HttpError(400, 'Article text must be text.');
-        const ok = await userStore(env, user.id).inboxUpdate(match[1], { text, title });
+        const ok = await userStore(env, user.id).inboxUpdate(match[1], { text, title, confirm: confirm === true });
         if (!ok) throw new HttpError(404, 'This shared link is no longer waiting. Share it again.');
         return json({ ok: true, message: 'Saved. AidedMind will try this shared link again.' });
     }, { auth: true }],

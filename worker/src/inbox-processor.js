@@ -14,7 +14,7 @@ import { extractArticle } from './article.js';
 import { classifyUrl, fetchSource } from './extract.js';
 import { recordClaude } from './costs.js';
 import { HttpError, currentMonth } from './http.js';
-import { looksPaywalled } from '../../web/js/paywall.js';
+import { looksPaywalled, countWords } from '../../web/js/paywall.js';
 import { canonicalUrl } from '../../web/js/library.js';
 
 export const MAX_ATTEMPTS = 3;
@@ -35,7 +35,9 @@ function sourceTypeFor(url) {
 // their own logged-in Safari) is the article; otherwise fetch the link.
 async function buildSource(core, env, item, month) {
     if (item.text) {
-        return { sourceType: sourceTypeFor(item.url), url: item.url, title: item.title, author: '', text: item.text };
+        const capture = JSON.parse(item.capture_meta || '{}');
+        return { sourceType: sourceTypeFor(item.url), url: item.url, title: item.title, author: '', text: item.text,
+            captureKind: capture.kind || 'pasted', imageCount: capture.images || 0 };
     }
     const fetched = await fetchSource(item.url, {
         env,
@@ -78,7 +80,9 @@ function pack(source, result) {
             partial: Boolean(source.partial),
             transcriptSource: source.transcriptSource || '',
             transcriptError: source.transcriptError || '',
-            text: String(source.text || '').slice(0, STORED_TEXT_MAX)
+            text: String(source.text || '').slice(0, STORED_TEXT_MAX),
+            captureKind: source.captureKind || 'server', imageCount: source.imageCount || 0,
+            wordCount: countWords(source.text)
         },
         analysis: result.analysis,
         model: result.model,
@@ -128,6 +132,10 @@ async function alreadySaved(item, prefs) {
 }
 
 async function processItem(core, env, item, nowMs) {
+    const capture = JSON.parse(item.capture_meta || '{}');
+    if (capture.review && !item.capture_confirmed && item.text) {
+        return core.inboxFail(item.id, { error: `Safari captured ${countWords(item.text)} words. Check the text before breaking it down.`, kind: 'needs_review' });
+    }
     const month = currentMonth(new Date(nowMs));
     const prefs = core.metaGet('prefs') || {};
     if (await alreadySaved(item, prefs)) {

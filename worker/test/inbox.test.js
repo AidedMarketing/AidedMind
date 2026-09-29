@@ -109,6 +109,40 @@ test('page text sent with the link (from your own Safari) is used as is, no fetc
     assert.match(source.text, /logged-in article/);
 });
 
+test('short Safari capture waits for review before any model call or quota', async (t) => {
+    const { stub, env, core } = await setup(t);
+    const text = 'A short opening paragraph about habits. '.repeat(7);
+    core.inboxAdd({ url: 'https://example.com/short', text, capture: { kind: 'safari', words: 42, images: 3, review: true } }, { limit: 5 });
+    await processInbox(core, env);
+    assert.strictEqual(only(core).errorKind, 'needs_review');
+    assert.strictEqual(only(core).text, text.trim());
+    assert.strictEqual(stub.requests.length, 0);
+    assert.strictEqual(core.usageFor(month()).captures, 0);
+    assert.strictEqual(core.inboxUpdate(only(core).id, { confirm: true }), true);
+    await processInbox(core, env);
+    assert.strictEqual(only(core).status, 'done');
+    assert.deepStrictEqual([only(core).result.source.wordCount, only(core).result.source.imageCount, only(core).result.source.captureKind], [42, 3, 'safari']);
+});
+
+test('Claude outage uses Gemini backup for a queued share once', async (t) => {
+    const { env, core } = await setup(t, { model: () => ({ status: 529, json: { type: 'error', error: { type: 'overloaded_error', message: 'busy' } } }) });
+    env.GEMINI_API_KEY = 'test-gemini';
+    const calls = mockFetch(t, {
+        'https://example.com/a': html(page(words(20))),
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent': () => new Response(JSON.stringify({
+            modelVersion: 'gemini-flash-latest', candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(ANALYSIS) }] } }],
+            usageMetadata: { promptTokenCount: 600, candidatesTokenCount: 100 }
+        }), { headers: { 'content-type': 'application/json' } })
+    });
+    core.inboxAdd({ url: 'https://example.com/a' }, { limit: 5 });
+    await processInbox(core, env);
+    assert.strictEqual(only(core).status, 'done');
+    assert.strictEqual(only(core).result.model, 'gemini-flash-latest');
+    assert.strictEqual(core.usageFor(month()).captures, 1);
+    assert.strictEqual(core.costsFor(month()).find((row) => row.item === 'gemini:analysis').amount, 1);
+    assert.ok(calls.some((url) => url.includes('generateContent')));
+});
+
 test('Claude outage keeps the share queued without using quota, then recovers', async (t) => {
     let down = true;
     const { env, core } = await setup(t, { model: () => down
@@ -251,6 +285,14 @@ test('inbox routes queue links with the plan limit, accept raw page text, and li
     const owner = await call(app, env, 'POST', '/api/inbox', { token: 'owner-secret', body: { url: 'https://example.com/o' } });
     assert.strictEqual(owner.status, 201);
     assert.strictEqual(env.STORE.get('user:owner').rows('SELECT quota_limit AS q FROM inbox')[0].q, -1); // unlimited
+});
+
+test('Shortcut inbox URL returns a plain confirmation without JSON', async () => {
+    const env = fakeEnv();
+    const response = await call(app, env, 'POST', '/api/inbox?shortcut=1', { token: 'owner-secret', body: { url: 'https://example.com/article' } });
+    assert.strictEqual(response.status, 201);
+    assert.match(response.headers.get('content-type'), /text\/plain/);
+    assert.strictEqual(await response.text(), 'Saved to AidedMind');
 });
 
 test('inbox update is authenticated and resumes the same failed item', async () => {

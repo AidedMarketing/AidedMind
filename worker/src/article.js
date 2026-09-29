@@ -64,8 +64,10 @@ export function extractArticle(html, url = '') {
     const cleaned = source.slice(Math.max(headEnd, 0)).replace(/<!--[\s\S]*?-->/g, '').replace(NEVER_ARTICLE, ' ');
 
     let text = '';
+    let chosen = cleaned;
     for (const { markup, strict } of candidates(cleaned)) {
         text = blocks(markup, { strict }).join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+        chosen = markup;
         if (countWords(text) >= MIN_ARTICLE_WORDS) break;
     }
     if (text.length < 200) {
@@ -76,6 +78,7 @@ export function extractArticle(html, url = '') {
         author: meta(head, 'author') || meta(head, 'article:author'),
         siteName: meta(head, 'og:site_name'),
         thumbnail: meta(head, 'og:image'),
+        imageCount: (chosen.match(/<img\b/gi) || []).length,
         text
     };
 }

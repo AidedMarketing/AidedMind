@@ -41,6 +41,8 @@ iPhone                                   Cloudflare (free plan)                 
 
 iOS doesn't let home-screen web apps appear in the Share menu, and it keeps their storage separate from Safari. One **Save to AidedMind** Shortcut works from Substack and other apps by sending their link; from Safari it can also send text visible in your logged-in page. Settings → *Save from the Share button* walks you through both branches of the same Shortcut.
 
+Use the Shortcut inbox URL shown in Settings (it ends in `?shortcut=1`). It replies with only “Saved to AidedMind” so Show Content does not display JSON. After upgrading, replace the URL in both Get Contents of URL actions. Safari captures under 200 words or with a likely access message wait in Shared links for **Check text**; choose **Use this text** or **Add more text** before spending a breakdown. Existing Shortcuts need the updated Safari script copied from Settings to send this capture signal.
+
 ### Background breakdowns
 
 Sharing a link no longer waits for the app:
@@ -65,6 +67,8 @@ The Library shows anything still in progress under *Shared links*. It never star
 
 Photos are resized on the phone to 1,568 px on the long edge (the most detail Claude uses) and sent as JPEG, roughly 1,600 tokens each (about $0.003 per photo on Sonnet 5.5). Only small thumbnails and the text Claude read are kept with the note; the photos themselves are never stored. Auto uses Balanced for photos and Thorough for 6 or more.
 
+For an article whose images contain information, open its note → ••• → **Add screenshots**. Choose up to eight images from Photos; AidedMind reads them alongside the captured article and updates the same note, keeping personal notes and its place in the Library. The page's images are not fetched automatically. A note shows its captured word count and, where detectable, a count of images that may need your attention.
+
 ### Paywalled articles
 
 AidedMind's server isn't logged in as you, so on a paywalled site it only receives what the site shows everyone: the free opening. It can't use your subscription: your phone's Safari logins live in Safari, and neither the installed app nor the server can see them. What it does instead:
@@ -77,6 +81,8 @@ AidedMind's server isn't logged in as you, so on a paywalled site it only receiv
 AidedMind doesn't try to get around paywalls (no crawler tricks, no archive sites): it only ever uses what you can see yourself.
 
 **Partial notes.** When only a caption or description could be read, the note says so and why (for example "Supadata is out of credits"). Each note's Notes tab says where its transcript came from. To retry, open the note → ••• → **Get the full transcript**, or share the link again; either way the note is updated in place and keeps anything you wrote in it.
+
+If Claude is temporarily unavailable and `GEMINI_API_KEY` is configured, AidedMind tries Gemini for the breakdown. The finished note shows the model used. If both services fail, shared links stay queued for retry. Settings → *This month* counts Gemini backup breakdowns separately; Gemini charges are not included in the Claude estimate. **Give me more detail** on a complete note requests a fuller breakdown from its saved source text; it uses one additional breakdown.
 
 **Costs:** Gemini's YouTube-link input is free during Google's preview; afterwards it costs a few cents per video. Supadata's free tier is 100 credits a month (a transcribed TikTok is about 2 credits per minute). Settings → *This month* shows breakdowns, estimated Claude spend, Gemini videos and Supadata transcripts; the exact Claude bill is in the Anthropic Console.
 
@@ -209,7 +215,7 @@ Next step when you're ready: a Stripe Checkout + webhook that creates an account
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Cloudflare secret | required |
 | `OWNER_TOKEN` | Cloudflare secret | required; your unlimited access token |
-| `GEMINI_API_KEY` | Cloudflare secret, optional | YouTube transcripts via Gemini (including videos without captions) |
+| `GEMINI_API_KEY` | Cloudflare secret, optional | YouTube transcripts and a backup breakdown when Claude is temporarily unavailable |
 | `SUPADATA_API_KEY` | Cloudflare secret, optional | TikTok (and fallback YouTube caption) transcripts |
 | `AIDEDMIND_DEFAULT_DEPTH` | `wrangler.jsonc` vars | breakdown style when the app doesn't send one: `auto` (default), `quick`, `balanced` or `thorough` |
 | `AIDEDMIND_MODEL_QUICK` / `_BALANCED` / `_THOROUGH` | `wrangler.jsonc` vars | defaults `claude-haiku-4-5` / `claude-sonnet-5-5` / `claude-opus-5-5` |
