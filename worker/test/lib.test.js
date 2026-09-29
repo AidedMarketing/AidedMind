@@ -179,6 +179,49 @@ test('direct publication links also make only one request per rate-limit retry',
         'https://writer.substack.com/api/v1/posts/story', url]);
 });
 
+test('a direct publication link preserves a throttled API when its page is missing', async (t) => {
+    const real = globalThis.fetch;
+    t.after(() => { globalThis.fetch = real; });
+    globalThis.fetch = async (input) => String(input).includes('/api/v1/posts/')
+        ? new Response('slow down', { status: 429, headers: { 'Retry-After': '600' } })
+        : new Response('not found', { status: 404 });
+    await assert.rejects(fetchSource('https://writer.substack.com/p/story'), (error) => {
+        assert.strictEqual(error.upstreamStatus, 429);
+        assert.strictEqual(error.retryAfterMs, 600000);
+        return true;
+    });
+});
+
+test('an API retry can fall back to the page without repeating a missing API', async (t) => {
+    const real = globalThis.fetch;
+    t.after(() => { globalThis.fetch = real; });
+    const seen = [];
+    globalThis.fetch = async (input) => {
+        seen.push(String(input));
+        return new Response('not found', { status: 404 });
+    };
+    for (const url of ['https://writer.substack.com/p/story', 'https://open.substack.com/pub/writer/p/story']) {
+        await assert.rejects(fetchSource(url, { attempt: 2 }), (error) => error.upstreamStatus === 404);
+    }
+    assert.deepStrictEqual(seen, Array(2).fill(['https://writer.substack.com/api/v1/posts/story', 'https://writer.substack.com/p/story']).flat());
+});
+
+test('an API retry with no article body can still recover from a readable page', async (t) => {
+    const real = globalThis.fetch;
+    t.after(() => { globalThis.fetch = real; });
+    const seen = [];
+    globalThis.fetch = async (input) => {
+        seen.push(String(input));
+        return String(input).includes('/api/v1/posts/')
+            ? new Response(JSON.stringify({ title: 'Story' }), { headers: { 'content-type': 'application/json' } })
+            : new Response('<html><article><p>Public article text.</p></article></html>', { headers: { 'content-type': 'text/html' } });
+    };
+    for (const url of ['https://writer.substack.com/p/story', 'https://open.substack.com/pub/writer/p/story']) {
+        assert.match((await fetchSource(url, { attempt: 2 })).html, /Public article text/);
+    }
+    assert.deepStrictEqual(seen, Array(2).fill(['https://writer.substack.com/api/v1/posts/story', 'https://writer.substack.com/p/story']).flat());
+});
+
 test('site problems are explained in plain words, with no status codes', async (t) => {
     const real = globalThis.fetch;
     t.after(() => { globalThis.fetch = real; });

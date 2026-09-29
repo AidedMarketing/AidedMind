@@ -364,6 +364,9 @@ async function extractArticle(rawUrl, { attempt = 1 } = {}) {
             const post = await substackFallback(rawUrl);
             if (post && !post.error) return post;
             if (post?.error?.upstreamStatus === 429) throw post.error;
+            // A missing API or empty post can still have a readable page.
+            // Try it once, without falling into the generic API fallback below.
+            return articleFromPage(await fetchPage(rawUrl));
         } else {
             return articleFromPage(await fetchPage(rawUrl));
         }
@@ -377,6 +380,7 @@ async function extractArticle(rawUrl, { attempt = 1 } = {}) {
         if (error.upstreamStatus && !own) {
             const fallback = await substackFallback(rawUrl);
             if (fallback && !fallback.error) return fallback;
+            if (fallback?.error?.upstreamStatus === 429 && error.upstreamStatus !== 429) throw fallback.error;
             if (fallback?.error?.retryAfterMs && error.upstreamStatus === 429) {
                 error.retryAfterMs = Math.max(error.retryAfterMs || 0, fallback.error.retryAfterMs);
             }
