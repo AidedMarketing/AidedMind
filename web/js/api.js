@@ -47,6 +47,7 @@ async function request(method, path, body) {
     if (!response.ok) {
         const error = new Error(data.error || plainServerError(response.status));
         error.status = response.status;
+        error.code = data.code;
         throw error;
     }
     return data;
@@ -216,8 +217,16 @@ export async function fetchInbox() {
     return data.items || [];
 }
 
+export function queueInboxItem(item) {
+    return request('POST', '/inbox', item);
+}
+
 export function removeInboxItem(id) {
     return request('DELETE', `/inbox/${encodeURIComponent(id)}`);
+}
+
+export function updateInboxItem(id, changes) {
+    return request('PATCH', `/inbox/${encodeURIComponent(id)}`, changes);
 }
 
 export async function adminListUsers() {

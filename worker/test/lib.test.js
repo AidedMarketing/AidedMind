@@ -123,12 +123,14 @@ test('a throttled substack share link is read from the newsletter\'s own address
         seen.push(url);
         if (url.startsWith('https://open.substack.com')) return new Response('slow down', { status: 429 });
         if (url === 'https://writer.substack.com/api/v1/posts/my-post') {
-            return new Response(JSON.stringify({ title: 'My post', body_html: '<p>Hello world.</p>', canonical_url: 'https://writer.substack.com/p/my-post' }), { headers: { 'content-type': 'application/json' } });
+            return new Response(JSON.stringify({ title: 'My post', audience: 'only_paid', body_html: '<p>Hello world.</p>', canonical_url: 'https://writer.substack.com/p/my-post' }), { headers: { 'content-type': 'application/json' } });
         }
         return new Response('nope', { status: 404 });
     };
     const source = await fetchSource('https://open.substack.com/pub/writer/p/my-post?r=abc');
     assert.strictEqual(source.url, 'https://writer.substack.com/p/my-post');
+    assert.strictEqual(source.restricted, true);
+    assert.match(source.html, /article:content_tier" content="premium/);
     assert.match(source.html, /Hello world/);
     assert.ok(!seen.some((u) => u.startsWith('https://open.substack.com')), 'the throttled address is never touched');
 });

@@ -223,6 +223,7 @@ test('accounts: owner creates users, free plan quota enforced, failures refunded
     fail = true;
     const failed = await analyzeOnce();
     assert.strictEqual(failed.status, 502);
+    assert.strictEqual((await failed.json()).code, 'provider_unavailable');
     fail = false;
     assert.strictEqual((await analyzeOnce()).status, 200);
     assert.strictEqual((await analyzeOnce()).status, 200);

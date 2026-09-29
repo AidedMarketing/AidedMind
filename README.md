@@ -39,19 +39,19 @@ iPhone                                   Cloudflare (free plan)                 
 
 ### Why a Shortcut?
 
-iOS doesn't let home-screen web apps appear in the Share menu, and it keeps their storage separate from Safari. So the **Save to AidedMind** Shortcut posts the link to your server, which breaks it down while the app is closed; the app collects the finished note the next time you open it. Settings → *Save from the Share button* walks you through building it, with copy buttons for the URL and token. A second Shortcut, **Save Page to AidedMind**, handles [paywalled articles](#paywalled-articles).
+iOS doesn't let home-screen web apps appear in the Share menu, and it keeps their storage separate from Safari. One **Save to AidedMind** Shortcut works from Substack and other apps by sending their link; from Safari it can also send text visible in your logged-in page. Settings → *Save from the Share button* walks you through both branches of the same Shortcut.
 
 ### Background breakdowns
 
 Sharing a link no longer waits for the app:
 
 1. The Shortcut posts the link. The server queues it and answers "Saved" straight away.
-2. A background run on your Cloudflare storage fetches the source (article, YouTube, TikTok), reads the article's text, and breaks it down with Claude, using the breakdown style you chose in Settings. Temporary problems (Claude busy, a network blip) are retried after 1 and 5 minutes; permanent ones (a site that refuses, a private video, your monthly limit) stop with a reason.
+2. A background run on your Cloudflare storage fetches the source (article, YouTube, TikTok), reads the article's text, and breaks it down with Claude. If Claude is unavailable, the link stays queued with automatic retries up to an hour apart. A blocked or unreadable article stays in *Shared links* as **Needs article text**; a broken link or monthly limit stops with a reason.
 3. The finished note waits on the server (up to 30 days). When you open the app it's added to your library, the server copy is deleted, and a small call links it to related notes (the server doesn't have your library, so this step happens here).
 
-What the server holds, and only briefly: queued links, and finished notes until the app collects them. It also keeps a small settings record synced by the app: your breakdown style, the topic and concept *names* in use (so new notes reuse them), and short fingerprints of the links you've already saved (so sharing a repeat costs nothing). No note is stored there.
+What the server holds, and only briefly: queued links, any article text you supply for a waiting item, and finished notes until the app collects them. Waiting items expire after 30 days. It also keeps a small settings record synced by the app: your breakdown style, the topic and concept *names* in use (so new notes reuse them), and short fingerprints of the links you've already saved (so sharing a repeat costs nothing). Your library stays on your device.
 
-If the server can't finish something, the app picks it up when opened, as before. The Library shows anything still in progress under *Shared links*.
+The Library shows anything still in progress under *Shared links*. It never starts a second breakdown just because a queued item has been waiting for ten minutes.
 
 ## What each source gives you
 
@@ -70,7 +70,8 @@ Photos are resized on the phone to 1,568 px on the long edge (the most detail Cl
 AidedMind's server isn't logged in as you, so on a paywalled site it only receives what the site shows everyone: the free opening. It can't use your subscription: your phone's Safari logins live in Safari, and neither the installed app nor the server can see them. What it does instead:
 
 - **It says so.** A note whose article looks paywalled (the page says it, or the text is short and ends with "subscribe to continue") is marked *partial* with a Quick, cheap breakdown of the free part, instead of pretending it read everything.
-- **Save Page shortcut (best).** In Safari, while you're logged in, Share → **Save Page to AidedMind** sends the article text from *your* browser to your server. Settings → *Paywalled articles* walks you through building it (one script, one POST).
+- **The same Shortcut in Safari.** While logged in, Share → **Save to AidedMind** sends article text visible in *your* browser. The Safari branch is optional if you normally read in publication apps.
+- **Shares from publication apps.** They normally provide a link, not the subscriber text on screen. If the server cannot read it, the link remains under *Shared links* → **Add text** so you can complete that item later.
 - **Paste the full text (works anywhere).** Open the partial note → ••• → **Paste the full article**. In Safari, choose Select All → Copy on the article, then paste. The note keeps its place and anything you wrote.
 
 AidedMind doesn't try to get around paywalls (no crawler tricks, no archive sites): it only ever uses what you can see yourself.
@@ -106,9 +107,9 @@ Themes also show up elsewhere: as the topic filters in the Library, as each Libr
 
 | To… | Do this |
 |---|---|
-| Save a link from any app | Share → **Save to AidedMind** (the Shortcut). It's broken down right away; open the app to see it |
-| Save a paywalled article | In Safari, logged in: Share → **Save Page to AidedMind**. Or open the partial note → ••• → **Paste the full article** |
-| Save a link or text in the app | **Add** tab → paste → **Break it down** |
+| Save a link from any app | Share → **Save to AidedMind** (the Shortcut). It's saved right away; open the app to see its progress |
+| Save a paywalled article | Share → **Save to AidedMind**. If the publication app only shares its link, open Library → *Shared links* → **Add text** if needed. In Safari while logged in, the same Shortcut can send the visible article text |
+| Save a link or text in the app | **Add** tab → paste → **Break it down**. If Claude is unavailable, the item is saved in *Shared links* for a later breakdown |
 | Save photos | **Add** tab → **Add photos** (camera or library, up to 8) |
 | Collect finished notes now | **Library** → inbox button (top right). The app also checks whenever it opens and every 20 seconds while something is still being broken down |
 | Retry a link that failed | **Library** → *Shared links* → **Try again** |
@@ -178,10 +179,10 @@ Everything in the app's Settings tab. Choices are saved on the device.
 | "Supadata is out of credits" | The free plan's 100 monthly credits are used up. They reset monthly, or upgrade on supadata.ai |
 | The app doesn't show a new feature | Close and reopen it; updates install on open. Settings → *About* → **Check for updates** checks right away |
 | The Shortcut says "Saved" but nothing appears | The server is still breaking it down (a long video can take a few minutes): it shows under *Shared links* in the Library, then appears on its own. If nothing shows anywhere, check the token in the Shortcut matches Settings |
-| A note says it's paywalled / partial | Only the free part was readable. Use **Save Page to AidedMind** in Safari while logged in, or ••• → **Paste the full article** on the note |
-| A shared link keeps failing | Library → *Shared links* shows the reason, in plain words (never a bare status code). For paywalled or login-only pages use the Save Page shortcut, or copy the text and paste it on the Add tab |
-| "…is limiting how often AidedMind can read it right now" | The site (Substack does this a lot) is throttling requests. AidedMind waits a few minutes and tries again on its own, up to three times. Substack's Share links (`open.substack.com/pub/…`) are read from the newsletter's own address to avoid it; if a link still fails, open the note later and share it again, or paste the text |
-| The Save Page shortcut saves nothing or an empty note | It must be run from Safari's Share menu on the article itself (not from another app), and its script step must be **Run JavaScript on Web Page** with the copied script. Long pages are cut at 400,000 characters |
+| A note says it's paywalled / partial | Only the free part was readable. Share it again with the same Shortcut from logged-in Safari, or use ••• → **Paste the full article** on the note |
+| A shared link needs article text | Library → *Shared links* → **Add text**. The link remains saved and the same item is broken down after you supply text |
+| "…is limiting how often AidedMind can read it right now" | The site is throttling requests. AidedMind tries again automatically at first. Substack Share links (`open.substack.com/pub/…`) are read from the newsletter's own address; if a link still fails, use Shared links to retry or add text |
+| The Safari branch of the Shortcut sends no article text | Run it from Safari's Share menu on the article itself. Its JavaScript action must receive the Safari web page input. Short pages are sent as a link so the server can try them; long pages are cut at 400,000 characters |
 | "You've used all N breakdowns for this month" | That account's plan limit; the owner token has no limit. Limits reset on the 1st |
 | The daily health check email arrived | Open *Actions → Health check* in GitHub: the log names what failed (app, storage, Claude key, or a transcript key) |
 | Health page shows `anthropic_error_400` | Usually no credit on the Anthropic account. Add credit in the Anthropic Console |
@@ -244,7 +245,8 @@ All routes are under your Worker URL. Every route except `/api/health` needs the
 | `POST /api/source` | `{ url }` | the source text (or article HTML for the app to clean up), with `transcriptSource`, `partial` and `transcriptError` for videos |
 | `POST /api/analyze` | `{ source, library, depth, concepts, topics }` | the breakdown (`analysis`, including its `topic`), model and style used, usage. Counts one breakdown |
 | `POST /api/topics` | `{ notes: [{ id, title, tldr, tags }], topics }` | `{ assignments: { id: topic } }` for up to 150 notes, using the Quick model. Counts one breakdown |
-| `POST /api/inbox` | `{ url }`, `{ url, title, text }` (page text you captured), or just the text as the body | queues a link to be broken down in the background (what the Shortcuts call). Uses one breakdown when it runs |
+| `POST /api/inbox` | `{ url }`, `{ url, title, text }` (page text you captured), or just the text as the body | saves a share and queues its background breakdown. Uses one breakdown when it succeeds |
+| `PATCH /api/inbox/:id` | `{ text }` to supply article text, or `{}` to retry | requeues the same waiting item without losing its link |
 | `GET /api/inbox` | | every item with its `status` (`pending`, `processing`, `done`, `failed`), `error`, and for finished items the `result` (source and breakdown) |
 | `DELETE /api/inbox/:id` | | removes one (the app does this after collecting a note) |
 | `PUT /api/preferences` | `{ depth, topics, concepts, urls }` | breakdown style, topic and concept names, and link fingerprints, used by background breakdowns |
