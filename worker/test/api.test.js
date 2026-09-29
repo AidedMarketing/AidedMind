@@ -79,7 +79,7 @@ test('analyze calls Claude, keeps only known connections and meters usage', asyn
 
     const sent = stub.requests[0];
     assert.strictEqual(sent.url, '/v1/messages');
-    assert.strictEqual(sent.body.model, 'claude-sonnet-5');
+    assert.strictEqual(sent.body.model, 'claude-sonnet-5-5');
     assert.strictEqual(sent.body.fallbacks, undefined);
     assert.deepStrictEqual(sent.body.thinking, { type: 'adaptive' });
     assert.strictEqual(sent.body.output_config.effort, 'medium');
@@ -198,7 +198,7 @@ test('auto style picks from what was shared', async (t) => {
     };
     assert.deepStrictEqual(await send({ sourceType: 'text', text: words(300) }), ['quick', true, 'claude-haiku-4-5']);
     assert.deepStrictEqual(await send({ sourceType: 'tiktok', text: words(900), partial: true }), ['quick', true, 'claude-haiku-4-5']);
-    assert.deepStrictEqual(await send({ sourceType: 'article', text: words(2500) }), ['balanced', true, 'claude-sonnet-5']);
+    assert.deepStrictEqual(await send({ sourceType: 'article', text: words(2500) }), ['balanced', true, 'claude-sonnet-5-5']);
     assert.deepStrictEqual(await send({ sourceType: 'youtube', text: words(15000) }), ['thorough', true, 'claude-opus-5-5']);
     // An explicit style is honored and not marked auto.
     const fixed = await (await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: { source: { text: words(300) }, library: [], depth: 'thorough' } })).json();

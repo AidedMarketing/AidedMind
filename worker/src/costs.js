@@ -2,6 +2,7 @@
 // million tokens (input, output); Anthropic's Console has the exact bill.
 export const CLAUDE_PRICES = [
     ['claude-haiku-4-5', 1, 5],
+    ['claude-sonnet-5-5', 2, 10],
     ['claude-sonnet-5', 2, 10],
     ['claude-opus-5-5', 4, 20],
     ['claude-opus-5', 5, 25],
@@ -10,7 +11,7 @@ export const CLAUDE_PRICES = [
 ];
 
 function claudePrice(model) {
-    // Longest matching prefix, so claude-opus-5-5 isn't priced as claude-opus-5.
+    // Longest matching prefix, so 5.5 models aren't priced as their 5 predecessors.
     const matches = CLAUDE_PRICES.filter(([prefix]) => model === prefix || model.startsWith(`${prefix}-`));
     return matches.sort((a, b) => b[0].length - a[0].length)[0] || null;
 }

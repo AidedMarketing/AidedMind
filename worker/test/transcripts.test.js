@@ -182,14 +182,16 @@ test('cost summary prices each Claude model', () => {
     const spend = summarizeCosts([
         { item: 'claude:claude-sonnet-5:input', amount: 1_000_000 },
         { item: 'claude:claude-sonnet-5:output', amount: 100_000 },
+        { item: 'claude:claude-sonnet-5-5:input', amount: 100_000 },
+        { item: 'claude:claude-sonnet-5-5:output', amount: 20_000 },
         { item: 'claude:claude-opus-5-5:output', amount: 50_000 },
         { item: 'claude:claude-haiku-4-5-20251001:input', amount: 200_000 },
         { item: 'claude:mystery-model:input', amount: 5 },
         { item: 'gemini:videos', amount: 3 },
         { item: 'supadata:requests', amount: 7 }
     ]);
-    assert.deepStrictEqual(spend.claudeByModel, { 'claude-sonnet-5': 3, 'claude-opus-5-5': 1, 'claude-haiku-4-5-20251001': 0.2 });
-    assert.strictEqual(spend.claudeUsd, 4.2);
+    assert.deepStrictEqual(spend.claudeByModel, { 'claude-sonnet-5': 3, 'claude-sonnet-5-5': 0.4, 'claude-opus-5-5': 1, 'claude-haiku-4-5-20251001': 0.2 });
+    assert.strictEqual(spend.claudeUsd, 4.6);
     assert.deepStrictEqual(spend.unpricedModels, ['mystery-model']);
     assert.strictEqual(spend.geminiVideos, 3);
     assert.strictEqual(spend.supadataRequests, 7);
