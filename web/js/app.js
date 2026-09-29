@@ -1,8 +1,8 @@
 import { allNotes, saveNote, saveMany, deleteNote, newId } from './db.js';
-import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, serverBase, fetchHealth, assignTopics, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
+import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { buildThemes, THEME_DETAIL } from './themes.js';
-import { knownTopics } from './library.js';
+import { knownTopics, conceptVocabulary, knownUrlHashes, findDuplicate } from './library.js';
 import { toMarkdown, fileName } from './markdown.js';
 import { icon } from './icons.js';
 import { createZip } from './zip.js';
@@ -16,14 +16,16 @@ const NOTE_TABS = ['Summary', 'Outline', 'Links', 'Notes'];
 const PARTIAL_NOTES = {
     caption: 'Only the caption was available, so this is a partial breakdown. Paste the transcript for the full picture.',
     description: 'This video had no transcript, so the breakdown is based on its title and description. Paste the transcript for the full picture.',
-    gemini: 'This video was very long, so its transcript was cut short. Paste the rest as text for the full picture.'
+    gemini: 'This video was very long, so its transcript was cut short. Paste the rest as text for the full picture.',
+    paywall: 'This article looks paywalled, so only its free opening was read and this is a partial breakdown. The full article is one step away: open the note\'s ••• menu and choose Paste the full text, or use the Save Page shortcut from Safari (Settings) while you\'re logged in.'
 };
 const TRANSCRIPT_LABELS = {
     captions: 'video captions',
     gemini: 'Gemini (watched the video)',
     supadata: 'Supadata',
     description: 'video description only',
-    caption: 'caption only'
+    caption: 'caption only',
+    paywall: 'the free part of a paywalled article'
 };
 const DEPTH_INFO = {
     auto: { label: 'Auto', detail: 'Picks for each link: Quick for TikToks and short posts, Balanced for most articles, videos and photos, Thorough for very long pieces or 6+ photos.' },
@@ -53,7 +55,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '14';
+const APP_VERSION = '15';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -259,22 +261,36 @@ function buildNote(result, title) {
     };
 }
 
-async function runCapture({ input, title, photos = [], retry = null }) {
+// Any of: `input` (what you typed or pasted), an explicit `url` and/or `text`,
+// photos, `retry` (fetch a partial note's link again) or `replace` (redo a
+// partial note with text you pasted).
+async function runCapture({ input = '', url: explicitUrl, text: explicitText, title, photos = [], retry = null, replace = null }) {
     let result;
     if (retry) {
         result = await capture({ url: retry.source?.sharedUrl || retry.source?.url, retry }, notes);
+    } else if (replace) {
+        if (!explicitText?.trim()) throw new Error('Paste the article text first.');
+        result = await capture({ url: replace.source?.url, text: explicitText.trim(), replace }, notes);
     } else if (photos.length) {
         result = await capture({ text: input.trim(), title, photos }, notes);
         result.photos = photos.map((photo) => photo.thumb);
+    } else if (explicitUrl !== undefined || explicitText !== undefined) {
+        if (!explicitUrl && !explicitText) throw new Error('Nothing to save.');
+        result = await capture({ url: explicitUrl, text: explicitText, title }, notes);
     } else {
         const { url, text } = splitInput(input);
         if (!url && !text) throw new Error('Paste a link or some text first.');
         result = await capture({ url, text, title }, notes);
     }
+    return finishNote(result, title);
+}
+
+// Builds the note from a finished breakdown, saves it, and lets a redone
+// partial note keep its place and everything you added to it.
+async function finishNote(result, title) {
     let note = buildNote(result, title);
     const previous = result.replaces && notes.find((n) => n.id === result.replaces);
     if (previous) {
-        // A retried caption-only note keeps its place and anything you wrote.
         note = {
             ...note,
             id: previous.id,
@@ -287,7 +303,27 @@ async function runCapture({ input, title, photos = [], retry = null }) {
     }
     await saveNote(note);
     notes = await allNotes();
+    syncPreferences();
     return note;
+}
+
+// The server breaks shared links down while the app is closed, and needs to
+// know your breakdown style, the topic and concept names in use (so its notes
+// match the rest of your library) and fingerprints of the links you've
+// already saved (so a repeat isn't paid for twice). No notes and no readable
+// links are sent.
+let prefsTimer;
+function syncPreferences() {
+    clearTimeout(prefsTimer);
+    prefsTimer = setTimeout(async () => {
+        const settings = getSettings();
+        if (!settings.token) return;
+        try {
+            await putPreferences({ depth: settings.depth, topics: knownTopics(notes), concepts: conceptVocabulary(notes), urls: await knownUrlHashes(notes) });
+        } catch {
+            // Best effort: the next change syncs again.
+        }
+    }, 1500);
 }
 
 async function startCapture(input, title = '', photos = []) {
@@ -538,7 +574,7 @@ function libraryView(params) {
             }, h('span', { class: 'dot' }), SOURCE_LABELS[type])),
         );
         // Second row: topics (colored #), plus a tag filter opened from a note.
-        topicChips.replaceChildren(
+        topicChips.replaceChildren(...[
             ...themes.map((theme) => h('button', {
                 type: 'button',
                 class: `chip topic-chip${theme.id === activeTheme ? ' active' : ''}`,
@@ -551,7 +587,7 @@ function libraryView(params) {
                 'aria-label': `Tag ${activeTag}, tap to clear`,
                 onclick: () => { activeTag = ''; refresh(); }
             }, `${activeTag}`, icon('close', { size: 14, strokeWidth: 2.4 })) : null
-        );
+        ].filter(Boolean));
 
         if (!notes.length) {
             list.replaceChildren(h('div', { class: 'empty' }, icon('library', { size: 44, strokeWidth: 1.4 }), h('strong', {}, 'Nothing saved yet'), 'Paste a link on the Add tab, or share one with the Shortcut. Tap the inbox button above to check for shared links.'));
@@ -647,7 +683,8 @@ function noteView(id) {
         note.source?.partial ? h('p', { class: 'partial-note' },
             PARTIAL_NOTES[note.source.transcriptSource] || PARTIAL_NOTES.caption,
             note.source.transcriptError ? h('span', { class: 'partial-reason' }, ` Why: ${note.source.transcriptError}`) : null,
-            note.source.url ? ' Share the link again to retry.' : null
+            // Sharing the link again only helps when the service that failed might work next time.
+            note.source.url && note.source.transcriptSource !== 'paywall' ? ' Share the link again to retry.' : null
         ) : null,
         (() => {
             const theme = themeOf(note.id);
@@ -752,7 +789,7 @@ function notePanel(name, note, byId) {
     return [
         userNotes,
         note.sourceText ? [h('div', { class: 'section-label' }, 'Captured source'), h('details', { class: 'card' }, h('summary', {}, 'Show full text'), h('div', { class: 'source-text' }, note.sourceText))] : null,
-        note.source?.transcriptSource ? h('p', { class: 'group-footer' }, `Transcript from ${TRANSCRIPT_LABELS[note.source.transcriptSource] || note.source.transcriptSource}`) : null,
+        note.source?.transcriptSource && note.source.transcriptSource !== 'paywall' ? h('p', { class: 'group-footer' }, `Transcript from ${TRANSCRIPT_LABELS[note.source.transcriptSource] || note.source.transcriptSource}`) : null,
         note.model ? h('p', { class: 'group-footer' }, `${note.depth ? `${note.autoDepth ? 'Auto → ' : ''}${depthLabel(note.depth)} breakdown` : 'Breakdown'} by ${note.model}`) : null
     ];
 }
@@ -803,6 +840,7 @@ function topicSheet(note) {
         note.topicByUser = true;
         await saveNote(note);
         notes = await allNotes();
+        syncPreferences();
         closeSheet();
         toast(`Topic set to ${topic}`);
         route();
@@ -864,7 +902,8 @@ function noteActions(note, byId) {
                     shareFile(new File([toMarkdown(note, byId, { theme: themeOf(note.id)?.label })], fileName(note), { type: 'text/markdown' }));
                 }),
                 actionRow(note.topic ? `Topic: ${note.topic}` : 'Set topic', 'themes', () => topicSheet(note)),
-                note.source?.partial && href ? actionRow('Get the full transcript', 'refresh', () => retryTranscript(note)) : null,
+                note.source?.partial && href && note.source.transcriptSource !== 'paywall' ? actionRow('Get the full transcript', 'refresh', () => retryTranscript(note)) : null,
+                note.source?.partial ? actionRow(note.source.transcriptSource === 'paywall' ? 'Paste the full article' : 'Paste the full text', 'clipboard', () => pasteFullTextSheet(note)) : null,
                 actionRow(`Re-analyze (${depthLabel(getSettings().depth)})`, 'refresh', () => reanalyze(note)),
                 note.depth !== 'thorough' ? actionRow('Re-analyze in depth (Thorough)', 'sparkle', () => reanalyze(note, 'thorough')) : null
             ),
@@ -902,6 +941,38 @@ async function retryTranscript(note) {
         pending = null;
         if (location.hash.includes(encodeURIComponent(note.id))) route();
     }
+}
+
+// A partial note (paywalled article, caption only) redone with text you paste:
+// open the page where you're logged in, copy the text, paste it here.
+function pasteFullTextSheet(note) {
+    const field = h('textarea', { class: 'field', rows: '8', placeholder: 'Paste the full text here', 'aria-label': 'Full text' });
+    const submit = h('button', { type: 'submit', class: 'btn primary block' }, 'Break it down');
+    openSheet(
+        h('h3', {}, 'Paste the full text'),
+        h('p', { class: 'small muted' }, note.source?.transcriptSource === 'paywall'
+            ? 'Open the article in Safari while you\'re logged in, choose Select All, Copy, then paste it here. The note keeps its place and anything you wrote.'
+            : 'Paste the full transcript or text. The note keeps its place and anything you wrote.'),
+        h('form', {
+            class: 'stack',
+            onsubmit: async (event) => {
+                event.preventDefault();
+                if (!field.value.trim() || pending) return;
+                closeSheet();
+                toast('Breaking it down…');
+                pending = runCapture({ replace: note, text: field.value });
+                try {
+                    await pending;
+                    toast('Updated with the full text');
+                } catch (error) {
+                    toast(error.message);
+                } finally {
+                    pending = null;
+                    if (location.hash.includes(encodeURIComponent(note.id))) route();
+                }
+            }
+        }, field, submit, h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel'))
+    );
 }
 
 async function reanalyze(note, depth) {
@@ -1097,6 +1168,10 @@ function graphView() {
 
 // ---------- Settings ----------
 
+// Run JavaScript on Web Page: reads the article from the page in your own
+// Safari (where you're logged in) and hands it back to the Shortcut.
+const PAGE_SCRIPT = 'var e=document.querySelector("article")||document.querySelector("main")||document.body;completion(JSON.stringify({url:location.href,title:document.title,text:e.innerText.slice(0,400000)}));';
+
 function copyField(value, label) {
     return h('div', { class: 'copy-field' },
         h('code', {}, value),
@@ -1266,6 +1341,7 @@ function settingsView() {
             const control = segmentedControl('Breakdown style', Object.entries(DEPTH_INFO).map(([key, info]) => [key, info.label]), settings.depth, (key) => {
                 saveSettings({ ...getSettings(), depth: key });
                 detail.textContent = DEPTH_INFO[key].detail;
+                syncPreferences();
             });
             return h('div', { class: 'card' }, control, detail, h('p', { class: 'small muted', style: { margin: '8px 2px 0' } }, 'Any note can be re-done in depth later from its ••• menu.'));
         })(),
@@ -1343,7 +1419,7 @@ function settingsView() {
 
         h('div', { class: 'section-label' }, 'Save from the Share button'),
         h('div', { class: 'card' },
-            h('p', { class: 'small muted' }, 'iPhone doesn\'t let web apps appear in the Share menu, so a Shortcut sends links to your AidedMind inbox. They\'re broken down the next time you open the app.'),
+            h('p', { class: 'small muted' }, 'iPhone doesn\'t let web apps appear in the Share menu, so a Shortcut sends links to AidedMind. They\'re broken down right away, even with the app closed; open the app to see them.'),
             h('ol', { class: 'steps' },
                 h('li', {}, 'Open ', h('b', {}, 'Shortcuts'), ', tap ', h('b', {}, '+'), ', and name it ', h('b', {}, 'Save to AidedMind'), '.'),
                 h('li', {}, 'Tap the ', h('b', {}, 'ⓘ'), ' button, turn on ', h('b', {}, 'Show in Share Sheet'), ', and set it to receive ', h('b', {}, 'URLs'), ' and ', h('b', {}, 'Text'), '.'),
@@ -1353,6 +1429,21 @@ function settingsView() {
                 h('li', {}, 'Add ', h('b', {}, 'Show Notification'), ' and set its text to the ', h('b', {}, 'Contents of URL'), ' variable, so you see the server\'s real reply (including any error) instead of a fixed message.')
             ),
             h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'Now in TikTok, YouTube or Safari: Share → Save to AidedMind.')
+        ),
+
+        h('div', { class: 'section-label' }, 'Paywalled articles'),
+        h('div', { class: 'card' },
+            h('p', { class: 'small muted' }, 'AidedMind\'s server isn\'t logged in as you, so on a paywalled site it only sees the free opening (the note says so). A second Shortcut reads the page from your own Safari, where you are logged in, and sends its text instead.'),
+            h('ol', { class: 'steps' },
+                h('li', {}, 'In Shortcuts tap ', h('b', {}, '+'), ' and name it ', h('b', {}, 'Save Page to AidedMind'), '.'),
+                h('li', {}, 'Tap ', h('b', {}, 'ⓘ'), ', turn on ', h('b', {}, 'Show in Share Sheet'), ', and set it to receive ', h('b', {}, 'Safari web pages'), ' only.'),
+                h('li', {}, 'Add ', h('b', {}, 'Run JavaScript on Web Page'), ' and paste this script:', copyField(PAGE_SCRIPT, 'Script')),
+                h('li', {}, 'Add ', h('b', {}, 'Get Contents of URL'), ' with the same inbox URL, Method ', h('b', {}, 'POST'), ':', copyField(inboxUrl, 'Inbox URL')),
+                h('li', {}, 'Under Headers add ', h('b', {}, 'X-AidedMind-Token'), ' with your token, and ', h('b', {}, 'Content-Type'), ' = ', h('b', {}, 'application/json'), '.'),
+                h('li', {}, 'Set Request Body to ', h('b', {}, 'File'), ' and choose the ', h('b', {}, 'JavaScript Result'), ' from step 3.'),
+                h('li', {}, 'Add ', h('b', {}, 'Show Notification'), ' with the ', h('b', {}, 'Contents of URL'), '.')
+            ),
+            h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'Now, on the article in Safari (logged in): Share → Save Page to AidedMind. Shared from another app, a paywalled note can still be completed later: open it, tap ••• → Paste the full article.')
         ),
 
         !isStandalone() ? [
@@ -1484,9 +1575,57 @@ function refreshInboxViews(notesChanged = false) {
     if ((onNote && notesChanged) || location.hash.startsWith('#/library') || location.hash === '' || location.hash === '#/') route();
 }
 
-// Pulls links saved by the iOS Shortcut and breaks each one down. A link the
-// server can never read is kept locally with its reason (retry or remove it
-// from the Library); a temporary failure stays in the inbox for next time.
+// Shared links are broken down on the server as soon as they arrive. When the
+// app opens it collects the finished notes; anything the server couldn't
+// finish is done here, as before. A link the server can never read is kept
+// locally with its reason (retry or remove it from the Library); a temporary
+// failure stays in the inbox for next time.
+const STALL_MS = 10 * 60 * 1000;
+let inboxPollTimer;
+
+// What the app should do with an inbox item right now.
+function inboxAction(item) {
+    if (item.status === 'done' && item.result) return 'import';
+    if (item.status === 'failed') return item.errorKind === 'retry_in_app' ? 'foreground' : 'report';
+    if (!item.queued) return 'foreground'; // shared before the server worked in the background
+    return Date.now() - new Date(item.receivedAt).getTime() > STALL_MS ? 'foreground' : 'wait';
+}
+
+function recordFailedShare(item, message) {
+    saveFailedShares([...failedShares().filter((f) => f.id !== item.id), {
+        id: item.id, url: item.url, text: item.text, title: item.title, error: message, at: new Date().toISOString()
+    }]);
+}
+
+// Adds a note the server finished. The server doesn't have your library, so
+// links to your other notes are worked out now (one small call).
+async function importFinished(item) {
+    const { source, analysis, model, depth, auto } = item.result;
+    const previous = findDuplicate(notes, source.url, item.url, source.sharedUrl);
+    if (previous && !previous.source?.partial) return 'duplicate';
+    const others = notes.filter((n) => n.id !== previous?.id);
+    let connections = [];
+    if (others.length) {
+        try {
+            connections = await suggestConnections(analysis, source, others);
+        } catch {
+            connections = []; // the note is still worth adding without links
+        }
+    }
+    await finishNote({ source, analysis: { ...analysis, connections }, model, depth, auto, replaces: previous?.id || null });
+    return 'saved';
+}
+
+function scheduleInboxPoll() {
+    clearTimeout(inboxPollTimer);
+    // Only links still being worked on; ones that failed here wait for you.
+    if (!inbox.pending.some((item) => !inbox.errors.has(item.id))) return;
+    inboxPollTimer = setTimeout(() => {
+        if (document.visibilityState === 'visible') drainInbox();
+        else scheduleInboxPoll();
+    }, 20000);
+}
+
 async function drainInbox({ manual = false } = {}) {
     if (inboxRunning) return;
     if (!getSettings().token) {
@@ -1500,36 +1639,50 @@ async function drainInbox({ manual = false } = {}) {
     try {
         inbox.checkError = '';
         const items = await fetchInbox();
-        inbox.pending = items;
+        inbox.pending = items.filter((item) => inboxAction(item) === 'wait');
         inbox.checkedAt = Date.now();
+        const work = items.filter((item) => inboxAction(item) !== 'wait');
         if (!items.length && manual) toast('No shared links waiting');
-        for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            setBanner([h('div', { class: 'pulse' }, icon('inbox', { size: 16 })), h('span', {}, `Breaking down ${items.length > 1 ? `${i + 1} of ${items.length} shared links` : 'your shared link'}…`)]);
+        else if (!work.length && inbox.pending.length && manual) toast('Still being broken down. It will appear here when it\'s ready.');
+        for (let i = 0; i < work.length; i++) {
+            const item = work[i];
+            const action = inboxAction(item);
+            setBanner([h('div', { class: 'pulse' }, icon('inbox', { size: 16 })), h('span', {}, `Adding ${work.length > 1 ? `${i + 1} of ${work.length} shared links` : 'your shared link'}…`)]);
+            if (action === 'report') {
+                // The server tried and won't get anywhere; say why instead of retrying forever.
+                recordFailedShare(item, item.error || 'This link couldn\'t be broken down.');
+                await removeInboxItem(item.id).catch(() => {});
+                failed++;
+                continue;
+            }
             try {
-                await runCapture({ input: [item.url, item.text].filter(Boolean).join(' '), title: item.title });
+                if (action === 'import') {
+                    if (item.result.duplicate || await importFinished(item) === 'duplicate') already++;
+                    else saved++;
+                } else {
+                    // A page you captured yourself (or a link shared before): skip what's already saved.
+                    const saved_ = item.url && findDuplicate(notes, item.url);
+                    if (saved_ && !saved_.source?.partial) throw new DuplicateError(saved_);
+                    await runCapture(item.text ? { url: item.url, text: item.text, title: item.title } : { input: item.url, title: item.title });
+                    saved++;
+                }
                 await removeInboxItem(item.id);
                 inbox.errors.delete(item.id);
-                inbox.pending = inbox.pending.filter((p) => p.id !== item.id);
-                saved++;
             } catch (error) {
                 if (error instanceof DuplicateError) {
                     await removeInboxItem(item.id).catch(() => {});
                     inbox.errors.delete(item.id);
-                    inbox.pending = inbox.pending.filter((p) => p.id !== item.id);
                     already++;
                     continue;
                 }
                 failed++;
                 const permanent = error.status && error.status < 500 && ![401, 402, 403, 429].includes(error.status);
                 if (permanent) {
-                    saveFailedShares([...failedShares().filter((f) => f.id !== item.id), {
-                        id: item.id, url: item.url, text: item.text, title: item.title, error: error.message, at: new Date().toISOString()
-                    }]);
+                    recordFailedShare(item, error.message);
                     await removeInboxItem(item.id).catch(() => {});
-                    inbox.pending = inbox.pending.filter((p) => p.id !== item.id);
                 } else {
                     inbox.errors.set(item.id, error.message);
+                    inbox.pending.push(item);
                     if (error.status === 401 || error.status === 402) break;
                 }
             }
@@ -1540,6 +1693,7 @@ async function drainInbox({ manual = false } = {}) {
     } finally {
         inboxRunning = false;
         setBanner(null);
+        scheduleInboxPoll();
         if (saved || already) {
             toast([
                 saved ? `${saved} shared link${saved === 1 ? '' : 's'} added` : '',
@@ -1576,8 +1730,10 @@ function sharedItemsSection() {
         h('div', { class: 'group' },
             inbox.checkError ? h('div', { class: 'group-body small error' }, `Couldn't check your inbox: ${inbox.checkError}`) : null,
             waiting.map((item) => row(item,
-                inbox.errors.has(item.id) ? { text: `Will retry: ${inbox.errors.get(item.id)}`, error: true } : { text: 'Waiting to be broken down' },
-                [h('button', { type: 'button', class: 'btn small-btn', onclick: () => drainInbox({ manual: true }) }, 'Try now')]
+                inbox.errors.has(item.id) ? { text: `Will retry: ${inbox.errors.get(item.id)}`, error: true }
+                    : item.error ? { text: `Trying again: ${item.error}` }
+                        : { text: item.status === 'processing' ? 'Being broken down…' : 'Queued. It\'s broken down in the background' },
+                [h('button', { type: 'button', class: 'btn small-btn', onclick: () => drainInbox({ manual: true }) }, 'Check now')]
             )),
             failed.map((item) => row(item, { text: item.error, error: true }, [
                 h('button', {
@@ -1592,7 +1748,7 @@ function sharedItemsSection() {
                 h('button', { type: 'button', class: 'btn small-btn', onclick: () => { removeFailedShare(item.id); route(); } }, 'Remove')
             ]))
         ),
-        failed.length ? h('p', { class: 'group-footer' }, 'If a site keeps refusing, open it, copy the text, and paste it on the Add tab.') : null
+        failed.length ? h('p', { class: 'group-footer' }, 'For paywalled or login-only pages, use the Save Page shortcut from Safari (Settings), or copy the text and paste it on the Add tab.') : null
     ];
 }
 
@@ -1675,6 +1831,7 @@ async function start() {
     if (!getSettings().token && !location.hash.startsWith('#/settings')) {
         toast('Connect your server in Settings to start');
     }
+    syncPreferences();
     drainInbox().then(() => {
         if (getLastUsage()?.limit === null) backfillTopics();
     });

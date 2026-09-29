@@ -49,7 +49,7 @@ const LENGTH_GUIDE = {
     thorough: 'Go deeper where the source warrants it: up to 7 summary sections of 2-4 sentences each, an outline of up to about 25 items, up to 10 concepts.'
 };
 
-const DEPTH_CHOICES = [...Object.keys(DEPTHS), 'auto'];
+export const DEPTH_CHOICES = [...Object.keys(DEPTHS), 'auto'];
 
 export function resolveDepth(depth, env = {}, source = {}) {
     let requested = DEPTH_CHOICES.includes(depth) ? depth
@@ -208,7 +208,11 @@ function buildUserContent(source, library, depth = 'balanced', { concepts = [], 
         source.title ? `Title: ${source.title}` : null,
         source.author ? `Author: ${source.author}` : null,
         source.url ? `URL: ${source.url}` : null,
-        source.partial ? 'Note: only the caption/description was available, not the full spoken content.' : null
+        source.partial
+            ? (source.transcriptSource === 'paywall'
+                ? 'Note: this article is behind a paywall and only its opening was available.'
+                : 'Note: only the caption/description was available, not the full spoken content.')
+            : null
     ].filter(Boolean).join('\n');
 
     const images = Array.isArray(source.images) ? source.images : [];

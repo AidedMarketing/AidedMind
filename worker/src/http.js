@@ -44,3 +44,7 @@ export function randomToken(bytes = 24) {
     const raw = crypto.getRandomValues(new Uint8Array(bytes));
     return btoa(String.fromCharCode(...raw)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
+
+export function currentMonth(date = new Date()) {
+    return date.toISOString().slice(0, 7);
+}

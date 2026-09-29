@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import http from 'node:http';
 import { StoreCore } from '../src/store-core.js';
 
-function sqlAdapter(db) {
+export function sqlAdapter(db) {
     return {
         exec(query, ...bindings) {
             const statement = db.prepare(query);

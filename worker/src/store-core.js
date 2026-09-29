@@ -6,6 +6,20 @@ const INBOX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const INBOX_MAX = 200;
 const MAX_TEXT = 600000;
 
+// Columns added to the inbox after it first shipped; existing tables get them
+// on first use. `queued` marks items the server processes in the background
+// (older rows are 0 and are still handled by the app when it opens).
+const INBOX_COLUMNS = {
+    status: "TEXT NOT NULL DEFAULT 'pending'",
+    queued: 'INTEGER NOT NULL DEFAULT 0',
+    attempts: 'INTEGER NOT NULL DEFAULT 0',
+    next_attempt_at: "TEXT NOT NULL DEFAULT ''",
+    error: "TEXT NOT NULL DEFAULT ''",
+    error_kind: "TEXT NOT NULL DEFAULT ''",
+    result: "TEXT NOT NULL DEFAULT ''",
+    quota_limit: 'INTEGER NOT NULL DEFAULT -1'
+};
+
 export class StoreCore {
     constructor(sql) {
         this.sql = sql;
@@ -23,6 +37,14 @@ export class StoreCore {
             text TEXT NOT NULL DEFAULT '',
             title TEXT NOT NULL DEFAULT '',
             received_at TEXT NOT NULL
+        )`);
+        const have = new Set(sql.exec('PRAGMA table_info(inbox)').toArray().map((column) => column.name));
+        Object.entries(INBOX_COLUMNS).forEach(([name, definition]) => {
+            if (!have.has(name)) sql.exec(`ALTER TABLE inbox ADD COLUMN ${name} ${definition}`);
+        });
+        sql.exec(`CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         )`);
         sql.exec(`CREATE TABLE IF NOT EXISTS transcripts (
             key TEXT PRIMARY KEY,
@@ -74,34 +96,110 @@ export class StoreCore {
     }
 
     // ----- inbox -----
+    //
+    // A shared link is queued for the server to break down while the app is
+    // closed: pending → processing → done (the finished note waits here until
+    // the app collects it) or failed. `queued` items with a limit of null
+    // are unlimited (owner and unlimited plans).
 
-    inboxAdd({ url, text, title }) {
+    inboxAdd({ url, text, title }, { limit = null, queue = true } = {}) {
         const clean = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
+        const now = new Date().toISOString();
         const item = {
             id: crypto.randomUUID(),
             url: clean(url, 4096),
             text: clean(text, MAX_TEXT),
             title: clean(title, 300),
-            received_at: new Date().toISOString()
+            received_at: now
         };
         if (!item.url && !item.text) return null;
-        this.sql.exec('INSERT INTO inbox (id, url, text, title, received_at) VALUES (?, ?, ?, ?, ?)',
-            item.id, item.url, item.text, item.title, item.received_at);
+        this.sql.exec(`INSERT INTO inbox (id, url, text, title, received_at, status, queued, next_attempt_at, quota_limit)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        item.id, item.url, item.text, item.title, now, queue ? 1 : 0, now, limit === null ? -1 : Number(limit));
         this.sql.exec(`DELETE FROM inbox WHERE id NOT IN (SELECT id FROM inbox ORDER BY received_at DESC LIMIT ${INBOX_MAX})`);
-        return item;
+        return { ...item, status: 'pending', queued: Boolean(queue) };
     }
 
     inboxList() {
         const cutoff = new Date(Date.now() - INBOX_TTL_MS).toISOString();
         this.sql.exec('DELETE FROM inbox WHERE received_at < ?', cutoff);
-        return this.rows('SELECT id, url, text, title, received_at FROM inbox ORDER BY received_at')
-            .map((row) => ({ id: row.id, url: row.url, text: row.text, title: row.title, receivedAt: row.received_at }));
+        return this.rows('SELECT * FROM inbox ORDER BY received_at').map((row) => {
+            let result = null;
+            if (row.status === 'done' && row.result) {
+                try {
+                    result = JSON.parse(row.result);
+                } catch {
+                    result = null;
+                }
+            }
+            return {
+                id: row.id,
+                url: row.url,
+                // A finished item's input is no longer needed.
+                text: row.status === 'done' ? '' : row.text,
+                title: row.title,
+                receivedAt: row.received_at,
+                queued: row.queued === 1,
+                status: row.status === 'done' && !result ? 'failed' : row.status,
+                attempts: row.attempts,
+                error: row.error,
+                errorKind: row.error_kind,
+                result
+            };
+        });
     }
 
     inboxRemove(id) {
         const before = this.rows('SELECT COUNT(*) AS n FROM inbox WHERE id = ?', id)[0].n;
         this.sql.exec('DELETE FROM inbox WHERE id = ?', id);
         return before > 0;
+    }
+
+    // Takes the oldest queued item that is due and marks it in progress. The
+    // "lease" keeps another run from taking it, and expires if this one dies.
+    inboxClaim(nowMs, leaseMs) {
+        const now = new Date(nowMs).toISOString();
+        const [row] = this.rows(`SELECT id, url, text, title, attempts, quota_limit FROM inbox
+            WHERE queued = 1 AND status IN ('pending', 'processing') AND next_attempt_at <= ?
+            ORDER BY received_at LIMIT 1`, now);
+        if (!row) return null;
+        this.sql.exec("UPDATE inbox SET status = 'processing', attempts = attempts + 1, next_attempt_at = ? WHERE id = ?",
+            new Date(nowMs + leaseMs).toISOString(), row.id);
+        return { id: row.id, url: row.url, text: row.text, title: row.title, attempts: row.attempts + 1, quotaLimit: row.quota_limit < 0 ? null : row.quota_limit };
+    }
+
+    // When the next queued item is due (ms since epoch), or null.
+    inboxNextDue() {
+        const [row] = this.rows("SELECT MIN(next_attempt_at) AS due FROM inbox WHERE queued = 1 AND status IN ('pending', 'processing')");
+        return row?.due ? new Date(row.due).getTime() : null;
+    }
+
+    inboxComplete(id, result) {
+        this.sql.exec("UPDATE inbox SET status = 'done', result = ?, text = '', error = '', error_kind = '' WHERE id = ?", JSON.stringify(result), id);
+    }
+
+    inboxRetry(id, atMs, error) {
+        this.sql.exec("UPDATE inbox SET status = 'pending', next_attempt_at = ?, error = ? WHERE id = ?", new Date(atMs).toISOString(), String(error || '').slice(0, 300), id);
+    }
+
+    inboxFail(id, { error, kind }) {
+        this.sql.exec("UPDATE inbox SET status = 'failed', error = ?, error_kind = ? WHERE id = ?", String(error || '').slice(0, 300), kind || 'permanent', id);
+    }
+
+    // ----- small settings the app syncs (breakdown style, known names) -----
+
+    metaGet(key) {
+        const [row] = this.rows('SELECT value FROM meta WHERE key = ?', key);
+        if (!row) return null;
+        try {
+            return JSON.parse(row.value);
+        } catch {
+            return null;
+        }
+    }
+
+    metaSet(key, value) {
+        this.sql.exec('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, JSON.stringify(value));
     }
 
     // ----- transcript cache (so a retried link never pays twice) -----

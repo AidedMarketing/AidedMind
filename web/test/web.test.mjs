@@ -3,7 +3,8 @@ import assert from 'node:assert';
 import { buildGraph } from '../js/graph.js';
 import { toMarkdown, fileName } from '../js/markdown.js';
 import { splitInput } from '../js/api.js';
-import { relatedNotes, conceptVocabulary, canonicalUrl, findDuplicate } from '../js/library.js';
+import { relatedNotes, conceptVocabulary, canonicalUrl, findDuplicate, urlHash, knownUrlHashes } from '../js/library.js';
+import { sourceTypeForUrl } from '../js/api.js';
 
 const notes = [
     { id: 'a', title: 'Spacing effect', source: { sourceType: 'article' }, concepts: [{ name: 'Memory' }], connections: [{ noteId: 'b', relation: 'supports', reason: 'r' }], tags: ['learning'], createdAt: '2026-01-01', tldr: 't' },
@@ -122,4 +123,50 @@ test('map nodes carry their theme and color', async () => {
     assert.strictEqual(a.theme, 'sleep');
     assert.strictEqual(a.themeColor, themes.themes[0].color);
     assert.strictEqual(graph.nodes.find((n) => n.id === 'c').theme, null);
+});
+
+test('link fingerprints ignore tracking and leave out partial notes', async () => {
+    assert.strictEqual(await urlHash('https://www.example.com/a/?utm_source=x'), await urlHash('https://example.com/a'));
+    assert.match(await urlHash('https://example.com/a'), /^[0-9a-f]{16}$/);
+    assert.strictEqual(await urlHash('not a link'), '');
+    const hashes = await knownUrlHashes([
+        { source: { url: 'https://example.com/a', sharedUrl: 'https://vm.tiktok.com/x' } },
+        { source: { url: 'https://example.com/b', partial: true } },
+        { source: { url: 'https://example.com/a' } }
+    ]);
+    assert.strictEqual(hashes.length, 2);
+    assert.ok(hashes.includes(await urlHash('https://example.com/a')));
+    assert.ok(!hashes.includes(await urlHash('https://example.com/b')));
+});
+
+test('source type follows the link', () => {
+    assert.strictEqual(sourceTypeForUrl('https://www.youtube.com/watch?v=abc'), 'youtube');
+    assert.strictEqual(sourceTypeForUrl('https://youtu.be/abc'), 'youtube');
+    assert.strictEqual(sourceTypeForUrl('https://vm.tiktok.com/ZM1/'), 'tiktok');
+    assert.strictEqual(sourceTypeForUrl('https://example.com/post'), 'article');
+    assert.strictEqual(sourceTypeForUrl(''), 'text');
+});
+
+test('optional children are filtered before replaceChildren', async () => {
+    // replaceChildren(null) renders the text "null": a call whose arguments
+    // include `: null` must filter its children.
+    const { readFile } = await import('node:fs/promises');
+    const app = await readFile(new URL('../js/app.js', import.meta.url), 'utf8');
+    let index = -1;
+    let checked = 0;
+    while ((index = app.indexOf('replaceChildren(', index + 1)) !== -1) {
+        let depth = 0;
+        let end = index + 'replaceChildren'.length;
+        do {
+            if (app[end] === '(') depth++;
+            if (app[end] === ')') depth--;
+            end++;
+        } while (depth > 0 && end < app.length);
+        const call = app.slice(index, end);
+        if (/:\s*null\b/.test(call)) {
+            checked++;
+            assert.match(call, /\.filter\(Boolean\)/, `unfiltered optional child: ${call.slice(0, 90)}`);
+        }
+    }
+    assert.ok(checked >= 1);
 });
