@@ -11,14 +11,14 @@ Adrian wants the Substack app's Share button → Save to AidedMind Shortcut to r
 - Main at the start of this work: `c10fe87` (PR #25). PR #24 improved Substack recovery; PR #23 shortened automatic throttling retries. Installed app shell version: 23. Backend-only fixes do not require a shell version bump.
 - App links normally provide a URL, not subscriber article text or the user's login session. Public article fetching can work from these links; paid content still needs text the user supplies.
 - `open.substack.com/pub/<publication>/p/<slug>` maps directly to the publication API/page. Direct publication links are supported too.
-- First attempt can try both public routes; later attempts alternate one API or page request. Respect Retry-After; stop after four throttled attempts (roughly 14 minutes without a longer publisher-requested delay).
+- First attempt can try both public routes; later attempts alternate API and page. An API returning 429 stops that attempt; a missing API or empty post can fall back to the page once. Respect Retry-After; stop after four throttled attempts (roughly 14 minutes without a longer publisher-requested delay).
 - Keep the saved item available for Add text / Try again. Safari text for a matching waiting Substack post attaches to the same item; short captures require review.
 - Try again resets attempts and refetches. It cannot guarantee that Substack has lifted a server-side limit.
 
 ## This change
 
 - Preserve a fallback API's 429 and Retry-After when a direct publication page returns a different failure such as 404.
-- An API-only retry no longer falls through to another page/API fetch when the API fails or returns no article body.
+- An API retry no longer repeats the API if its one page fallback also fails. Missing APIs and empty post responses still allow a readable public page to complete the share.
 - Regression coverage includes recovery to a completed note on the same inbox item, with no quota spent on failed reads.
 
 ## Verification and remaining checks

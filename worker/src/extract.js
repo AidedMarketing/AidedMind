@@ -344,10 +344,7 @@ async function extractArticle(rawUrl, { attempt = 1 } = {}) {
         const pageOnly = attempt > 1 && attempt % 2 === 1;
         const post = pageOnly ? null : await substackFallback(own);
         if (post && !post.error) return post;
-        if (apiOnly) {
-            if (post?.error) throw post.error;
-            throw new HttpError(422, 'Substack did not provide article text. Add text to this saved link.');
-        }
+        if (apiOnly && post?.error?.upstreamStatus === 429) throw post.error;
         rawUrl = own; // read the page on the newsletter's own address instead
         try {
             const page = await fetchPage(rawUrl);
@@ -366,8 +363,10 @@ async function extractArticle(rawUrl, { attempt = 1 } = {}) {
         if (attempt % 2 === 0) {
             const post = await substackFallback(rawUrl);
             if (post && !post.error) return post;
-            if (post?.error) throw post.error;
-            throw new HttpError(422, 'Substack did not provide article text. Add text to this saved link.');
+            if (post?.error?.upstreamStatus === 429) throw post.error;
+            // A missing API or empty post can still have a readable page.
+            // Try it once, without falling into the generic API fallback below.
+            return articleFromPage(await fetchPage(rawUrl));
         } else {
             return articleFromPage(await fetchPage(rawUrl));
         }

@@ -192,7 +192,7 @@ test('a direct publication link preserves a throttled API when its page is missi
     });
 });
 
-test('an API-only retry does not repeat a missing API or request another route', async (t) => {
+test('an API retry can fall back to the page without repeating a missing API', async (t) => {
     const real = globalThis.fetch;
     t.after(() => { globalThis.fetch = real; });
     const seen = [];
@@ -203,21 +203,23 @@ test('an API-only retry does not repeat a missing API or request another route',
     for (const url of ['https://writer.substack.com/p/story', 'https://open.substack.com/pub/writer/p/story']) {
         await assert.rejects(fetchSource(url, { attempt: 2 }), (error) => error.upstreamStatus === 404);
     }
-    assert.deepStrictEqual(seen, Array(2).fill('https://writer.substack.com/api/v1/posts/story'));
+    assert.deepStrictEqual(seen, Array(2).fill(['https://writer.substack.com/api/v1/posts/story', 'https://writer.substack.com/p/story']).flat());
 });
 
-test('an API-only retry with no article body stops without extra fetches', async (t) => {
+test('an API retry with no article body can still recover from a readable page', async (t) => {
     const real = globalThis.fetch;
     t.after(() => { globalThis.fetch = real; });
     const seen = [];
     globalThis.fetch = async (input) => {
         seen.push(String(input));
-        return new Response(JSON.stringify({ title: 'Story' }), { headers: { 'content-type': 'application/json' } });
+        return String(input).includes('/api/v1/posts/')
+            ? new Response(JSON.stringify({ title: 'Story' }), { headers: { 'content-type': 'application/json' } })
+            : new Response('<html><article><p>Public article text.</p></article></html>', { headers: { 'content-type': 'text/html' } });
     };
     for (const url of ['https://writer.substack.com/p/story', 'https://open.substack.com/pub/writer/p/story']) {
-        await assert.rejects(fetchSource(url, { attempt: 2 }), (error) => error.status === 422);
+        assert.match((await fetchSource(url, { attempt: 2 })).html, /Public article text/);
     }
-    assert.deepStrictEqual(seen, Array(2).fill('https://writer.substack.com/api/v1/posts/story'));
+    assert.deepStrictEqual(seen, Array(2).fill(['https://writer.substack.com/api/v1/posts/story', 'https://writer.substack.com/p/story']).flat());
 });
 
 test('site problems are explained in plain words, with no status codes', async (t) => {
