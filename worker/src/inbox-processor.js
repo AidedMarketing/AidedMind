@@ -95,7 +95,9 @@ function fail(core, item, error, nowMs) {
         return core.inboxFail(item.id, { error: message, kind: 'permanent' });
     }
     if (item.attempts < MAX_ATTEMPTS) {
-        return core.inboxRetry(item.id, nowMs + RETRY_DELAYS_MS[item.attempts - 1], message);
+        // A site that says "too many requests" needs longer to cool off.
+        const slowDown = error.upstreamStatus === 429 ? 2 : 1;
+        return core.inboxRetry(item.id, nowMs + RETRY_DELAYS_MS[item.attempts - 1] * slowDown, message);
     }
     return core.inboxFail(item.id, { error: message, kind: 'retry_in_app' });
 }
