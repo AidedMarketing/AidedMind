@@ -135,6 +135,50 @@ test('a throttled substack share link is read from the newsletter\'s own address
     assert.ok(!seen.some((u) => u.startsWith('https://open.substack.com')), 'the throttled address is never touched');
 });
 
+test('an app share can use the public page when its post API is throttled', async (t) => {
+    const real = globalThis.fetch;
+    t.after(() => { globalThis.fetch = real; });
+    const seen = [];
+    globalThis.fetch = async (input) => {
+        seen.push(String(input));
+        return String(input).includes('/api/v1/posts/')
+            ? new Response('slow down', { status: 429 })
+            : new Response('<html><article><h1>Story</h1><p>Public article text.</p></article></html>', { headers: { 'content-type': 'text/html' } });
+    };
+    const source = await fetchSource('https://open.substack.com/pub/writer/p/story');
+    assert.match(source.html, /Public article text/);
+    assert.deepStrictEqual(seen, ['https://writer.substack.com/api/v1/posts/story', 'https://writer.substack.com/p/story']);
+});
+
+test('a throttled post API remains retryable if the page also cannot be read', async (t) => {
+    const real = globalThis.fetch;
+    t.after(() => { globalThis.fetch = real; });
+    globalThis.fetch = async (input) => String(input).includes('/api/v1/posts/')
+        ? new Response('slow down', { status: 429, headers: { 'Retry-After': '180' } })
+        : new Response('not found', { status: 404 });
+    await assert.rejects(fetchSource('https://open.substack.com/pub/writer/p/story'), (error) => {
+        assert.strictEqual(error.upstreamStatus, 429);
+        assert.strictEqual(error.retryAfterMs, 180000);
+        return true;
+    });
+});
+
+test('direct publication links also make only one request per rate-limit retry', async (t) => {
+    const real = globalThis.fetch;
+    t.after(() => { globalThis.fetch = real; });
+    const seen = [];
+    globalThis.fetch = async (input) => {
+        seen.push(String(input));
+        return new Response('slow down', { status: 429 });
+    };
+    const url = 'https://writer.substack.com/p/story';
+    for (const attempt of [1, 2, 3]) {
+        await assert.rejects(fetchSource(url, { attempt }), (error) => error.upstreamStatus === 429);
+    }
+    assert.deepStrictEqual(seen, [url, 'https://writer.substack.com/api/v1/posts/story',
+        'https://writer.substack.com/api/v1/posts/story', url]);
+});
+
 test('site problems are explained in plain words, with no status codes', async (t) => {
     const real = globalThis.fetch;
     t.after(() => { globalThis.fetch = real; });

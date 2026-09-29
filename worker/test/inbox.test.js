@@ -109,6 +109,33 @@ test('page text sent with the link (from your own Safari) is used as is, no fetc
     assert.match(source.text, /logged-in article/);
 });
 
+test('Safari text completes the same waiting Substack app share without another fetch', async (t) => {
+    const { env, core } = await setup(t);
+    const calls = mockFetch(t, {});
+    const first = core.inboxAdd({ url: 'https://open.substack.com/pub/writer/p/story?r=share' });
+    core.inboxFail(first.id, { error: 'Substack is limiting reads.', kind: 'retry_in_app' });
+    const safari = core.inboxAdd({ url: 'https://writer.substack.com/p/story?utm_source=browser',
+        title: 'Story', text: 'The complete article. '.repeat(250),
+        capture: { kind: 'safari', words: 750, images: 0, review: false } });
+    assert.strictEqual(safari.id, first.id);
+    assert.strictEqual(core.inboxList().length, 1);
+    await processInbox(core, env);
+    assert.deepStrictEqual(calls, []);
+    assert.strictEqual(only(core).status, 'done');
+    assert.strictEqual(only(core).result.source.captureKind, 'safari');
+    assert.strictEqual(only(core).result.source.url, first.url);
+});
+
+test('a short Safari capture on a waiting Substack share still needs review', async (t) => {
+    const { stub, env, core } = await setup(t);
+    const first = core.inboxAdd({ url: 'https://open.substack.com/pub/writer/p/story' });
+    core.inboxAdd({ url: 'https://writer.substack.com/p/story', text: 'Please subscribe to continue.',
+        capture: { kind: 'safari', words: 5, review: true } });
+    await processInbox(core, env);
+    assert.deepStrictEqual([only(core).id, only(core).errorKind], [first.id, 'needs_review']);
+    assert.strictEqual(stub.requests.length, 0);
+});
+
 test('short Safari capture waits for review before any model call or quota', async (t) => {
     const { stub, env, core } = await setup(t);
     const text = 'A short opening paragraph about habits. '.repeat(7);
@@ -198,12 +225,12 @@ test('site rate limits expose the next retry, then keep the same link available 
     assert.strictEqual(only(core).status, 'done');
 });
 
-test('a Substack app share stops the long rate-limit wait and avoids repeat API calls', async (t) => {
+test('a Substack app share uses both public routes once, then one per spaced retry', async (t) => {
     const { env, core } = await setup(t);
     const api = 'https://writer.substack.com/api/v1/posts/story';
     const pageUrl = 'https://writer.substack.com/p/story';
     const calls = mockFetch(t, {
-        [api]: () => new Response('slow down', { status: 429 }),
+        [api]: () => new Response('slow down', { status: 429, headers: { 'Retry-After': '300' } }),
         [pageUrl]: () => new Response('slow down', { status: 429 })
     });
     const saved = core.inboxAdd({ url: 'https://open.substack.com/pub/writer/p/story' });
@@ -213,11 +240,12 @@ test('a Substack app share stops the long rate-limit wait and avoids repeat API 
         const item = only(core);
         assert.strictEqual(item.id, saved.id);
         assert.strictEqual(item.attempts, attempt);
-        assert.deepStrictEqual(calls.slice(-2), [api, pageUrl], 'one API and one page request per attempt');
+        assert.deepStrictEqual(calls, [api, pageUrl, ...[api, pageUrl, api].slice(0, attempt - 1)]);
         if (attempt === SUBSTACK_RATE_LIMIT_MAX_ATTEMPTS) {
             assert.deepStrictEqual([item.status, item.errorKind], ['failed', 'retry_in_app']);
         } else {
             assert.strictEqual(item.status, 'pending');
+            if (attempt <= 2) assert.ok(new Date(item.nextRetryAt).getTime() - now >= 300000, 'respects Retry-After');
             now = new Date(item.nextRetryAt).getTime() + 1000;
         }
     }

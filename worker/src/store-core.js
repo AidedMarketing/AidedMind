@@ -6,6 +6,22 @@ const INBOX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const INBOX_MAX = 200;
 const MAX_TEXT = 600000;
 
+function substackPostKey(rawUrl) {
+    try {
+        const url = new URL(rawUrl);
+        const host = url.hostname.toLowerCase();
+        if (host === 'open.substack.com') {
+            const match = url.pathname.match(/^\/pub\/([\w-]+)\/p\/([\w-]+)\/?$/i);
+            return match ? `${match[1].toLowerCase()}/${match[2].toLowerCase()}` : '';
+        }
+        const match = url.pathname.match(/^\/p\/([\w-]+)\/?$/i);
+        const publication = host.match(/^([\w-]+)\.substack\.com$/);
+        return match && publication ? `${publication[1]}/${match[1].toLowerCase()}` : '';
+    } catch {
+        return '';
+    }
+}
+
 // Columns added to the inbox after it first shipped; existing tables get them
 // on first use. `queued` marks items the server processes in the background
 // (older rows are 0 and are still handled by the app when it opens).
@@ -120,6 +136,20 @@ export class StoreCore {
             images: Math.min(200, Math.max(0, Number(capture.images) || 0)),
             review: Boolean(capture.review && item.text)
         } : {};
+        // A link shared from the Substack app may be waiting for access. If
+        // Safari later supplies the article text, finish that same item.
+        if (item.text && item.url && meta.kind === 'safari') {
+            const key = substackPostKey(item.url);
+            if (key) {
+                const waiting = this.rows("SELECT id, url FROM inbox WHERE status IN ('pending', 'failed') AND text = '' ORDER BY received_at DESC LIMIT 100");
+                const match = waiting.find((row) => substackPostKey(row.url) === key);
+                if (match) {
+                    this.sql.exec("UPDATE inbox SET text = ?, title = CASE WHEN ? = '' THEN title ELSE ? END, received_at = ?, status = 'pending', attempts = 0, next_attempt_at = ?, capture_meta = ?, capture_confirmed = 0, error = '', error_kind = '' WHERE id = ?",
+                        item.text, item.title, item.title, now, now, JSON.stringify(meta), match.id);
+                    return { ...item, id: match.id, url: match.url, status: 'pending', queued: Boolean(queue) };
+                }
+            }
+        }
         this.sql.exec(`INSERT INTO inbox (id, url, text, title, received_at, status, queued, next_attempt_at, quota_limit, capture_meta)
             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
         item.id, item.url, item.text, item.title, now, queue ? 1 : 0, now, limit === null ? -1 : Number(limit), JSON.stringify(meta));

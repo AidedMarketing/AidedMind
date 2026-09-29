@@ -41,6 +41,7 @@ async function buildSource(core, env, item, month) {
             captureKind: capture.kind || 'pasted', imageCount: capture.images || 0 };
     }
     const fetched = await fetchSource(item.url, {
+        attempt: item.attempts,
         env,
         cacheGet: (key) => core.transcriptGet(key),
         cachePut: (key, source) => core.transcriptPut(key, source),
@@ -113,7 +114,10 @@ function fail(core, item, error, nowMs) {
             || /^https?:\/\/[^/]+\.substack\.com\//i.test(item.url);
         const maxAttempts = substackShare ? SUBSTACK_RATE_LIMIT_MAX_ATTEMPTS : RATE_LIMIT_MAX_ATTEMPTS;
         if (item.attempts < maxAttempts) {
-            const delay = Math.min(PROVIDER_RETRY_MAX_MS, 2 * 60 * 1000 * 2 ** (item.attempts - 1));
+            const delay = Math.max(
+                Math.min(PROVIDER_RETRY_MAX_MS, 2 * 60 * 1000 * 2 ** (item.attempts - 1)),
+                error.retryAfterMs || 0
+            );
             return core.inboxRetry(item.id, nowMs + delay, message);
         }
         return core.inboxFail(item.id, { error: message, kind: 'retry_in_app' });
