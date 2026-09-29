@@ -56,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '22';
+const APP_VERSION = '23';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -1827,10 +1827,10 @@ function sharedItemsSection() {
                     : action === 'needs_text'
                     ? { text: `Needs article text. ${item.error || 'AidedMind could not read this link.'}`, error: true }
                     : action === 'attention'
-                        ? { text: `Automatic attempts stopped. ${item.error || 'AidedMind could not read the article.'} Add text or try again later.`, error: true }
+                        ? { text: `Automatic attempts stopped. ${item.error || 'AidedMind could not read the article.'} Open it in Safari and share the readable page with Save to AidedMind, or add text here.`, error: true }
                         : item.status === 'processing'
                             ? { text: 'Reading this article now…' }
-                            : { text: `${item.error ? `${item.error} ` : 'Saved. Waiting for breakdown. '}${retryTime(item)}${item.error?.includes('too many requests') ? ' You can add article text now if you can read it in the app.' : ''}` };
+                            : { text: `${item.error ? `${item.error} ` : 'Saved. Waiting for breakdown. '}${retryTime(item)}${item.error?.includes('too many requests') ? ' If you can read it in Safari, share that page with Save to AidedMind to finish this item now.' : ''}` };
                 const actions = action === 'needs_review'
                     ? [openArticle(item), reviewItem(item), removeItem(item)]
                     : action === 'attention'

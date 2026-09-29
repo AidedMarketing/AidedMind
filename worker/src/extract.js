@@ -78,6 +78,13 @@ export function describeUpstreamFailure(hostname, status) {
     return `${site} wouldn't let AidedMind read this page.`;
 }
 
+function retryAfterMs(value) {
+    if (!value) return 0;
+    const seconds = Number(value);
+    const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - Date.now();
+    return Number.isFinite(delay) && delay > 0 ? Math.min(delay, 24 * 60 * 60 * 1000) : 0;
+}
+
 export async function fetchPage(rawUrl, accept = 'text/html,application/xhtml+xml,*/*;q=0.8') {
     const url = assertPublicUrl(rawUrl);
     let response;
@@ -99,6 +106,7 @@ export async function fetchPage(rawUrl, accept = 'text/html,application/xhtml+xm
         console.warn(`fetch ${url.hostname} responded ${response.status}`);
         const error = new HttpError(502, describeUpstreamFailure(url.hostname, response.status));
         error.upstreamStatus = response.status;
+        if (response.status === 429) error.retryAfterMs = retryAfterMs(response.headers.get('retry-after'));
         throw error;
     }
     const finalUrl = response.url || url.toString();
@@ -321,17 +329,44 @@ async function substackFallback(rawUrl) {
             `${restricted ? '<meta name="article:content_tier" content="premium">' : ''}</head><body><article>` +
             `<h1>${escapeHtml(post.title)}</h1>${post.subtitle ? `<h2>${escapeHtml(post.subtitle)}</h2>` : ''}${post.body_html}</article></body></html>`;
         return { sourceType: 'article', url: post.canonical_url || rawUrl, html, restricted };
-    } catch {
-        return null;
+    } catch (error) {
+        return { error };
     }
 }
 
-async function extractArticle(rawUrl) {
+async function extractArticle(rawUrl, { attempt = 1 } = {}) {
     const own = substackPageUrl(rawUrl);
     if (own) {
-        const post = await substackFallback(own);
-        if (post) return post;
+        // On the first app share, try both public routes. Subsequent 429
+        // retries use one route at a time, alternating API and page, so four
+        // attempts do not turn into eight requests to the same publication.
+        const apiOnly = attempt > 1 && attempt % 2 === 0;
+        const pageOnly = attempt > 1 && attempt % 2 === 1;
+        const post = pageOnly ? null : await substackFallback(own);
+        if (post && !post.error) return post;
+        if (apiOnly && post?.error?.upstreamStatus === 429) throw post.error;
         rawUrl = own; // read the page on the newsletter's own address instead
+        try {
+            const page = await fetchPage(rawUrl);
+            return articleFromPage(page);
+        } catch (error) {
+            if (post?.error?.upstreamStatus === 429 && error.upstreamStatus !== 429) throw post.error;
+            if (post?.error?.retryAfterMs && error.upstreamStatus === 429) {
+                error.retryAfterMs = Math.max(error.retryAfterMs || 0, post.error.retryAfterMs);
+            }
+            throw error;
+        }
+    }
+    // The app can also share a publication URL directly. After its first
+    // attempt, use the same one-route retry policy as open.substack.com links.
+    if (attempt > 1 && /(?:^|\.)substack\.com$/i.test(new URL(rawUrl).hostname) && substackApiUrl(rawUrl)) {
+        if (attempt % 2 === 0) {
+            const post = await substackFallback(rawUrl);
+            if (post && !post.error) return post;
+            if (post?.error?.upstreamStatus === 429) throw post.error;
+        } else {
+            return articleFromPage(await fetchPage(rawUrl));
+        }
     }
     let page;
     try {
@@ -341,10 +376,17 @@ async function extractArticle(rawUrl) {
         // the same attempt only adds traffic while the publisher is throttling.
         if (error.upstreamStatus && !own) {
             const fallback = await substackFallback(rawUrl);
-            if (fallback) return fallback;
+            if (fallback && !fallback.error) return fallback;
+            if (fallback?.error?.retryAfterMs && error.upstreamStatus === 429) {
+                error.retryAfterMs = Math.max(error.retryAfterMs || 0, fallback.error.retryAfterMs);
+            }
         }
         throw error;
     }
+    return articleFromPage(page);
+}
+
+function articleFromPage(page) {
     const type = page.contentType.toLowerCase();
     if (type.includes('application/pdf')) throw new HttpError(415, 'PDF links are not supported yet. Paste the text instead.');
     if (type.startsWith('text/plain')) {
@@ -360,7 +402,7 @@ export async function fetchSource(url, deps) {
     switch (classifyUrl(trimmed)) {
         case 'youtube': return extractYouTube(trimmed, deps);
         case 'tiktok': return extractTikTok(trimmed, deps);
-        case 'article': return extractArticle(trimmed);
+        case 'article': return extractArticle(trimmed, deps);
         default: throw new HttpError(400, 'That does not look like a valid link.');
     }
 }
