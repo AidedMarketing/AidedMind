@@ -55,7 +55,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '17';
+const APP_VERSION = '18';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -1664,7 +1664,7 @@ async function drainInbox({ manual = false } = {}) {
         inbox.checkedAt = Date.now();
         const work = items.filter((item) => !['wait', 'needs_text'].includes(inboxAction(item)));
         if (!items.length && manual) toast('No shared links waiting');
-        else if (!work.length && inbox.pending.length && manual) toast('Shared links are waiting or need article text. See Shared links in Library.');
+        else if (!work.length && inbox.pending.length && manual) toast('No finished links yet. Open a saved article below or add text if it needs access.');
         for (let i = 0; i < work.length; i++) {
             const item = work[i];
             const action = inboxAction(item);
@@ -1738,12 +1738,16 @@ function sharedItemsSection() {
     const waiting = inbox.pending;
     if (!failed.length && !waiting.length && !inbox.checkError) return null;
     const label = (item) => item.title || hostOf(item.url) || (item.url || item.text || '').slice(0, 60) || 'Shared item';
+    const openArticle = (item) => {
+        const href = safeHref(item.url);
+        return href ? h('a', { class: 'btn small-btn', href, target: '_blank', rel: 'noopener noreferrer' }, 'Open article') : null;
+    };
     const row = (item, status, actions) => h('div', { class: 'group-row' },
         h('span', { class: 'row-icon' }, icon('inbox', { size: 16, strokeWidth: 2 })),
         h('span', { class: 'row-label' },
             h('div', { style: { 'font-weight': '600', 'overflow-wrap': 'anywhere' } }, label(item)),
             h('div', { class: 'small', style: { color: status.error ? 'var(--danger)' : 'var(--text-2)' } }, status.text),
-            h('div', { class: 'row', style: { display: 'flex', gap: '8px', 'margin-top': '8px' } }, actions)
+            h('div', { class: 'row', style: { display: 'flex', gap: '8px', 'margin-top': '8px', 'flex-wrap': 'wrap' } }, actions)
         )
     );
     return [
@@ -1757,15 +1761,20 @@ function sharedItemsSection() {
                             : { text: item.status === 'processing' ? 'Being broken down…' : 'Saved. Waiting for breakdown.' },
                 inboxAction(item) === 'needs_text'
                     ? [
+                        openArticle(item),
                         h('button', { type: 'button', class: 'btn small-btn', onclick: () => addTextToShare(item) }, 'Add text'),
                         h('button', { type: 'button', class: 'btn small-btn', onclick: async () => {
                             try { await removeInboxItem(item.id); await drainInbox(); }
                             catch (error) { toast(error.message); }
                         } }, 'Remove')
                     ]
-                    : [h('button', { type: 'button', class: 'btn small-btn', onclick: () => drainInbox({ manual: true }) }, 'Check now')]
+                    : [
+                        openArticle(item),
+                        h('button', { type: 'button', class: 'btn small-btn', onclick: () => drainInbox({ manual: true }) }, 'Refresh status')
+                    ]
             )),
             failed.map((item) => row(item, { text: item.error, error: true }, [
+                openArticle(item),
                 h('button', {
                     type: 'button',
                     class: 'btn small-btn',
