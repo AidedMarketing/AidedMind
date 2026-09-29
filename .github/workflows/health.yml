@@ -29,6 +29,7 @@ jobs:
             echo "::notice::Set the APP_URL repository variable (Settings > Secrets and variables > Actions > Variables) to enable monitoring."
             exit 0
           fi
+          APP_URL="${APP_URL%/}"
           check() {
             echo "$1" | jq -e '.ok == true' > /dev/null || { echo "app, storage or Claude key failing"; return 1; }
             [ "$EXPECT_SERVICES" = "none" ] && return 0
@@ -40,7 +41,7 @@ jobs:
             done
           }
           for attempt in 1 2 3; do
-            body=$(curl -sS --max-time 30 "$APP_URL/api/health?deep=1" || true)
+            body=$(curl -fsS --max-time 30 "$APP_URL/api/health?deep=1" || true)
             echo "attempt $attempt: $body"
             if reason=$(check "$body"); then exit 0; fi
             echo "$reason"
