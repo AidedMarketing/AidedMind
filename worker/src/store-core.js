@@ -155,6 +155,20 @@ export class StoreCore {
         return before > 0;
     }
 
+    inboxUpdate(id, { text = '', title = '' } = {}) {
+        const [item] = this.rows('SELECT status FROM inbox WHERE id = ?', id);
+        if (!item || !['failed', 'pending'].includes(item.status)) return false;
+        const content = String(text || '').trim().slice(0, MAX_TEXT);
+        if (content) {
+            this.sql.exec("UPDATE inbox SET text = ?, title = CASE WHEN ? = '' THEN title ELSE ? END, received_at = ?, status = 'pending', attempts = 0, next_attempt_at = ?, error = '', error_kind = '' WHERE id = ?",
+                content, String(title || '').trim(), String(title || '').trim().slice(0, 300), new Date().toISOString(), new Date().toISOString(), id);
+        } else {
+            this.sql.exec("UPDATE inbox SET status = 'pending', attempts = 0, next_attempt_at = ?, error = '', error_kind = '' WHERE id = ?",
+                new Date().toISOString(), id);
+        }
+        return true;
+    }
+
     // Takes the oldest queued item that is due and marks it in progress. The
     // "lease" keeps another run from taking it, and expires if this one dies.
     inboxClaim(nowMs, leaseMs) {

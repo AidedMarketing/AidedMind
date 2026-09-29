@@ -220,6 +220,10 @@ export function removeInboxItem(id) {
     return request('DELETE', `/inbox/${encodeURIComponent(id)}`);
 }
 
+export function updateInboxItem(id, changes) {
+    return request('PATCH', `/inbox/${encodeURIComponent(id)}`, changes);
+}
+
 export async function adminListUsers() {
     return request('GET', '/admin/users');
 }

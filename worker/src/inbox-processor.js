@@ -19,6 +19,7 @@ import { canonicalUrl } from '../../web/js/library.js';
 
 export const MAX_ATTEMPTS = 3;
 export const RETRY_DELAYS_MS = [60 * 1000, 5 * 60 * 1000];
+const PROVIDER_RETRY_MAX_MS = 60 * 60 * 1000;
 const LEASE_MS = 12 * 60 * 1000; // an item claimed by a run that died is picked up again after this
 const STORED_TEXT_MAX = 400000; // one SQLite row holds the whole finished note
 // Sites that answered with these will answer the same way next time.
@@ -47,11 +48,12 @@ async function buildSource(core, env, item, month) {
     try {
         page = extractArticle(fetched.html, fetched.url);
     } catch (error) {
-        // The phone's Readability may still manage where this simple reader didn't.
-        error.errorKind = 'retry_in_app';
+        // A URL-only share cannot gain access to the user's logged-in app.
+        // Keep the link and let them add text to this same inbox item.
+        error.errorKind = 'needs_text';
         throw error;
     }
-    const paywalled = looksPaywalled(fetched.html, page.text);
+    const paywalled = Boolean(fetched.restricted) || looksPaywalled(fetched.html, page.text);
     return {
         sourceType: 'article',
         url: fetched.url,
@@ -89,7 +91,14 @@ function fail(core, item, error, nowMs) {
     const known = error instanceof HttpError;
     if (!known) console.error('inbox item error', item.id, error);
     const message = known || error?.errorKind ? error.message : 'Something went wrong on the server.';
+    if (error?.errorKind === 'provider_unavailable') {
+        const delay = Math.min(PROVIDER_RETRY_MAX_MS, 60 * 1000 * 2 ** Math.min(item.attempts - 1, 6));
+        return core.inboxRetry(item.id, nowMs + delay, message);
+    }
     if (error?.errorKind) return core.inboxFail(item.id, { error: message, kind: error.errorKind });
+    if ([401, 403].includes(error?.upstreamStatus)) {
+        return core.inboxFail(item.id, { error: message, kind: 'needs_text' });
+    }
     const transient = !status || status === 429 || status === 408 || status >= 500;
     if (!transient || PERMANENT_UPSTREAM.has(error.upstreamStatus)) {
         return core.inboxFail(item.id, { error: message, kind: 'permanent' });

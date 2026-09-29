@@ -32,6 +32,11 @@ export class Store extends DurableObject {
     }
     inboxList() { return this.core.inboxList(); }
     inboxRemove(id) { return this.core.inboxRemove(id); }
+    async inboxUpdate(id, changes) {
+        const updated = this.core.inboxUpdate(id, changes);
+        if (updated) await this.scheduleAlarm();
+        return updated;
+    }
     usageFor(month) { return this.core.usageFor(month); }
     reserveCapture(month, limit) { return this.core.reserveCapture(month, limit); }
     releaseCapture(month) { return this.core.releaseCapture(month); }

@@ -82,6 +82,20 @@ test('a paywalled article becomes a short partial note, marked as paywalled', as
     assert.match(prompt, /behind a paywall/);
 });
 
+test('a paid Substack app share remains partial even when its public preview is long', async (t) => {
+    const { env, core } = await setup(t);
+    const publicPost = { title: 'Paid story', audience: 'only_paid', body_html: words(80), canonical_url: 'https://writer.substack.com/p/paid-story' };
+    const calls = mockFetch(t, {
+        'https://writer.substack.com/api/v1/posts/paid-story': () => new Response(JSON.stringify(publicPost), { headers: { 'content-type': 'application/json' } })
+    });
+    core.inboxAdd({ url: 'https://open.substack.com/pub/writer/p/paid-story' });
+    await processInbox(core, env);
+    assert.strictEqual(only(core).status, 'done');
+    assert.strictEqual(only(core).result.source.partial, true);
+    assert.strictEqual(only(core).result.source.transcriptSource, 'paywall');
+    assert.deepStrictEqual(calls, ['https://writer.substack.com/api/v1/posts/paid-story']);
+});
+
 test('page text sent with the link (from your own Safari) is used as is, no fetching', async (t) => {
     const { env, core } = await setup(t);
     const calls = mockFetch(t, {});
@@ -95,8 +109,11 @@ test('page text sent with the link (from your own Safari) is used as is, no fetc
     assert.match(source.text, /logged-in article/);
 });
 
-test('temporary failures retry with backoff, then hand the item to the app', async (t) => {
-    const { env, core } = await setup(t, { model: () => ({ status: 500, json: { type: 'error', error: { type: 'api_error', message: 'boom' } } }) });
+test('Claude outage keeps the share queued without using quota, then recovers', async (t) => {
+    let down = true;
+    const { env, core } = await setup(t, { model: () => down
+        ? { status: 500, json: { type: 'error', error: { type: 'api_error', message: 'boom' } } }
+        : reply() });
     mockFetch(t, { 'https://example.com/a': html(page(words(30))) });
     core.inboxAdd({ url: 'https://example.com/a' }, { limit: 5 });
 
@@ -106,15 +123,15 @@ test('temporary failures retry with backoff, then hand the item to the app', asy
         const item = only(core);
         assert.strictEqual(item.attempts, attempt);
         assert.strictEqual(core.usageFor(month()).captures, 0, 'quota is given back');
-        if (attempt < MAX_ATTEMPTS) {
-            assert.strictEqual(item.status, 'pending');
-            assert.strictEqual(await processInbox(core, env, { now: () => now }), 0, 'not due yet');
-            now += RETRY_DELAYS_MS[attempt - 1] + 1000;
-        } else {
-            assert.strictEqual(item.status, 'failed');
-            assert.strictEqual(item.errorKind, 'retry_in_app');
-        }
+        assert.strictEqual(item.status, 'pending');
+        assert.match(item.error, /Claude is having trouble/);
+        assert.strictEqual(await processInbox(core, env, { now: () => now }), 0, 'not due yet');
+        now += 60 * 1000 * 2 ** (attempt - 1) + 1000;
     }
+    down = false;
+    assert.strictEqual(await processInbox(core, env, { now: () => now }), 1);
+    assert.strictEqual(only(core).status, 'done');
+    assert.strictEqual(core.usageFor(month()).captures, 1);
 });
 
 test('failures that will not get better fail at once, with a reason', async (t) => {
@@ -125,13 +142,26 @@ test('failures that will not get better fail at once, with a reason', async (t) 
     core.inboxAdd({ url: 'not a link' });
     await processInbox(core, env);
     const [blocked, spa, invalid] = core.inboxList();
-    assert.deepStrictEqual([blocked.status, blocked.errorKind], ['failed', 'permanent']);
+    assert.deepStrictEqual([blocked.status, blocked.errorKind], ['failed', 'needs_text']);
     assert.match(blocked.error, /blocked\.example wouldn't let AidedMind read this page/);
     assert.doesNotMatch(blocked.error, /\d{3}/);
-    assert.deepStrictEqual([spa.status, spa.errorKind], ['failed', 'retry_in_app']); // the phone may read it
+    assert.deepStrictEqual([spa.status, spa.errorKind], ['failed', 'needs_text']);
     assert.deepStrictEqual([invalid.status, invalid.errorKind], ['failed', 'permanent']);
     assert.strictEqual(stub.requests.length, 0);
     assert.strictEqual(core.usageFor(month()).captures, 0);
+});
+
+test('unreadable share keeps its id and accepts text for a later breakdown', async (t) => {
+    const { env, core } = await setup(t);
+    mockFetch(t, { 'https://news.example/paid': html('<html><body><div id="app"></div></body></html>') });
+    const item = core.inboxAdd({ url: 'https://news.example/paid' });
+    await processInbox(core, env);
+    assert.deepStrictEqual([only(core).id, only(core).errorKind], [item.id, 'needs_text']);
+    assert.strictEqual(core.inboxUpdate(item.id, { text: 'The subscriber article. '.repeat(30) }), true);
+    await processInbox(core, env);
+    assert.strictEqual(only(core).id, item.id);
+    assert.strictEqual(only(core).status, 'done');
+    assert.match(only(core).result.source.text, /subscriber article/);
 });
 
 test('plan limits apply to background breakdowns', async (t) => {
@@ -176,7 +206,7 @@ test('inbox routes queue links with the plan limit, accept raw page text, and li
 
     const queued = await call(app, env, 'POST', '/api/inbox', { token: other.token, body: { url: 'https://example.com/a' } });
     assert.strictEqual(queued.status, 201);
-    assert.match((await queued.json()).message, /being broken down now/);
+    assert.match((await queued.json()).message, /Saved to AidedMind/);
     const raw = await app.fetch(new Request('https://x/api/inbox', { method: 'POST', headers: { 'X-AidedMind-Token': other.token, 'Content-Type': 'text/plain' }, body: 'Just the page text, no JSON at all.' }), env);
     assert.strictEqual(raw.status, 201);
     const json = await app.fetch(new Request('https://x/api/inbox', { method: 'POST', headers: { 'X-AidedMind-Token': other.token, 'Content-Type': 'application/json' }, body: JSON.stringify(JSON.stringify({ url: 'https://example.com/p', title: 'T', text: 'Page text' })) }), env);
@@ -191,6 +221,19 @@ test('inbox routes queue links with the plan limit, accept raw page text, and li
     const owner = await call(app, env, 'POST', '/api/inbox', { token: 'owner-secret', body: { url: 'https://example.com/o' } });
     assert.strictEqual(owner.status, 201);
     assert.strictEqual(env.STORE.get('user:owner').rows('SELECT quota_limit AS q FROM inbox')[0].q, -1); // unlimited
+});
+
+test('inbox update is authenticated and resumes the same failed item', async () => {
+    const env = fakeEnv();
+    const owner = env.STORE.get('user:owner');
+    const item = owner.inboxAdd({ url: 'https://news.example/paid' });
+    owner.inboxFail(item.id, { error: 'Needs article text', kind: 'needs_text' });
+    const denied = await call(app, env, 'PATCH', `/api/inbox/${item.id}`, { body: { text: 'Private article text.' } });
+    assert.strictEqual(denied.status, 401);
+    const result = await call(app, env, 'PATCH', `/api/inbox/${item.id}`, { token: 'owner-secret', body: { text: 'Private article text.' } });
+    assert.strictEqual(result.status, 200);
+    assert.deepStrictEqual([owner.inboxList()[0].id, owner.inboxList()[0].status, owner.inboxList()[0].text],
+        [item.id, 'pending', 'Private article text.']);
 });
 
 test('preferences are validated and stored for background breakdowns', async (t) => {

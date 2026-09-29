@@ -228,7 +228,7 @@ const routes = [
             { limit: monthlyLimit(user.plan, env) }
         );
         if (!item) throw new HttpError(400, 'Nothing to save: send a url or text.');
-        return json({ ok: true, id: item.id, message: 'Saved to AidedMind. It\'s being broken down now and will be in your library when you open the app.' }, 201);
+        return json({ ok: true, id: item.id, message: 'Saved to AidedMind. Check Shared links for progress or to add article text if needed.' }, 201);
     }, { auth: true }],
 
     ['GET', /^\/api\/inbox$/, async (request, env, user) => {
@@ -237,6 +237,14 @@ const routes = [
 
     ['DELETE', /^\/api\/inbox\/([\w-]+)$/, async (request, env, user, match) => {
         return json({ ok: await userStore(env, user.id).inboxRemove(match[1]) });
+    }, { auth: true }],
+
+    ['PATCH', /^\/api\/inbox\/([\w-]+)$/, async (request, env, user, match) => {
+        const { text = '', title = '' } = await readJson(request, MAX_INBOX_BYTES);
+        if (text && typeof text !== 'string') throw new HttpError(400, 'Article text must be text.');
+        const ok = await userStore(env, user.id).inboxUpdate(match[1], { text, title });
+        if (!ok) throw new HttpError(404, 'This shared link is no longer waiting. Share it again.');
+        return json({ ok: true, message: 'Saved. AidedMind will try this shared link again.' });
     }, { auth: true }],
 
     // Owner-only account management: the base for paid plans later.

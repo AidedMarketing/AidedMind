@@ -1,5 +1,5 @@
 import { allNotes, saveNote, saveMany, deleteNote, newId } from './db.js';
-import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
+import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, removeInboxItem, updateInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { buildThemes, THEME_DETAIL } from './themes.js';
 import { knownTopics, conceptVocabulary, knownUrlHashes, findDuplicate } from './library.js';
@@ -17,7 +17,7 @@ const PARTIAL_NOTES = {
     caption: 'Only the caption was available, so this is a partial breakdown. Paste the transcript for the full picture.',
     description: 'This video had no transcript, so the breakdown is based on its title and description. Paste the transcript for the full picture.',
     gemini: 'This video was very long, so its transcript was cut short. Paste the rest as text for the full picture.',
-    paywall: 'This article looks paywalled, so only its free opening was read and this is a partial breakdown. The full article is one step away: open the note\'s ••• menu and choose Paste the full text, or use the Save Page shortcut from Safari (Settings) while you\'re logged in.'
+    paywall: 'Only the free opening was available, so this is a partial breakdown. Open the note\'s ••• menu to paste the full text, or share the article again from Safari while logged in.'
 };
 const TRANSCRIPT_LABELS = {
     captions: 'video captions',
@@ -55,7 +55,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '16';
+const APP_VERSION = '17';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -1170,7 +1170,7 @@ function graphView() {
 
 // Run JavaScript on Web Page: reads the article from the page in your own
 // Safari (where you're logged in) and hands it back to the Shortcut.
-const PAGE_SCRIPT = 'var e=document.querySelector("article")||document.querySelector("main")||document.body;completion(JSON.stringify({url:location.href,title:document.title,text:e.innerText.slice(0,400000)}));';
+const PAGE_SCRIPT = 'var e=document.querySelector("article")||document.querySelector("main")||document.body;var t=(e.innerText||"").trim();completion(JSON.stringify({url:location.href,title:document.title,text:t.length>=200?t.slice(0,400000):""}));';
 
 function copyField(value, label) {
     return h('div', { class: 'copy-field' },
@@ -1419,31 +1419,17 @@ function settingsView() {
 
         h('div', { class: 'section-label' }, 'Save from the Share button'),
         h('div', { class: 'card' },
-            h('p', { class: 'small muted' }, 'iPhone doesn\'t let web apps appear in the Share menu, so a Shortcut sends links to AidedMind. They\'re broken down right away, even with the app closed; open the app to see them.'),
+            h('p', { class: 'small muted' }, 'One Shortcut works from Substack, other apps and Safari. It saves the link first, even when Claude is busy. In Safari it can also send the article text you can see while logged in.'),
             h('ol', { class: 'steps' },
                 h('li', {}, 'Open ', h('b', {}, 'Shortcuts'), ', tap ', h('b', {}, '+'), ', and name it ', h('b', {}, 'Save to AidedMind'), '.'),
-                h('li', {}, 'Tap the ', h('b', {}, 'ⓘ'), ' button, turn on ', h('b', {}, 'Show in Share Sheet'), ', and set it to receive ', h('b', {}, 'URLs'), ' and ', h('b', {}, 'Text'), '.'),
-                h('li', {}, 'Add the action ', h('b', {}, 'Get Contents of URL'), ' and paste this URL:', copyField(inboxUrl, 'Inbox URL')),
-                h('li', {}, 'Expand it: set Method to ', h('b', {}, 'POST'), '. Under Headers add ', h('b', {}, 'X-AidedMind-Token'), ' with your token:', settings.token ? copyField(settings.token, 'Token') : h('div', { class: 'small error' }, 'Save your token above first.')),
-                h('li', {}, 'Set Request Body to ', h('b', {}, 'JSON'), ', add a Text field named ', h('b', {}, 'url'), ' and set its value to ', h('b', {}, 'Shortcut Input'), '.'),
-                h('li', {}, 'Add ', h('b', {}, 'Show Notification'), ' and set its text to the ', h('b', {}, 'Contents of URL'), ' variable, so you see the server\'s real reply (including any error) instead of a fixed message.')
+                h('li', {}, 'Tap ', h('b', {}, 'ⓘ'), ', turn on ', h('b', {}, 'Show in Share Sheet'), ', and receive ', h('b', {}, 'Safari web pages'), ', ', h('b', {}, 'URLs'), ' and ', h('b', {}, 'Text'), '.'),
+                h('li', {}, 'Add ', h('b', {}, 'Get Type of Shortcut Input'), ' and an ', h('b', {}, 'If'), ' action: if it is a Safari web page, run the Safari steps below; otherwise run the app steps. Keep Shortcut Input as the input to the JavaScript action.'),
+                h('li', {}, h('b', {}, 'Safari branch: '), 'Add ', h('b', {}, 'Run JavaScript on Web Page'), ' with this script:', copyField(PAGE_SCRIPT, 'Script'), ' Then add Get Contents of URL, Method POST, Request Body File = JavaScript Result.'),
+                h('li', {}, h('b', {}, 'App branch: '), 'Add Get URLs from Shortcut Input. Add Get Contents of URL, Method POST, Request Body JSON with a Text field named ', h('b', {}, 'url'), ' set to the first URL. For a plain text share with no URL, send it as a Text field named ', h('b', {}, 'text'), '.'),
+                h('li', {}, 'For both Get Contents of URL actions use this inbox URL:', copyField(inboxUrl, 'Inbox URL'), ' Add the header ', h('b', {}, 'X-AidedMind-Token'), ' with your token:', settings.token ? copyField(settings.token, 'Token') : h('div', { class: 'small error' }, 'Save your token above first.')),
+                h('li', {}, 'After each POST, show a notification with its Contents of URL so you see whether the link was saved.')
             ),
-            h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'Now in TikTok, YouTube or Safari: Share → Save to AidedMind.')
-        ),
-
-        h('div', { class: 'section-label' }, 'Paywalled articles'),
-        h('div', { class: 'card' },
-            h('p', { class: 'small muted' }, 'AidedMind\'s server isn\'t logged in as you, so on a paywalled site it only sees the free opening (the note says so). A second Shortcut reads the page from your own Safari, where you are logged in, and sends its text instead.'),
-            h('ol', { class: 'steps' },
-                h('li', {}, 'In Shortcuts tap ', h('b', {}, '+'), ' and name it ', h('b', {}, 'Save Page to AidedMind'), '.'),
-                h('li', {}, 'Tap ', h('b', {}, 'ⓘ'), ', turn on ', h('b', {}, 'Show in Share Sheet'), ', and set it to receive ', h('b', {}, 'Safari web pages'), ' only.'),
-                h('li', {}, 'Add ', h('b', {}, 'Run JavaScript on Web Page'), ' and paste this script:', copyField(PAGE_SCRIPT, 'Script')),
-                h('li', {}, 'Add ', h('b', {}, 'Get Contents of URL'), ' with the same inbox URL, Method ', h('b', {}, 'POST'), ':', copyField(inboxUrl, 'Inbox URL')),
-                h('li', {}, 'Under Headers add ', h('b', {}, 'X-AidedMind-Token'), ' with your token, and ', h('b', {}, 'Content-Type'), ' = ', h('b', {}, 'application/json'), '.'),
-                h('li', {}, 'Set Request Body to ', h('b', {}, 'File'), ' and choose the ', h('b', {}, 'JavaScript Result'), ' from step 3.'),
-                h('li', {}, 'Add ', h('b', {}, 'Show Notification'), ' with the ', h('b', {}, 'Contents of URL'), '.')
-            ),
-            h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'Now, on the article in Safari (logged in): Share → Save Page to AidedMind. Shared from another app, a paywalled note can still be completed later: open it, tap ••• → Paste the full article.')
+            h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'From a paid article inside Substack, the app may share only a link. AidedMind keeps it in Library → Shared links as Needs article text when the server cannot read it. Tap Add text there to finish the same item.')
         ),
 
         !isStandalone() ? [
@@ -1580,15 +1566,37 @@ function refreshInboxViews(notesChanged = false) {
 // finish is done here, as before. A link the server can never read is kept
 // locally with its reason (retry or remove it from the Library); a temporary
 // failure stays in the inbox for next time.
-const STALL_MS = 10 * 60 * 1000;
 let inboxPollTimer;
 
-// What the app should do with an inbox item right now.
+// Queued work belongs to the server. The app collects results but does not
+// race an alarm or spend quota again when Claude is temporarily unavailable.
 function inboxAction(item) {
     if (item.status === 'done' && item.result) return 'import';
-    if (item.status === 'failed') return item.errorKind === 'retry_in_app' ? 'foreground' : 'report';
+    if (item.status === 'failed') {
+        if (item.errorKind === 'needs_text') return 'needs_text';
+        return item.errorKind === 'retry_in_app' ? 'foreground' : 'report';
+    }
     if (!item.queued) return 'foreground'; // shared before the server worked in the background
-    return Date.now() - new Date(item.receivedAt).getTime() > STALL_MS ? 'foreground' : 'wait';
+    return 'wait';
+}
+
+function addTextToShare(item) {
+    const field = h('textarea', { class: 'field', rows: '8', placeholder: 'Paste the article text you can read', 'aria-label': 'Article text' });
+    openSheet(
+        h('h3', {}, 'Add article text'),
+        h('p', { class: 'small muted' }, 'This link is saved. If the article opens in your app, copy its text here. AidedMind will finish the same shared item.'),
+        h('form', { class: 'stack', onsubmit: async (event) => {
+            event.preventDefault();
+            if (!field.value.trim()) return;
+            try {
+                await updateInboxItem(item.id, { text: field.value });
+                closeSheet();
+                toast('Text added. Breakdown queued.');
+                await drainInbox();
+            } catch (error) { toast(error.message); }
+        } }, field, h('button', { type: 'submit', class: 'btn primary block' }, 'Add text'),
+        h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel'))
+    );
 }
 
 function recordFailedShare(item, message) {
@@ -1619,7 +1627,7 @@ async function importFinished(item) {
 function scheduleInboxPoll() {
     clearTimeout(inboxPollTimer);
     // Only links still being worked on; ones that failed here wait for you.
-    if (!inbox.pending.some((item) => !inbox.errors.has(item.id))) return;
+    if (!inbox.pending.some((item) => inboxAction(item) === 'wait' && !inbox.errors.has(item.id))) return;
     inboxPollTimer = setTimeout(() => {
         if (document.visibilityState === 'visible') drainInbox();
         else scheduleInboxPoll();
@@ -1639,11 +1647,11 @@ async function drainInbox({ manual = false } = {}) {
     try {
         inbox.checkError = '';
         const items = await fetchInbox();
-        inbox.pending = items.filter((item) => inboxAction(item) === 'wait');
+        inbox.pending = items.filter((item) => ['wait', 'needs_text'].includes(inboxAction(item)));
         inbox.checkedAt = Date.now();
-        const work = items.filter((item) => inboxAction(item) !== 'wait');
+        const work = items.filter((item) => !['wait', 'needs_text'].includes(inboxAction(item)));
         if (!items.length && manual) toast('No shared links waiting');
-        else if (!work.length && inbox.pending.length && manual) toast('Still being broken down. It will appear here when it\'s ready.');
+        else if (!work.length && inbox.pending.length && manual) toast('Shared links are waiting or need article text. See Shared links in Library.');
         for (let i = 0; i < work.length; i++) {
             const item = work[i];
             const action = inboxAction(item);
@@ -1730,10 +1738,19 @@ function sharedItemsSection() {
         h('div', { class: 'group' },
             inbox.checkError ? h('div', { class: 'group-body small error' }, `Couldn't check your inbox: ${inbox.checkError}`) : null,
             waiting.map((item) => row(item,
-                inbox.errors.has(item.id) ? { text: `Will retry: ${inbox.errors.get(item.id)}`, error: true }
-                    : item.error ? { text: `${item.error} AidedMind will try again shortly.` }
-                        : { text: item.status === 'processing' ? 'Being broken down…' : 'Queued. It\'s broken down in the background' },
-                [h('button', { type: 'button', class: 'btn small-btn', onclick: () => drainInbox({ manual: true }) }, 'Check now')]
+                inboxAction(item) === 'needs_text' ? { text: `Needs article text. ${item.error || 'AidedMind could not read this link.'}`, error: true }
+                    : inbox.errors.has(item.id) ? { text: `Will retry: ${inbox.errors.get(item.id)}`, error: true }
+                        : item.error ? { text: `${item.error} AidedMind will try again automatically.` }
+                            : { text: item.status === 'processing' ? 'Being broken down…' : 'Saved. Waiting for breakdown.' },
+                inboxAction(item) === 'needs_text'
+                    ? [
+                        h('button', { type: 'button', class: 'btn small-btn', onclick: () => addTextToShare(item) }, 'Add text'),
+                        h('button', { type: 'button', class: 'btn small-btn', onclick: async () => {
+                            try { await removeInboxItem(item.id); await drainInbox(); }
+                            catch (error) { toast(error.message); }
+                        } }, 'Remove')
+                    ]
+                    : [h('button', { type: 'button', class: 'btn small-btn', onclick: () => drainInbox({ manual: true }) }, 'Check now')]
             )),
             failed.map((item) => row(item, { text: item.error, error: true }, [
                 h('button', {
@@ -1748,7 +1765,7 @@ function sharedItemsSection() {
                 h('button', { type: 'button', class: 'btn small-btn', onclick: () => { removeFailedShare(item.id); route(); } }, 'Remove')
             ]))
         ),
-        failed.length ? h('p', { class: 'group-footer' }, 'For paywalled or login-only pages, use the Save Page shortcut from Safari (Settings), or copy the text and paste it on the Add tab.') : null
+        failed.length ? h('p', { class: 'group-footer' }, 'For a login-only article, share it from logged-in Safari with Save to AidedMind, or paste text into the Add tab.') : null
     ];
 }
 

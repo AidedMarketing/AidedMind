@@ -313,10 +313,14 @@ async function substackFallback(rawUrl) {
         const { body } = await fetchPage(api, 'application/json');
         const post = JSON.parse(body);
         if (!post?.body_html) return null;
+        // The public post API can return a paid preview. Preserve that signal
+        // in the synthetic page so the shared paywall detector can label it.
+        const restricted = post.audience === 'only_paid' || post.free_unlock_required === true;
         const html = `<!doctype html><html><head><title>${escapeHtml(post.title)}</title>` +
-            `<meta name="author" content="${escapeHtml(post.publishedBylines?.[0]?.name || '')}"></head><body><article>` +
+            `<meta name="author" content="${escapeHtml(post.publishedBylines?.[0]?.name || '')}">` +
+            `${restricted ? '<meta name="article:content_tier" content="premium">' : ''}</head><body><article>` +
             `<h1>${escapeHtml(post.title)}</h1>${post.subtitle ? `<h2>${escapeHtml(post.subtitle)}</h2>` : ''}${post.body_html}</article></body></html>`;
-        return { sourceType: 'article', url: post.canonical_url || rawUrl, html };
+        return { sourceType: 'article', url: post.canonical_url || rawUrl, html, restricted };
     } catch {
         return null;
     }
