@@ -673,6 +673,9 @@ function libraryView(params) {
         ({ themes, byNote } = currentThemes());
         if (activeTheme && !themes.some((theme) => theme.id === activeTheme)) activeTheme = '';
         presentTypes = Object.keys(SOURCE_LABELS).filter((type) => notes.some((n) => (n.source?.sourceType || 'text') === type));
+        chips.hidden = !notes.length;
+        topicChips.hidden = !notes.length || !(themes.length || activeTag);
+        sortButton.hidden = !notes.length;
         const q = search.value.trim().toLowerCase();
         const matches = notes.filter((note) => {
             if (activeTag && !(note.tags || []).includes(activeTag)) return false;
@@ -758,17 +761,26 @@ function libraryView(params) {
         publicationHeader('COLLECTED EDITION', 'Library', 'Ideas worth keeping, with context intact and connections growing quietly.'),
         h('div', { class: 'search-row' },
             h('label', { class: 'search' }, icon('search', { size: 18, strokeWidth: 2.2 }), search),
-            notes.length ? sortButton : null
+            sortButton
         ),
-        notes.length ? chips : null,
-        notes.length && (themes.length || activeTag) ? topicChips : null,
+        chips,
+        topicChips,
         h('section', { id: 'library-shares', 'aria-label': 'Shared links' }, sharedItemsSection()),
         list
     );
     refreshLibrary = () => {
+        const previousFocus = document.activeElement;
+        const rowHref = previousFocus?.closest('.note-row')?.getAttribute('href');
+        const chipLabel = previousFocus?.closest('.chips') ? previousFocus.getAttribute('aria-label') || previousFocus.textContent : null;
         refresh();
         const shares = document.getElementById('library-shares');
         if (shares) { shares.replaceChildren(); append(shares, [sharedItemsSection()]); }
+        if (previousFocus && !previousFocus.isConnected) {
+            const replacement = rowHref
+                ? [...view.querySelectorAll('.note-row')].find((el) => el.getAttribute('href') === rowHref)
+                : chipLabel ? [...view.querySelectorAll('.chips button')].find((el) => (el.getAttribute('aria-label') || el.textContent) === chipLabel) : null;
+            replacement?.focus({ preventScroll: true });
+        }
     };
 }
 
