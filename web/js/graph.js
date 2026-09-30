@@ -104,7 +104,7 @@ export class GraphView {
         this.colorBy = colorBy;
         this.themes = themes;
         this.areas = areas;
-        this.reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
+        this.reducedMotion = document.documentElement.dataset.reducedMotion === 'true' || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
         this.nodes = [];
         this.links = [];
         this.transform = { x: 0, y: 0, k: 1 };

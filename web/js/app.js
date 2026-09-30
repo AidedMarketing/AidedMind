@@ -56,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '27';
+const APP_VERSION = '28';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -88,6 +88,37 @@ function append(el, children) {
     return el;
 }
 
+// Local display preferences do not change the knowledge data or server settings.
+const DISPLAY_KEY = 'aidedmind.display';
+function displayPreferences() {
+    try { return JSON.parse(localStorage.getItem(DISPLAY_KEY) || '{}'); } catch { return {}; }
+}
+function applyDisplay() {
+    const preferences = displayPreferences();
+    const root = document.documentElement;
+    root.dataset.appearance = ['light', 'dark'].includes(preferences.appearance) ? preferences.appearance : 'auto';
+    root.dataset.largeText = String(Boolean(preferences.largeText));
+    root.dataset.reducedMotion = String(Boolean(preferences.reducedMotion));
+}
+function updateDisplay(patch) {
+    localStorage.setItem(DISPLAY_KEY, JSON.stringify({ ...displayPreferences(), ...patch }));
+    applyDisplay();
+}
+applyDisplay();
+
+function publicationHeader(label, title, description) {
+    return h('header', { class: 'publication-header' },
+        h('p', { class: 'editorial-label' }, label),
+        h('h1', { class: 'large-title' }, title),
+        description ? h('p', { class: 'publication-deck' }, description) : null);
+}
+function fabricMark(size = 44) {
+    return h('img', { class: 'fabric-mark', src: 'icons/mark.svg', width: size, height: size, alt: '', 'aria-hidden': 'true' });
+}
+function readingTime(note) {
+    const words = note.source?.wordCount || (note.sourceText?.match(/\S+/g) || []).length;
+    return words ? `${Math.max(1, Math.ceil(words / 220))} min read` : '';
+}
 function render(...nodes) {
     closeSheet();
     view.classList.remove('full');
@@ -156,7 +187,8 @@ function topicMark(label, colorIndex = null) {
 }
 
 function connectionCount(note) {
-    const ids = new Set((note.connections || []).map((c) => c.noteId).filter(Boolean));
+    const existing = new Set(notes.map((n) => n.id));
+    const ids = new Set((note.connections || []).map((c) => c.noteId).filter((id) => id !== note.id && existing.has(id)));
     notes.forEach((other) => {
         if (other.id !== note.id && (other.connections || []).some((c) => c.noteId === note.id)) ids.add(other.id);
     });
@@ -179,7 +211,7 @@ function noteRow(note) {
                     const topic = note.topic || theme?.label;
                     return topic ? [h('span', { class: 'meta-topic' }, topicMark(topic, theme ? theme.color : null)), ' · '] : null;
                 })(),
-                `${origin} · ${relativeDate(note.createdAt)}`)
+                [origin, readingTime(note), note.source?.partial ? 'Needs your help' : 'Ready', relativeDate(note.createdAt)].filter(Boolean).join(' · '))
         ),
         links ? h('span', { class: 'connection-glyph', 'aria-label': `${links} connection${links === 1 ? '' : 's'}` },
             icon('graph', { size: 15, strokeWidth: 2 }), String(links)) : null
@@ -189,6 +221,7 @@ function noteRow(note) {
 // ---------- Nav bar ----------
 
 function setNav({ title = '', left = null, right = null, hidden = false } = {}) {
+    document.body.dataset.screen = title === 'Library' ? 'library' : title === 'More' ? 'settings' : title === 'Add' ? 'capture' : 'note';
     navbar.classList.toggle('hidden-bar', hidden);
     document.getElementById('nav-title').textContent = title;
     document.getElementById('nav-left').replaceChildren(...[left].flat().filter(Boolean));
@@ -211,14 +244,48 @@ function navButton(label, onclick, iconName) {
 
 // ---------- Sheets ----------
 
+let sheetReturnFocus = null;
+let sheetBackground = [];
 function closeSheet() {
-    document.getElementById('sheet-root').replaceChildren();
+    const root = document.getElementById('sheet-root');
+    if (!root.childElementCount) return;
+    root.replaceChildren();
+    sheetBackground.forEach(([element, inert]) => { element.inert = inert; });
+    sheetBackground = [];
+    document.body.classList.remove('sheet-open');
+    if (sheetReturnFocus?.isConnected) sheetReturnFocus.focus({ preventScroll: true });
+    sheetReturnFocus = null;
 }
 
 function openSheet(...content) {
     const root = document.getElementById('sheet-root');
-    const sheet = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true' }, h('div', { class: 'grabber' }), content);
-    root.replaceChildren(h('div', { class: 'sheet-scrim', onclick: closeSheet }), sheet);
+    if (!root.childElementCount) sheetReturnFocus = document.activeElement;
+    const sheet = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', tabindex: '-1' },
+        h('div', { class: 'grabber', 'aria-hidden': 'true' }),
+        h('button', { type: 'button', class: 'sheet-close', 'aria-label': 'Close dialog', onclick: closeSheet }, icon('close', { size: 20 })),
+        content);
+    const heading = sheet.querySelector('h1, h2, h3');
+    if (heading) { heading.id = 'sheet-heading'; sheet.setAttribute('aria-labelledby', heading.id); }
+    else sheet.setAttribute('aria-label', 'AidedMind dialog');
+    root.replaceChildren(h('div', { class: 'sheet-scrim', onclick: closeSheet, 'aria-hidden': 'true' }), sheet);
+    if (!sheetBackground.length) {
+        sheetBackground = [...document.body.children].filter((el) => ![root, document.getElementById('toast')].includes(el)).map((el) => [el, el.inert]);
+        sheetBackground.forEach(([el]) => { el.inert = true; });
+    }
+    document.body.classList.add('sheet-open');
+    sheet.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') { event.preventDefault(); closeSheet(); return; }
+        if (event.key !== 'Tab') return;
+        const focusable = [...sheet.querySelectorAll('button, a[href], input, textarea, select, summary, [tabindex="0"]')]
+            .filter((el) => !el.disabled && el.getClientRects().length);
+        const first = focusable[0], last = focusable.at(-1);
+        if (!first) { event.preventDefault(); sheet.focus(); }
+        else if (event.shiftKey && (document.activeElement === first || document.activeElement === sheet)) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    });
+    requestAnimationFrame(() => {
+        if (sheet.isConnected) (sheet.querySelector('input:not([type="file"]), textarea:not([readonly])') || sheet.querySelector('button') || sheet).focus();
+    });
     let startY = null;
     sheet.addEventListener('touchstart', (event) => { startY = sheet.scrollTop <= 0 ? event.touches[0].clientY : null; }, { passive: true });
     sheet.addEventListener('touchend', (event) => {
@@ -486,8 +553,8 @@ function captureView() {
 
     const progress = pending
         ? h('div', { class: 'card progress-card' },
-            h('div', { class: 'pulse' }, icon('sparkle', { size: 22 })),
-            h('div', {}, h('strong', {}, 'Breaking it down…'), h('span', {}, draft.photos.length ? 'Reading your photos, summarizing and finding connections.' : 'Reading, summarizing and finding connections. Usually under a minute.')))
+            h('div', { class: 'pulse' }, fabricMark(32)),
+            h('div', {}, h('strong', {}, 'Preparing'), h('span', {}, draft.photos.length ? 'AidedMind is preparing your photos. You can keep reading.' : 'AidedMind is preparing it. You can keep reading.')))
         : null;
 
     const tipDismissed = localStorage.getItem(TIP_KEY) === '1';
@@ -506,7 +573,7 @@ function captureView() {
     ) : null;
 
     render(
-        h('h1', { class: 'large-title' }, 'Add'),
+        publicationHeader('A NEW ENTRY', 'Add', 'Keep something worth returning to.'),
         progress || [
             hasPhotos ? null : [pasteButton, photoButton, h('div', { class: 'or' }, 'or')],
             h('form', {
@@ -519,7 +586,7 @@ function captureView() {
             photoStrip,
             input,
             titleInput,
-            error ? h('p', { class: 'error small', style: { 'margin-top': '12px' } }, error) : null,
+            error ? h('div', { role: 'alert' }, h('p', { class: 'error small', style: { 'margin-top': '12px' } }, 'Needs your help. Check your connection or try again.'), h('details', { class: 'diagnostic-detail' }, h('summary', {}, 'Advanced diagnostics'), h('p', { class: 'small muted' }, error))) : null,
             h('button', { class: 'btn primary block', type: 'submit', style: { 'margin-top': '12px' } },
                 hasPhotos ? `Break down ${draft.photos.length} photo${draft.photos.length === 1 ? '' : 's'}` : 'Break it down'),
             hasPhotos ? h('button', {
@@ -643,7 +710,7 @@ function libraryView(params) {
         ].filter(Boolean));
 
         if (!notes.length) {
-            list.replaceChildren(h('div', { class: 'empty' }, icon('library', { size: 44, strokeWidth: 1.4 }), h('strong', {}, 'Nothing saved yet'), 'Tap + above to save something, or share it with the AidedMind Shortcut. Tap the inbox button to check shared links.'));
+            list.replaceChildren(h('div', { class: 'empty' }, fabricMark(60), h('strong', {}, 'Your Library is ready for its first idea.'), 'Tap + to save a link, or share from another app with the AidedMind Shortcut.'));
             return;
         }
         if (!matches.length) {
@@ -682,7 +749,7 @@ function libraryView(params) {
     refresh();
 
     render(
-        h('h1', { class: 'large-title' }, 'Library'),
+        publicationHeader('COLLECTED EDITION', 'Library', 'Ideas worth keeping, with context intact and connections growing quietly.'),
         h('div', { class: 'search-row' },
             h('label', { class: 'search' }, icon('search', { size: 18, strokeWidth: 2.2 }), search),
             notes.length ? sortButton : null
@@ -721,29 +788,40 @@ function noteView(id) {
 
     const rememberedTab = noteTab.get(note.id);
     const active = NOTE_TABS.includes(rememberedTab) ? rememberedTab : 'Breakdown';
-    const panel = h('div', { class: 'tab-panel' });
+    const panel = h('div', { class: 'tab-panel', role: 'tabpanel', id: 'piece-panel' });
     const segmented = h('div', { class: 'segmented', role: 'tablist' });
     const selectTab = (name) => {
         noteTab.set(note.id, name);
         [...segmented.children].forEach((b) => {
             b.classList.toggle('active', b.dataset.tab === name);
             b.setAttribute('aria-selected', String(b.dataset.tab === name));
+            b.tabIndex = b.dataset.tab === name ? 0 : -1;
         });
+        document.body.dataset.panel = name.toLowerCase();
+        panel.setAttribute('aria-labelledby', `piece-tab-${name.toLowerCase()}`);
         panel.replaceChildren();
         append(panel, [notePanel(name, note, byId)]);
     };
-    NOTE_TABS.forEach((name) => segmented.append(h('button', { type: 'button', role: 'tab', 'data-tab': name, onclick: () => selectTab(name) }, name)));
+    NOTE_TABS.forEach((name) => segmented.append(h('button', {
+        type: 'button', role: 'tab', id: `piece-tab-${name.toLowerCase()}`, 'aria-controls': 'piece-panel',
+        'data-tab': name, onclick: () => selectTab(name),
+        onkeydown: (event) => {
+            const index = NOTE_TABS.indexOf(name);
+            const next = event.key === 'ArrowRight' ? (index + 1) % 3 : event.key === 'ArrowLeft' ? (index + 2) % 3 : event.key === 'Home' ? 0 : event.key === 'End' ? 2 : null;
+            if (next === null) return;
+            event.preventDefault(); selectTab(NOTE_TABS[next]); segmented.children[next].focus();
+        }
+    }, name)));
 
-    const origin = [note.source?.author || note.source?.siteName || hostOf(note.source?.url), relativeDate(note.createdAt)].filter(Boolean).join(' · ');
+    const origin = [note.source?.author || note.source?.siteName || hostOf(note.source?.url), readingTime(note), note.source?.partial ? 'Needs your help' : 'Ready', relativeDate(note.createdAt)].filter(Boolean).join(' · ');
     render(
         h('div', { class: 'source-line' }, sourceTile(type, 14), h('span', {}, `${SOURCE_LABELS[type]}${origin ? ` · ${origin}` : ''}`)),
         h('h1', { class: 'note-title' }, note.title),
         note.photos?.length ? h('div', { class: 'photo-strip note-photos' },
             note.photos.map((src, index) => h('div', { class: 'photo-thumb' }, h('img', { src, alt: `Photo ${index + 1}` })))) : null,
-        h('div', { class: 'tldr-card' }, h('span', { class: 'label' }, 'In short'), note.tldr),
         note.source?.partial ? h('p', { class: 'partial-note' },
             PARTIAL_NOTES[note.source.transcriptSource] || PARTIAL_NOTES.caption,
-            note.source.transcriptError ? h('span', { class: 'partial-reason' }, ` Why: ${note.source.transcriptError}`) : null,
+            note.source.transcriptError ? h('details', { class: 'diagnostic-detail' }, h('summary', {}, 'Advanced diagnostics'), h('p', {}, note.source.transcriptError)) : null,
             // Sharing the link again only helps when the service that failed might work next time.
             note.source.url && note.source.transcriptSource !== 'paywall' ? ' Share the link again to retry.' : null
         ) : null,
@@ -774,10 +852,10 @@ function noteView(id) {
 
 function notePanel(name, note, byId) {
     if (name === 'Breakdown') {
-        const blocks = [];
+        const blocks = note.tldr ? [h('p', { class: 'summary-lead' }, note.tldr)] : [];
         if (note.summary?.length) {
             blocks.push(
-                h('div', { class: 'breakdown-heading' }, 'Summary'),
+                h('h2', { class: 'breakdown-heading' }, 'Summary'),
                 h('div', { class: 'card prose' }, note.summary.map((section, i) => [
                     h('h3', { style: i === 0 ? { 'margin-top': '0' } : null }, section.heading),
                     h('p', {}, section.body)
@@ -786,19 +864,30 @@ function notePanel(name, note, byId) {
         }
         if (note.takeaways?.length) {
             blocks.push(
-                h('div', { class: 'breakdown-heading' }, 'Takeaways'),
+                h('h2', { class: 'breakdown-heading' }, 'Takeaways'),
                 h('div', { class: 'card prose' }, h('ul', { class: 'takeaway-list' }, note.takeaways.map((takeaway) => h('li', {}, takeaway))))
             );
         }
-        if (note.quotes?.length) {
+        // Quotes are published only when an exact source passage is available.
+        const verifiedQuotes = (note.quotes || []).filter((quote) => typeof quote === 'string' && quote.trim() && note.sourceText?.includes(quote));
+        if (verifiedQuotes.length) {
             blocks.push(
-                h('div', { class: 'breakdown-heading' }, 'Worth quoting'),
-                h('div', { class: 'card' }, note.quotes.map((quote) => h('blockquote', { class: 'quote' }, quote)))
+                h('h2', { class: 'breakdown-heading' }, 'Worth quoting'),
+                h('div', { class: 'quote-collection' }, verifiedQuotes.map((quote) => h('figure', { class: 'quote-entry' },
+                    h('blockquote', { class: 'quote' }, quote),
+                    h('figcaption', {}, h('span', { class: 'quote-verified' }, 'Source verified'),
+                        h('button', { type: 'button', class: 'text-button', onclick: () => {
+                            const start = note.sourceText.indexOf(quote);
+                            openSheet(h('h3', {}, 'Source passage'),
+                                h('p', { class: 'source-passage' }, note.sourceText.slice(Math.max(0, start - 200), start),
+                                    h('mark', {}, quote), note.sourceText.slice(start + quote.length, start + quote.length + 200)),
+                                h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Done'));
+                        } }, 'View source passage')))))
             );
         }
         if (note.outline?.length) {
             blocks.push(
-                h('div', { class: 'breakdown-heading' }, 'Outline'),
+                h('h2', { class: 'breakdown-heading' }, 'Outline'),
                 h('details', { class: 'outline-card', open: true },
                     h('summary', {}, h('span', {}, 'Source structure'), h('span', { class: 'small muted' }, `${note.outline.length} points`)),
                     h('ul', { class: 'outline' }, note.outline.map((item) => h('li', { class: `l${item.level}`, style: { '--level': String(item.level) } }, item.text)))
@@ -836,12 +925,14 @@ function notePanel(name, note, byId) {
             );
         };
         return [
+            h('p', { class: 'editorial-label' }, 'REFERENCES'),
             h('div', { class: 'connection-intro' },
                 h('div', {},
-                    h('strong', {}, allLinks.length ? `${allLinks.length} connection${allLinks.length === 1 ? '' : 's'}` : 'Connections'),
+                    h('h2', { class: 'panel-title' }, 'Connections'),
+                    h('p', { class: 'small muted' }, `${allLinks.length} connection${allLinks.length === 1 ? '' : 's'}`),
                     h('p', { class: 'small muted' }, 'AidedMind links strong relationships automatically as your Library grows. You can add your own or remove anything that does not belong.')
                 ),
-                h('button', { type: 'button', class: 'btn small-btn', onclick: () => openManualLinkSheet(note) }, icon('add', { size: 16, strokeWidth: 2 }), 'Add link')
+                h('button', { type: 'button', class: 'btn small-btn', onclick: () => openManualLinkSheet(note) }, icon('add', { size: 16, strokeWidth: 2 }), 'Add a link')
             ),
             allLinks.length
                 ? h('div', { class: 'group connection-group' }, allLinks.map(linkCard).filter(Boolean))
@@ -855,7 +946,7 @@ function notePanel(name, note, byId) {
                 h('span', { class: 'connection-map-arrow', 'aria-hidden': 'true' }, '→')
             ),
             note.concepts?.length ? [
-                h('div', { class: 'breakdown-heading' }, 'Concepts'),
+                h('h2', { class: 'breakdown-heading' }, 'Concepts'),
                 h('div', { class: 'concept-list' }, note.concepts.map((c) => h('a', { class: 'concept', href: `#/library?q=${encodeURIComponent(c.name)}` }, h('strong', {}, c.name), h('span', {}, c.description))))
             ] : null
         ];
@@ -869,21 +960,28 @@ function notePanel(name, note, byId) {
         saveState.textContent = 'Saving…';
         clearTimeout(saveTimer);
         saveTimer = setTimeout(async () => {
-            note.userNotes = userNotes.value;
-            await saveNote(note);
-            saveState.textContent = 'Saved';
+            const value = userNotes.value;
+            note.userNotes = value;
+            try {
+                await saveNote(note);
+                if (value === userNotes.value) { saveState.textContent = 'Saved'; saveState.classList.remove('error'); }
+            } catch {
+                saveState.textContent = 'Error — your text is still here. Edit to retry.';
+                saveState.classList.add('error');
+            }
         }, 500);
     });
     return [
+        h('p', { class: 'editorial-label' }, 'MARGINALIA'),
         h('div', { class: 'notes-heading' },
-            h('div', {}, h('strong', {}, 'Your notes'), h('p', { class: 'small muted' }, 'Your thinking stays separate from AidedMind\'s breakdown.')),
+            h('div', {}, h('h2', { class: 'panel-title' }, 'Your Notes'), h('p', { class: 'small muted' }, 'Your thinking stays separate from AidedMind\'s breakdown.')),
             saveState
         ),
         userNotes,
         h('div', { class: 'notes-actions' },
             h('button', { type: 'button', class: 'btn small-btn', onclick: () => openManualLinkSheet(note) }, icon('graph', { size: 16, strokeWidth: 2 }), 'Link this note')
         ),
-        note.sourceText ? [h('div', { class: 'breakdown-heading' }, 'Captured source'), h('details', { class: 'card' }, h('summary', {}, 'Show full text'), h('div', { class: 'source-text' }, note.sourceText))] : null,
+        note.sourceText ? [h('h2', { class: 'breakdown-heading' }, 'Captured source'), h('details', { class: 'card' }, h('summary', {}, 'Show full text'), h('div', { class: 'source-text' }, note.sourceText))] : null,
         note.source?.transcriptSource && note.source.transcriptSource !== 'paywall' ? h('p', { class: 'group-footer' }, `Transcript from ${TRANSCRIPT_LABELS[note.source.transcriptSource] || note.source.transcriptSource}`) : null,
         note.model ? h('p', { class: 'group-footer' }, `${note.depth ? `${note.autoDepth ? 'Auto → ' : ''}${depthLabel(note.depth)} breakdown` : 'Breakdown'} by ${note.model}`) : null
     ];
@@ -1262,14 +1360,15 @@ function themeSheet(theme) {
 
 function graphView(params = new URLSearchParams()) {
     setNav({ hidden: true });
+    document.body.dataset.screen = 'graph';
     const settings = getSettings();
     const requestedFocus = params.get('focus') || '';
     const focusId = notes.some((note) => note.id === requestedFocus) ? requestedFocus : null;
     if (!notes.length) {
         setNav({ title: 'Explore', right: navButton('', () => { location.hash = '#/capture'; }, 'add') });
         render(
-            h('h1', { class: 'large-title' }, 'Explore'),
-            h('div', { class: 'empty' }, icon('graph', { size: 44, strokeWidth: 1.4 }), h('strong', {}, 'Your map is ready to grow'), 'Every piece you save can connect automatically to the ideas already in your Library.')
+            publicationHeader('VISUAL INDEX', 'Explore', 'Your knowledge fabric, organized into stable neighborhoods.'),
+            h('div', { class: 'empty' }, fabricMark(72), h('strong', {}, 'Your knowledge fabric will take shape as your Library grows.'))
         );
         return;
     }
@@ -1290,7 +1389,7 @@ function graphView(params = new URLSearchParams()) {
     const conceptsButton = h('button', { type: 'button', class: `float-button glass${settings.showConcepts ? ' on' : ''}`, 'aria-label': 'Toggle shared ideas', 'aria-pressed': String(settings.showConcepts) }, icon('concept', { size: 20, strokeWidth: 2 }));
     const listButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Show Map as a list', 'aria-pressed': 'false' }, icon('library', { size: 20, strokeWidth: 2 }));
     const addButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Add to AidedMind', onclick: () => { location.hash = '#/capture'; } }, icon('add', { size: 20, strokeWidth: 2 }));
-    const fitButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Fit to screen' }, icon('fit', { size: 20, strokeWidth: 2 }));
+    const fitButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Fit All' }, icon('fit', { size: 20, strokeWidth: 2 }));
     const types = [...new Set(notes.map((n) => n.source?.sourceType || 'text'))];
     const unsorted = notes.length - themes.byNote.size;
 
@@ -1363,6 +1462,7 @@ function graphView(params = new URLSearchParams()) {
     view.classList.add('full');
     view.replaceChildren(h('div', { class: 'graph-page' },
         canvas,
+        publicationHeader('VISUAL INDEX', 'Explore', 'Your knowledge fabric, organized into stable neighborhoods.'),
         h('div', { class: 'graph-top' },
             h('label', { class: 'search glass' }, icon('search', { size: 18, strokeWidth: 2.2 }), search),
             listButton,
@@ -1404,7 +1504,10 @@ function graphView(params = new URLSearchParams()) {
             paintLegend();
         }
     });
-    fitButton.addEventListener('click', () => graph.fit());
+    fitButton.addEventListener('click', () => {
+        if (focusId) { location.hash = '#/graph'; return; }
+        activeTheme = null; search.value = ''; graph.highlightTheme(null); graph.fit(); paintLegend(); paintAccessibleList();
+    });
     colorButton.addEventListener('click', () => {
         saveSettings({ ...getSettings(), mapColor: byTheme ? 'source' : 'theme' });
         graphView(params);
@@ -1583,7 +1686,7 @@ function settingsView() {
     const accounts = h('div');
 
     render(
-        h('h1', { class: 'large-title' }, 'More'),
+        publicationHeader('BACK MATTER', 'More', 'Care for your collection, and make yourself at home.'),
 
         h('div', { class: 'section-label' }, 'Breakdown style'),
         (() => {
@@ -1710,7 +1813,48 @@ function settingsView() {
         h('p', { class: 'group-footer' }, 'Updates install on their own when you open the app.'),
         fileInput
     );
+    organizeSettings();
     if (usage?.limit === null) renderAccounts(accounts);
+}
+
+// Retain existing settings controls and handlers, presented as a reference index.
+function organizeSettings() {
+    const children = [...view.children];
+    const groups = new Map();
+    let name = '';
+    children.forEach((element) => {
+        if (element.classList.contains('publication-header') || element.matches('input[type="file"]')) return;
+        if (element.classList.contains('section-label')) name = element.textContent;
+        if (!groups.has(name)) groups.set(name, []);
+        groups.get(name).push(element);
+    });
+    const section = (title, keys, expanded = false) => {
+        const element = h('details', { class: 'settings-section', open: expanded },
+            h('summary', {}, h('h2', {}, title), h('span', { 'aria-hidden': 'true' }, '+')),
+            h('div', { class: 'settings-content' }, keys.flatMap((key) => groups.get(key) || [])));
+        return element;
+    };
+    const preferences = displayPreferences();
+    const appearance = section('Appearance', ['Breakdown style', 'Map']);
+    appearance.querySelector('.settings-content').prepend(
+        h('p', { class: 'small muted' }, 'The same publication, in daylight or at night.'),
+        segmentedControl('Appearance', [['auto', 'System'], ['light', 'Light'], ['dark', 'Dark']], preferences.appearance || 'auto', (appearance) => updateDisplay({ appearance })));
+    const access = section('Accessibility', []);
+    access.querySelector('.settings-content').append(
+        h('label', { class: 'preference-row' }, h('span', {}, 'Larger reading text'),
+            h('input', { type: 'checkbox', checked: Boolean(preferences.largeText), onchange: (event) => updateDisplay({ largeText: event.target.checked }) })),
+        h('label', { class: 'preference-row' }, h('span', {}, 'Reduce motion'),
+            h('input', { type: 'checkbox', checked: Boolean(preferences.reducedMotion), onchange: (event) => updateDisplay({ reducedMotion: event.target.checked }) })),
+        h('p', { class: 'small muted' }, 'Your device’s reduced motion setting is always respected. Explore also has a synchronized text list.'));
+    const header = children.find((el) => el.classList.contains('publication-header'));
+    const fileInput = children.find((el) => el.matches('input[type="file"]'));
+    // The unlabeled account container is kept inside diagnostics for its async update.
+    view.replaceChildren(...[
+        header, section('Capture & Sharing', ['Save from the Share button', 'Install']),
+        section('Data & Backup', ['Your data']), access, appearance,
+        section('Advanced Diagnostics', ['Connection', 'This month', 'Server status', '']),
+        ...(groups.get('About') || []), fileInput
+    ].filter(Boolean));
 }
 
 // Owner-only: give other people their own access token and monthly quota.
@@ -2016,7 +2160,8 @@ function sharedItemsSection() {
         h('span', { class: 'row-icon' }, icon('inbox', { size: 16, strokeWidth: 2 })),
         h('span', { class: 'row-label' },
             h('div', { style: { 'font-weight': '600', 'overflow-wrap': 'anywhere' } }, label(item)),
-            h('div', { class: 'small', style: { color: status.error ? 'var(--danger)' : 'var(--text-2)' } }, status.text),
+            h('div', { class: 'small', role: status.error ? 'alert' : 'status', style: { color: status.error ? 'var(--danger)' : 'var(--text-2)' } }, status.text),
+            item.error ? h('details', { class: 'diagnostic-detail' }, h('summary', {}, 'Advanced diagnostics'), h('p', { class: 'small muted' }, item.error)) : null,
             h('div', { class: 'row', style: { display: 'flex', gap: '8px', 'margin-top': '8px', 'flex-wrap': 'wrap' } }, actions)
         )
     );
@@ -2029,12 +2174,12 @@ function sharedItemsSection() {
                 const status = action === 'needs_review'
                     ? { text: `${item.capture?.words || 'A short amount of'} words captured. Check the text before AidedMind breaks it down.` }
                     : action === 'needs_text'
-                    ? { text: `Needs article text. ${item.error || 'AidedMind could not read this link.'}`, error: true }
+                    ? { text: 'Needs your help. Open the article in Safari while logged in and share it again, or add the article text here.', error: true }
                     : action === 'attention'
-                        ? { text: `Automatic attempts stopped. ${item.error || 'AidedMind could not read the article.'} Open it in Safari and share the readable page with Save to AidedMind, or add text here.`, error: true }
+                        ? { text: 'Needs your help. This link is saved. Open it in Safari and share the readable page, or add text here.', error: true }
                         : item.status === 'processing'
-                            ? { text: 'Reading this article now…' }
-                            : { text: `${item.error ? `${item.error} ` : 'Saved. Waiting for breakdown. '}${retryTime(item)}${item.error?.includes('too many requests') ? ' If you can read it in Safari, share that page with Save to AidedMind to finish this item now.' : ''}` };
+                            ? { text: 'Preparing. You can keep reading.' }
+                            : { text: `Link received. AidedMind is preparing it. You can keep reading. ${retryTime(item)}` };
                 const actions = action === 'needs_review'
                     ? [openArticle(item), reviewItem(item), removeItem(item)]
                     : action === 'attention'
@@ -2044,7 +2189,7 @@ function sharedItemsSection() {
                         : [openArticle(item), item.status === 'pending' ? addText(item) : null];
                 return row(item, status, actions);
             }),
-            failed.map((item) => row(item, { text: item.error, error: true }, [
+            failed.map((item) => row(item, { text: 'Needs your help. This piece is saved. Open it in Safari or add text to continue.', error: true }, [
                 openArticle(item),
                 h('button', {
                     type: 'button',
@@ -2108,6 +2253,7 @@ function route() {
     const params = new URLSearchParams(query);
     const parts = path.split('/').filter(Boolean);
     const name = parts[0] || 'library';
+    delete document.body.dataset.panel;
     document.querySelectorAll('.tabbar a').forEach((a) => {
         const on = a.dataset.route === name || (name === 'note' && a.dataset.route === 'library');
         a.classList.toggle('active', on);
