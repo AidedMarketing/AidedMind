@@ -104,6 +104,7 @@ export class GraphView {
         this.colorBy = colorBy;
         this.themes = themes;
         this.areas = areas;
+        this.reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
         this.nodes = [];
         this.links = [];
         this.transform = { x: 0, y: 0, k: 1 };
@@ -145,8 +146,20 @@ export class GraphView {
             this.neighbors.get(l.target.id).add(l.source.id);
         });
         this.byId = byId;
-        this.reheat(1);
         if (!previous.size) this.fitSoon = true;
+        if (this.reducedMotion) {
+            // Settle to a useful static layout without showing continuous motion.
+            this.alpha = 0.35;
+            for (let i = 0; i < 45; i++) this.step();
+            this.alpha = 0;
+            if (this.fitSoon) {
+                this.fit();
+                this.fitSoon = false;
+            }
+            this.draw();
+        } else {
+            this.reheat(1);
+        }
     }
 
     setHighlight(query) {
@@ -216,6 +229,11 @@ export class GraphView {
     }
 
     reheat(alpha = 0.6) {
+        if (this.reducedMotion) {
+            this.alpha = 0;
+            this.draw();
+            return;
+        }
         this.alpha = Math.max(this.alpha, alpha);
         if (!this.running) {
             this.running = true;
