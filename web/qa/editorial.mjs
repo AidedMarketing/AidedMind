@@ -61,7 +61,8 @@ try {
             const data = path.endsWith('/inbox') ? { items: inbox } : path.endsWith('/auth-check') ? { usage: { captures: 0, limit: 25 } } : path.endsWith('/health') ? { services: {}, checks: {}, version: 'fixture' } : path.endsWith('/source') ? { sourceType: 'article', url: 'https://example.com/new', title: 'A new entry', text: 'A readable source passage. '.repeat(60) } : path.endsWith('/analyze') ? { analysis: { title: 'A new entry', tldr: 'An idea for later.', summary: [{ heading: 'The idea', body: 'Keep reading.' }], takeaways: [], quotes: [], outline: [], concepts: [], connections: [], tags: [] }, model: 'fixture', depth: 'balanced' } : {};
             await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
         });
-        const goto = async (hash) => { await page.goto(url + '/#/' + hash); await page.locator('main h1').waitFor(); await page.evaluate(() => document.fonts.ready); };
+        let visit = 0;
+        const goto = async (hash) => { await page.goto(url + '/?qa=' + (++visit) + '#/' + hash); await page.locator('main h1').waitFor(); await page.evaluate(() => document.fonts.ready); };
         const noOverflow = async () => assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), label + ': horizontal overflow');
         const axe = async (screen) => {
             const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
@@ -139,6 +140,7 @@ try {
             await page.keyboard.press('Tab');
             assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), 'Close dialog');
             await dialog.getByRole('button', { name: /A thoughtful campaign/ }).click();
+            await dialog.waitFor({ state: 'detached' });
             assert.equal(await page.locator('.link-row').count(), 2);
             const data = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()).find((n) => n.id === 'a'));
             assert.equal(data.connections.find((c) => c.noteId === 'c').origin, 'user');
@@ -146,7 +148,7 @@ try {
         await check(label + ' Not related remembers rejected edge', async () => {
             await page.getByRole('button', { name: 'Mark link to Practice over time as not related', exact: true }).click();
             await page.getByRole('dialog').getByRole('button', { name: 'Not related', exact: true }).click();
-            await page.locator('.link-row').waitFor();
+            await page.waitForFunction(() => document.querySelectorAll('.link-row').length === 1);
             assert.equal(await page.locator('.link-row').count(), 1);
             const data = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()).find((n) => n.id === 'a'));
             assert.ok(data.rejectedLinks.some((c) => c.noteId === 'b'));
@@ -221,7 +223,7 @@ try {
             assert.equal(await page.getByRole('tab').count(), 3);
         });
         await check(label + ' recovery, search error and resize', async () => {
-            inbox = [{ id: 'waiting', title: 'Waiting article', url: 'https://example.com/waiting', status: 'pending', error: 'too many requests', attempts: 4 }];
+            inbox = [{ id: 'waiting', title: 'Waiting article', url: 'https://example.com/waiting', status: 'failed', queued: true, errorKind: 'retry_in_app', error: 'too many requests', attempts: 4 }];
             await goto('library');
             await page.getByRole('button', { name: 'inbox', exact: true }).click();
             await page.getByText(/Needs your help/).first().waitFor();
