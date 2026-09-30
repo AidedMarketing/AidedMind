@@ -56,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '26';
+const APP_VERSION = '27';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -1302,11 +1302,12 @@ function graphView(params = new URLSearchParams()) {
         const q = search.value.trim().toLowerCase();
         const matches = notes
             .filter((note) => graphNoteIds.has(note.id))
+            .filter((note) => !activeTheme || themes.byNote.get(note.id) === activeTheme)
             .filter((note) => !q || [note.title, note.topic, note.tldr, ...(note.tags || [])].join(' ').toLowerCase().includes(q))
             .sort((a, b) => a.title.localeCompare(b.title));
         accessibleList.replaceChildren(
             h('div', { class: 'graph-access-head' },
-                h('div', {}, h('strong', {}, focusId ? 'Connected notes' : 'Map notes'), h('span', { class: 'small muted' }, `${matches.length} shown`)),
+                h('div', {}, h('strong', {}, activeTheme ? 'Theme notes' : focusId ? 'Connected notes' : 'Map notes'), h('span', { class: 'small muted' }, `${matches.length} shown`)),
                 h('button', { type: 'button', class: 'graph-list-close', 'aria-label': 'Close Map list', onclick: () => {
                     accessibleList.hidden = true;
                     listButton.setAttribute('aria-pressed', 'false');
@@ -1634,7 +1635,7 @@ function settingsView() {
                 })(),
                 h('div', { class: 'small muted', style: { margin: '14px 2px 6px' } }, 'Shared ideas'),
                 segmentedControl('Shared ideas', [['show', 'Show'], ['hide', 'Hide']], settings.showConcepts ? 'show' : 'hide', (value) => saveSettings({ ...getSettings(), showConcepts: value === 'show' })),
-                h('p', { class: 'small muted', style: { margin: '8px 2px 0' } }, `Shared ideas are the diamonds linking notes that mention the same concept.${themes.themes.length ? ' Tap a theme under the map to light it up; tap it again to see its notes.' : ''}`)
+                h('p', { class: 'small muted', style: { margin: '8px 2px 0' } }, `Map neighborhoods always follow themes, even when dots are colored by source. Shared ideas are the diamonds linking notes that mention the same concept.${themes.themes.length ? ' Tap a theme under the map to zoom into its neighborhood; tap it again to see its notes.' : ''}`)
             );
         })(),
 
