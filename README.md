@@ -1,7 +1,7 @@
 # AidedMind
 Your personal knowledge publication. Your knowledge, connected quietly.
 
-**v29 — Editorial Knowledge + Knowledge Fabric:** repaired mobile navigation, a static publication imprint, aligned Explore controls around a dedicated map canvas, and cleaner warm-paper/graphite editions with restrained lavender. Locally bundled Newsreader typography keeps the reading surface quiet. Mobile keeps Library / Explore / More with global Add; desktop expands the same system with a left rail. The underlying v27 capture, automatic linking and stable map neighborhoods remain intact. See [release notes](RELEASE-v29.md) and [design system](DESIGN.md).
+**v29 — Editorial Knowledge + Knowledge Fabric:** repaired mobile navigation, a static publication imprint, aligned Explore controls around a dedicated map canvas, and cleaner warm-paper/graphite editions with restrained lavender. Locally bundled Newsreader typography keeps the reading surface quiet. Mobile keeps Library / Explore / More with global Add; desktop expands the same system with a left rail. The underlying v27 capture, automatic linking and stable map neighborhoods remain intact. See [release notes](RELEASE-v29.md), [design system](DESIGN.md) and [screen review](docs/qa/v29/README.md).
 
 Share a link from your iPhone (an article, a YouTube video, a TikTok), take a photo, or paste any text, and AidedMind gives you:
 
