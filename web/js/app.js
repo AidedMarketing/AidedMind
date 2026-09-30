@@ -710,7 +710,14 @@ function noteView(id) {
     const byId = new Map(notes.map((n) => [n.id, n]));
     const href = safeHref(note.source?.url);
     const type = note.source?.sourceType || 'text';
-    setNav({ title: note.title, left: back, right: navButton('', () => noteActions(note, byId), 'more') });
+    setNav({
+        title: note.title,
+        left: back,
+        right: [
+            navButton('', () => { location.hash = '#/capture'; }, 'add'),
+            navButton('', () => noteActions(note, byId), 'more')
+        ]
+    });
 
     const rememberedTab = noteTab.get(note.id);
     const active = NOTE_TABS.includes(rememberedTab) ? rememberedTab : 'Breakdown';
