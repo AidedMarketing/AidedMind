@@ -60,9 +60,11 @@ try {
             Object.defineProperty(navigator, 'canShare', { value: () => false, configurable: true });
         }, { largeText: Boolean(config.largeText) });
         let inbox = [];
+        let inboxDelay = 0;
         await page.route('**/api/**', async (route) => {
             const path = new URL(route.request().url()).pathname;
             const data = path.endsWith('/inbox') ? { items: inbox } : path.endsWith('/auth-check') ? { usage: { captures: 0, limit: 25 } } : path.endsWith('/health') ? { services: {}, checks: {}, version: 'fixture' } : path.endsWith('/source') ? { sourceType: 'article', url: 'https://example.com/new', title: 'A new entry', text: 'A readable source passage. '.repeat(60) } : path.endsWith('/analyze') ? { analysis: { title: 'A new entry', tldr: 'An idea for later.', summary: [{ heading: 'The idea', body: 'Keep reading.' }], takeaways: [], quotes: [], outline: [], concepts: [], connections: [], tags: [] }, model: 'fixture', depth: 'balanced' } : {};
+            if (path.endsWith('/inbox') && inboxDelay) await new Promise((done) => setTimeout(done, inboxDelay));
             await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
         });
         let visit = 0;
@@ -235,7 +237,12 @@ try {
             await page.getByRole('button', { name: 'inbox', exact: true }).click();
             await page.getByText('Waiting article', { exact: true }).waitFor();
             await page.getByText('Needs your help. This link is saved. Open it in Safari and share the readable page, or add text here.', { exact: true }).waitFor();
+            inbox = [{ ...inbox[0], title: 'Updated waiting article' }];
+            inboxDelay = 200;
+            await page.getByRole('button', { name: 'inbox', exact: true }).click();
             await page.getByRole('searchbox', { name: 'Search library' }).fill('no-match-fixture');
+            await page.getByText('Updated waiting article', { exact: true }).waitFor();
+            assert.equal(await page.getByRole('searchbox', { name: 'Search library' }).inputValue(), 'no-match-fixture');
             await page.getByText('No results', { exact: true }).waitFor();
             await page.setViewportSize({ width: 320, height: 740 }); await noOverflow();
             assert.deepEqual(errors, [], label + ' browser errors');

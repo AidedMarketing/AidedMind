@@ -607,6 +607,7 @@ function captureView() {
 
 // ---------- Library ----------
 
+let refreshLibrary = null;
 const LIBRARY_SORTS = {
     newest: { label: 'Newest first' },
     oldest: { label: 'Oldest first' },
@@ -658,7 +659,7 @@ function libraryView(params) {
     let activeTag = params.get('tag') || '';
     let activeType = '';
     let activeTheme = params.get('theme') || '';
-    const { themes, byNote } = currentThemes();
+    let { themes, byNote } = currentThemes();
     if (activeTheme && !themes.some((t) => t.id === activeTheme)) activeTheme = '';
     const search = h('input', { type: 'search', placeholder: 'Search', 'aria-label': 'Search library', enterkeyhint: 'search' });
     search.value = params.get('q') || '';
@@ -666,9 +667,12 @@ function libraryView(params) {
     const chips = h('div', { class: 'chips' });
     const topicChips = h('div', { class: 'chips topic-row' });
 
-    const presentTypes = Object.keys(SOURCE_LABELS).filter((type) => notes.some((n) => (n.source?.sourceType || 'text') === type));
+    let presentTypes = Object.keys(SOURCE_LABELS).filter((type) => notes.some((n) => (n.source?.sourceType || 'text') === type));
 
     const refresh = () => {
+        ({ themes, byNote } = currentThemes());
+        if (activeTheme && !themes.some((theme) => theme.id === activeTheme)) activeTheme = '';
+        presentTypes = Object.keys(SOURCE_LABELS).filter((type) => notes.some((n) => (n.source?.sourceType || 'text') === type));
         const q = search.value.trim().toLowerCase();
         const matches = notes.filter((note) => {
             if (activeTag && !(note.tags || []).includes(activeTag)) return false;
@@ -758,9 +762,14 @@ function libraryView(params) {
         ),
         notes.length ? chips : null,
         notes.length && (themes.length || activeTag) ? topicChips : null,
-        sharedItemsSection(),
+        h('section', { id: 'library-shares', 'aria-label': 'Shared links' }, sharedItemsSection()),
         list
     );
+    refreshLibrary = () => {
+        refresh();
+        const shares = document.getElementById('library-shares');
+        if (shares) { shares.replaceChildren(); append(shares, [sharedItemsSection()]); }
+    };
 }
 
 // ---------- Note ----------
@@ -1953,6 +1962,7 @@ function removeFailedShare(id) {
 // notesChanged: an open note may have been replaced, so redraw it too.
 function refreshInboxViews(notesChanged = false) {
     if (pending) return;
+    if (document.getElementById('library-shares') && refreshLibrary) { refreshLibrary(); return; }
     const onNote = location.hash.startsWith('#/note/');
     if ((onNote && notesChanged) || location.hash.startsWith('#/library') || location.hash === '' || location.hash === '#/') route();
 }

@@ -10,6 +10,7 @@ Branch: `codex/editorial-knowledge-v28`.
 - Focus-managed sheets, accessible tab navigation, autosave error feedback, larger text and optional reduced motion.
 - Source-verifiable Worth Quoting passages; unverified strings remain stored but are not published as quotations.
 - Confirmed relationship counts exclude dangling/deleted note IDs; Fit All clears theme focus and returns from a focused Map to the full fabric.
+- Background inbox refresh updates Library in place, preserving search, filters, focus and open sheets.
 - App and atomic service-worker cache advance together to 28; font and mark are precached.
 
 ## Preserved
