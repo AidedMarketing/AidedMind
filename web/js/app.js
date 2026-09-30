@@ -704,7 +704,8 @@ function noteView(id) {
     const type = note.source?.sourceType || 'text';
     setNav({ title: note.title, left: back, right: navButton('', () => noteActions(note, byId), 'more') });
 
-    const active = noteTab.get(note.id) || 'Summary';
+    const rememberedTab = noteTab.get(note.id);
+    const active = NOTE_TABS.includes(rememberedTab) ? rememberedTab : 'Breakdown';
     const panel = h('div', { class: 'tab-panel' });
     const segmented = h('div', { class: 'segmented', role: 'tablist' });
     const selectTab = (name) => {
@@ -745,6 +746,11 @@ function noteView(id) {
             return chips.length ? h('div', { class: 'chips wrap' }, chips) : null;
         })(),
         href ? h('a', { class: 'btn small-btn', href, target: '_blank', rel: 'noopener noreferrer', style: { 'margin-top': '14px' } }, icon('external', { size: 16, strokeWidth: 2 }), 'Open original') : null,
+        connectionCount(note) ? h('a', {
+            class: 'connection-summary',
+            href: `#/graph?focus=${encodeURIComponent(note.id)}`,
+            'aria-label': `Explore ${connectionCount(note)} connections in Map`
+        }, icon('graph', { size: 18, strokeWidth: 2 }), h('span', {}, `${connectionCount(note)} connection${connectionCount(note) === 1 ? '' : 's'}`), h('span', { class: 'connection-summary-arrow', 'aria-hidden': 'true' }, '→')) : null,
         h('div', { class: 'sticky-tabs' }, segmented),
         panel
     );
@@ -752,27 +758,39 @@ function noteView(id) {
 }
 
 function notePanel(name, note, byId) {
-    if (name === 'Summary') {
+    if (name === 'Breakdown') {
         const blocks = [];
         if (note.summary?.length) {
-            blocks.push(h('div', { class: 'card prose' }, note.summary.map((s, i) => [
-                h('h3', { style: i === 0 ? { 'margin-top': '0' } : null }, s.heading),
-                h('p', {}, s.body)
-            ])));
+            blocks.push(
+                h('div', { class: 'breakdown-heading' }, 'Summary'),
+                h('div', { class: 'card prose' }, note.summary.map((section, i) => [
+                    h('h3', { style: i === 0 ? { 'margin-top': '0' } : null }, section.heading),
+                    h('p', {}, section.body)
+                ]))
+            );
         }
         if (note.takeaways?.length) {
-            blocks.push(h('div', { class: 'section-label' }, 'Takeaways'), h('div', { class: 'card prose' }, h('ul', { style: { margin: '0' } }, note.takeaways.map((t) => h('li', {}, t)))));
+            blocks.push(
+                h('div', { class: 'breakdown-heading' }, 'Takeaways'),
+                h('div', { class: 'card prose' }, h('ul', { class: 'takeaway-list' }, note.takeaways.map((takeaway) => h('li', {}, takeaway))))
+            );
         }
         if (note.quotes?.length) {
-            blocks.push(h('div', { class: 'section-label' }, 'Worth quoting'), h('div', { class: 'card' }, note.quotes.map((q) => h('blockquote', { class: 'quote' }, q))));
+            blocks.push(
+                h('div', { class: 'breakdown-heading' }, 'Worth quoting'),
+                h('div', { class: 'card' }, note.quotes.map((quote) => h('blockquote', { class: 'quote' }, quote)))
+            );
         }
-        return blocks.length ? blocks : h('p', { class: 'muted' }, 'No summary available.');
-    }
-
-    if (name === 'Outline') {
-        return note.outline?.length
-            ? h('div', { class: 'group' }, h('ul', { class: 'outline' }, note.outline.map((item) => h('li', { class: `l${item.level}`, style: { '--level': String(item.level) } }, item.text))))
-            : h('p', { class: 'muted' }, 'No outline available.');
+        if (note.outline?.length) {
+            blocks.push(
+                h('div', { class: 'breakdown-heading' }, 'Outline'),
+                h('details', { class: 'outline-card', open: true },
+                    h('summary', {}, h('span', {}, 'Source structure'), h('span', { class: 'small muted' }, `${note.outline.length} points`)),
+                    h('ul', { class: 'outline' }, note.outline.map((item) => h('li', { class: `l${item.level}`, style: { '--level': String(item.level) } }, item.text)))
+                )
+            );
+        }
+        return blocks.length ? h('div', { class: 'breakdown-flow' }, blocks) : h('p', { class: 'muted' }, 'No breakdown available.');
     }
 
     if (name === 'Links') {
@@ -780,62 +798,77 @@ function notePanel(name, note, byId) {
         const backlinks = notes.flatMap((other) => (other.connections || [])
             .filter((c) => c.noteId === note.id && other.id !== note.id && !outgoing.some((o) => o.noteId === other.id))
             .map((c) => ({ ...c, noteId: other.id })));
-        const linkCard = (c) => h('div', { class: 'link-row' },
-            h('a', { class: 'link-card', href: `#/note/${encodeURIComponent(c.noteId)}` },
-                h('div', { class: 'relation' }, c.relation.replace('-', ' ')),
-                h('div', { class: 'title' }, byId.get(c.noteId).title),
-                h('div', { class: 'reason' }, c.reason)
+        const allLinks = [...outgoing, ...backlinks];
+        const linkCard = (connection) => {
+            const other = byId.get(connection.noteId);
+            if (!other) return null;
+            const automatic = connection.origin !== 'user';
+            return h('div', { class: 'link-row' },
+                h('a', { class: 'link-card', href: `#/note/${encodeURIComponent(connection.noteId)}` },
+                    h('div', { class: 'link-topline' },
+                        h('span', { class: `link-origin ${automatic ? 'automatic' : 'manual'}` }, automatic ? 'AidedMind' : 'You'),
+                        h('span', { class: 'relation' }, String(connection.relation || 'related').replace('-', ' '))
+                    ),
+                    h('div', { class: 'title' }, other.title),
+                    h('div', { class: 'reason' }, connection.reason || (automatic ? 'AidedMind connected these ideas.' : 'Linked by you.'))
+                ),
+                h('button', {
+                    type: 'button',
+                    class: 'link-remove',
+                    'aria-label': automatic ? `Mark link to ${other.title} as not related` : `Remove link to ${other.title}`,
+                    onclick: () => confirmRemoveLink(note, other, connection)
+                }, icon('close', { size: 16, strokeWidth: 2.2 }))
+            );
+        };
+        return [
+            h('div', { class: 'connection-intro' },
+                h('div', {},
+                    h('strong', {}, allLinks.length ? `${allLinks.length} connection${allLinks.length === 1 ? '' : 's'}` : 'Connections'),
+                    h('p', { class: 'small muted' }, 'AidedMind links strong relationships automatically as your Library grows. You can add your own or remove anything that does not belong.')
+                ),
+                h('button', { type: 'button', class: 'btn small-btn', onclick: () => openManualLinkSheet(note) }, icon('add', { size: 16, strokeWidth: 2 }), 'Add link')
             ),
-            h('button', {
-                type: 'button',
-                class: 'link-remove',
-                'aria-label': `Remove link to ${byId.get(c.noteId).title}`,
-                onclick: () => confirmRemoveLink(note, byId.get(c.noteId))
-            }, icon('close', { size: 16, strokeWidth: 2.2 }))
-        );
-        const canvas = h('canvas', { class: 'local-graph', 'aria-label': 'Map around this note' });
-        const blocks = [
-            outgoing.length || backlinks.length
-                ? [
-                    outgoing.length ? h('div', { class: 'group' }, outgoing.map(linkCard)) : null,
-                    backlinks.length ? [h('div', { class: 'section-label' }, 'Linked from'), h('div', { class: 'group' }, backlinks.map(linkCard))] : null
-                ]
-                : h('div', { class: 'card muted' }, notes.length > 1 ? 'No strong links to your other notes yet.' : 'Connections appear as your library grows.'),
-            h('div', { class: 'section-label' }, 'Map'),
-            canvas,
+            allLinks.length
+                ? h('div', { class: 'group connection-group' }, allLinks.map(linkCard).filter(Boolean))
+                : h('div', { class: 'card muted' }, notes.length > 1 ? 'No strong connections yet. AidedMind will keep building the graph as you save more.' : 'Connections appear as your Library grows.'),
+            h('a', { class: 'connection-map-payoff', href: `#/graph?focus=${encodeURIComponent(note.id)}` },
+                h('div', { class: 'connection-map-glyph', 'aria-hidden': 'true' }, icon('graph', { size: 22, strokeWidth: 1.8 })),
+                h('div', { class: 'connection-map-copy' },
+                    h('strong', {}, 'Explore these ideas in Map'),
+                    h('span', {}, 'See how this piece fits into your larger knowledge fabric.')
+                ),
+                h('span', { class: 'connection-map-arrow', 'aria-hidden': 'true' }, '→')
+            ),
             note.concepts?.length ? [
-                h('div', { class: 'section-label' }, 'Concepts'),
+                h('div', { class: 'breakdown-heading' }, 'Concepts'),
                 h('div', { class: 'concept-list' }, note.concepts.map((c) => h('a', { class: 'concept', href: `#/library?q=${encodeURIComponent(c.name)}` }, h('strong', {}, c.name), h('span', {}, c.description))))
             ] : null
         ];
-        requestAnimationFrame(() => {
-            const settings = getSettings();
-            const themes = currentThemes();
-            const data = buildGraph(notes, { showConcepts: settings.showConcepts, focusId: note.id, depth: 2, themes });
-            if (data.nodes.length > 1 && canvas.isConnected) {
-                // The small map keeps theme colors but skips areas and names.
-                new GraphView(canvas, { focusId: note.id, onOpen: openNode, colorBy: settings.mapColor, themes: themes.themes, areas: false }).setData(data);
-            } else {
-                canvas.previousElementSibling?.remove();
-                canvas.remove();
-            }
-        });
-        return blocks;
     }
 
-    const userNotes = h('textarea', { class: 'field', placeholder: 'Your thoughts. Link other notes with [[Note title]].', 'aria-label': 'My notes', rows: '6' });
+    const userNotes = h('textarea', { class: 'field', placeholder: 'What do you want to remember, challenge, apply or connect?', 'aria-label': 'My notes', rows: '8' });
     userNotes.value = note.userNotes || '';
+    const saveState = h('span', { class: 'note-save-state', role: 'status', 'aria-live': 'polite' }, 'Saved');
     let saveTimer;
     userNotes.addEventListener('input', () => {
+        saveState.textContent = 'Saving…';
         clearTimeout(saveTimer);
         saveTimer = setTimeout(async () => {
             note.userNotes = userNotes.value;
             await saveNote(note);
+            saveState.textContent = 'Saved';
         }, 500);
     });
     return [
+        h('div', { class: 'notes-heading' },
+            h('div', {}, h('strong', {}, 'Your notes'), h('p', { class: 'small muted' }, 'Your thinking stays separate from AidedMind\'s breakdown.')),
+            saveState
+        ),
         userNotes,
-        note.sourceText ? [h('div', { class: 'section-label' }, 'Captured source'), h('details', { class: 'card' }, h('summary', {}, 'Show full text'), h('div', { class: 'source-text' }, note.sourceText))] : null,
+        h('div', { class: 'notes-actions' },
+            h('button', { type: 'button', class: 'btn small-btn', onclick: () => openManualLinkSheet(note) }, icon('graph', { size: 16, strokeWidth: 2 }), 'Link this note')
+        ),
+        note.sourceText ? [h('div', { class: 'breakdown-heading' }, 'Captured source'), h('details', { class: 'card' }, h('summary', {}, 'Show full text'), h('div', { class: 'source-text' }, note.sourceText))] : null,
         note.source?.transcriptSource && note.source.transcriptSource !== 'paywall' ? h('p', { class: 'group-footer' }, `Transcript from ${TRANSCRIPT_LABELS[note.source.transcriptSource] || note.source.transcriptSource}`) : null,
         note.model ? h('p', { class: 'group-footer' }, `${note.depth ? `${note.autoDepth ? 'Auto → ' : ''}${depthLabel(note.depth)} breakdown` : 'Breakdown'} by ${note.model}`) : null
     ];
@@ -845,35 +878,109 @@ function notePanel(name, note, byId) {
 
 // Links you removed stay removed, even after a re-analysis.
 function linkBlocked(a, b) {
-    return (a?.removedLinks || []).includes(b?.id) || (b?.removedLinks || []).includes(a?.id);
+    const blocked = (note, otherId) =>
+        (note?.removedLinks || []).includes(otherId) ||
+        (note?.rejectedLinks || []).some((entry) => entry?.noteId === otherId);
+    return blocked(a, b?.id) || blocked(b, a?.id);
 }
 
 function keepAllowedLinks(note, connections) {
     return (connections || []).filter((c) => !linkBlocked(note, notes.find((n) => n.id === c.noteId)));
 }
 
-function confirmRemoveLink(note, other) {
+function confirmRemoveLink(note, other, connection = null) {
+    const automatic = connection?.origin !== 'user';
     openSheet(
-        h('h3', {}, 'Remove this link?'),
-        h('p', { class: 'muted' }, `“${note.title}” and “${other.title}” won't be linked any more, and a re-analysis won't bring the link back.`),
+        h('h3', {}, automatic ? 'Not related?' : 'Remove this link?'),
+        h('p', { class: 'muted' }, automatic
+            ? `AidedMind will remove the link between “${note.title}” and “${other.title}” and remember not to recreate it automatically.`
+            : `Remove the link you created between “${note.title}” and “${other.title}”?`),
         h('div', { class: 'stack' },
-            h('button', { type: 'button', class: 'btn primary block', onclick: () => removeLink(note, other) }, 'Remove link'),
+            h('button', { type: 'button', class: 'btn primary block', onclick: () => removeLink(note, other, { blockAutomatic: automatic }) }, automatic ? 'Not related' : 'Remove link'),
             h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel')
         )
     );
 }
 
-async function removeLink(note, other) {
+async function removeLink(note, other, { blockAutomatic = true } = {}) {
     closeSheet();
     [note, other].forEach((n) => {
         const partner = n === note ? other : note;
         n.connections = (n.connections || []).filter((c) => c.noteId !== partner.id);
     });
-    note.removedLinks = [...new Set([...(note.removedLinks || []), other.id])];
+    if (blockAutomatic) {
+        note.removedLinks = [...new Set([...(note.removedLinks || []), other.id])];
+        note.rejectedLinks = [
+            ...(note.rejectedLinks || []).filter((entry) => entry?.noteId !== other.id),
+            { noteId: other.id, rejectedAt: new Date().toISOString() }
+        ];
+    }
     await saveMany([note, other]);
     notes = await allNotes();
-    toast('Link removed');
+    toast(blockAutomatic ? 'AidedMind will remember that' : 'Link removed');
     route();
+}
+
+function openManualLinkSheet(note) {
+    const search = h('input', { class: 'field', type: 'search', placeholder: 'Search your Library…', 'aria-label': 'Search notes to link', enterkeyhint: 'search' });
+    const results = h('div', { class: 'group manual-link-results' });
+    const linkedIds = () => {
+        const ids = new Set((note.connections || []).map((c) => c.noteId));
+        notes.forEach((other) => {
+            if ((other.connections || []).some((c) => c.noteId === note.id)) ids.add(other.id);
+        });
+        return ids;
+    };
+    const paint = () => {
+        const query = search.value.trim().toLowerCase();
+        const already = linkedIds();
+        const matches = notes
+            .filter((other) => other.id !== note.id && !already.has(other.id))
+            .filter((other) => !query || [other.title, other.tldr, other.topic, ...(other.tags || [])].join(' ').toLowerCase().includes(query))
+            .slice(0, 30);
+        results.replaceChildren(...(matches.length ? matches.map((other) => h('button', {
+            type: 'button',
+            class: 'group-row manual-link-choice',
+            onclick: async () => {
+                const now = new Date().toISOString();
+                [note, other].forEach((item, index) => {
+                    const partner = index === 0 ? other : note;
+                    item.removedLinks = (item.removedLinks || []).filter((id) => id !== partner.id);
+                    item.rejectedLinks = (item.rejectedLinks || []).filter((entry) => entry?.noteId !== partner.id);
+                });
+                note.connections = [
+                    ...(note.connections || []).filter((c) => c.noteId !== other.id),
+                    {
+                        noteId: other.id,
+                        sourceId: note.id,
+                        targetId: other.id,
+                        relation: 'related',
+                        reason: 'Linked by you.',
+                        confidence: 1,
+                        origin: 'user',
+                        createdAt: now
+                    }
+                ];
+                await saveMany([note, other]);
+                notes = await allNotes();
+                closeSheet();
+                toast('Link added');
+                route();
+            }
+        }, h('span', { class: 'row-label' }, other.title), h('span', { class: 'row-value muted' }, other.topic || SOURCE_LABELS[other.source?.sourceType || 'text']))) : [
+            h('div', { class: 'group-body small muted' }, query ? 'No unlinked notes match that search.' : 'Everything in your Library is already connected to this piece.')
+        ]));
+    };
+    search.addEventListener('input', paint);
+    paint();
+    openSheet(
+        h('h3', {}, 'Link an idea'),
+        h('p', { class: 'small muted' }, 'Choose something this piece genuinely connects to. Your link becomes part of the same Map as AidedMind\'s automatic connections.'),
+        search,
+        results,
+        h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel')
+    );
+    requestAnimationFrame(() => search.focus());
 }
 
 function topicSheet(note) {
