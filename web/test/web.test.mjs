@@ -128,6 +128,17 @@ test('settings version matches the service worker cache version', async () => {
     }
 });
 
+test('Substack duplicate identity ignores referral codes and app versus browser routes', async () => {
+    const app = 'https://open.substack.com/pub/mattpaige68/p/openai-just-launched-dots-heres-how?r=old&utm_medium=ios';
+    const browser = 'https://mattpaige68.substack.com/p/openai-just-launched-dots-heres-how?r=new#comments';
+    assert.strictEqual(canonicalUrl(app), canonicalUrl(browser));
+    assert.strictEqual(await urlHash(app), await urlHash(browser));
+    assert.strictEqual(findDuplicate([{ id: 'saved', source: { url: app } }], browser)?.id, 'saved');
+    assert.notStrictEqual(canonicalUrl(browser), canonicalUrl('https://mattpaige68.substack.com/p/another-post'));
+    assert.notStrictEqual(canonicalUrl(browser), canonicalUrl('https://other.substack.com/p/openai-just-launched-dots-heres-how'));
+    assert.strictEqual(canonicalUrl('https://example.com/p/story?r=important'), 'example.com/p/story?r=important');
+});
+
 test('map nodes carry their theme and color', async () => {
     const { buildThemes } = await import('../js/themes.js');
     const lib = [

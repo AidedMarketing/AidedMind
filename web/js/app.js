@@ -56,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '23';
+const APP_VERSION = '24';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
