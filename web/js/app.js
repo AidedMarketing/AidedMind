@@ -56,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '29';
+const APP_VERSION = '30';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -113,7 +113,7 @@ function publicationHeader(label, title, description) {
         description ? h('p', { class: 'publication-deck' }, description) : null);
 }
 function fabricMark(size = 44) {
-    return h('img', { class: 'fabric-mark', src: 'icons/mark.svg', width: size, height: size, alt: '', 'aria-hidden': 'true' });
+    return h('span', { class: 'fabric-mark', style: { width: `${size}px`, height: `${size}px` }, 'aria-hidden': 'true' });
 }
 function readingTime(note) {
     const words = note.source?.wordCount || (note.sourceText?.match(/\S+/g) || []).length;
@@ -815,7 +815,7 @@ function noteView(id) {
     const active = NOTE_TABS.includes(rememberedTab) ? rememberedTab : 'Breakdown';
     const panel = h('div', { class: 'tab-panel', role: 'tabpanel', id: 'piece-panel' });
     const segmented = h('div', { class: 'segmented', role: 'tablist' });
-    const selectTab = (name) => {
+    const selectTab = (name, reveal = true) => {
         noteTab.set(note.id, name);
         [...segmented.children].forEach((b) => {
             b.classList.toggle('active', b.dataset.tab === name);
@@ -826,6 +826,13 @@ function noteView(id) {
         panel.setAttribute('aria-labelledby', `piece-tab-${name.toLowerCase()}`);
         panel.replaceChildren();
         append(panel, [notePanel(name, note, byId)]);
+        // A short panel must not inherit a deep scroll position from Breakdown.
+        // Keep the tabs and the new panel heading visible without moving focus.
+        if (reveal) {
+            const panelTop = window.scrollY + panel.getBoundingClientRect().top;
+            const chromeHeight = document.getElementById('navbar').offsetHeight + segmented.parentElement.offsetHeight;
+            window.scrollTo({ top: Math.max(0, panelTop - chromeHeight - 16), behavior: 'instant' });
+        }
     };
     NOTE_TABS.forEach((name) => segmented.append(h('button', {
         type: 'button', role: 'tab', id: `piece-tab-${name.toLowerCase()}`, 'aria-controls': 'piece-panel',
@@ -872,7 +879,7 @@ function noteView(id) {
         h('div', { class: 'sticky-tabs' }, segmented),
         panel
     );
-    selectTab(active);
+    selectTab(active, false);
 }
 
 function notePanel(name, note, byId) {

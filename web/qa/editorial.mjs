@@ -11,6 +11,7 @@ const root = resolve('web');
 const output = resolve('qa-results');
 await mkdir(output, { recursive: true });
 const mime = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
+let nextDeploymentDocument = false;
 const server = createServer(async (request, response) => {
     try {
         const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
@@ -18,7 +19,8 @@ const server = createServer(async (request, response) => {
         if (!file.startsWith(root + sep)) throw Error('Invalid path');
         response.setHeader('Content-Type', mime[extname(file)] || 'text/plain');
         if (file.endsWith('service-worker.js')) response.setHeader('Cache-Control', 'no-cache');
-        response.end(await readFile(file));
+        response.end(nextDeploymentDocument && file.endsWith('index.html')
+            ? '<!doctype html><h1>Next deployment markup</h1>' : await readFile(file));
     } catch { response.writeHead(404).end(); }
 });
 await new Promise((done) => server.listen(4173, '127.0.0.1', done));
@@ -170,8 +172,12 @@ try {
             await page.getByRole('tab', { name: 'Breakdown' }).focus();
             await page.keyboard.press('ArrowRight');
             assert.equal(await page.getByRole('tab', { name: 'Links' }).getAttribute('aria-selected'), 'true');
+            const heading = await page.getByRole('heading', { name: 'Connections', exact: true }).boundingBox();
+            assert.ok(heading.y >= 56 && heading.y + heading.height < config.height - 64, 'Connections heading is hidden after a deep reading scroll');
             await page.keyboard.press('End');
             assert.equal(await page.getByRole('tab', { name: 'Notes' }).getAttribute('aria-selected'), 'true');
+            const notesHeading = await page.getByRole('heading', { name: 'Your Notes', exact: true }).boundingBox();
+            assert.ok(notesHeading.y >= 56 && notesHeading.y + notesHeading.height < config.height - 64, 'Notes heading is hidden after switching tabs');
         });
         await check(label + ' Notes autosave and ownership', async () => {
             const field = page.getByRole('textbox', { name: 'My notes' });
@@ -262,6 +268,9 @@ try {
             assert.equal(data.notes.length, 4);
             await page.locator('input[type="file"]').setInputFiles({ name: 'restore.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(data)) });
             await page.getByText('Restored 4 notes', { exact: true }).waitFor();
+            const feedback = await page.locator('#toast').boundingBox();
+            const header = await page.locator('#navbar').boundingBox();
+            assert.ok(feedback.y >= header.y + header.height, 'Feedback covers the header');
             downloaded = page.waitForEvent('download');
             await page.getByRole('button', { name: 'Export to Obsidian (.zip)' }).click();
             const zip = await downloaded;
@@ -277,7 +286,9 @@ try {
             await page.locator('.settings-section').filter({ has: page.getByRole('heading', { name: 'Accessibility', exact: true }) }).locator('summary').click();
             await page.getByRole('checkbox', { name: 'Reduce motion' }).check();
             assert.equal(await page.locator('html').getAttribute('data-reduced-motion'), 'true');
-            await noOverflow(); await axe('more'); await screenshot('more');
+            await noOverflow(); await axe('more');
+            await goto('settings');
+            await screenshot('more');
         });
         await check(label + ' partial capture diagnostics', async () => {
             await goto('note/d');
@@ -329,11 +340,18 @@ try {
         await page.evaluate(async () => { await navigator.serviceWorker.ready; });
         await page.reload();
         await page.evaluate(async () => {
-            const cache = await caches.open('aidedmind-v29');
+            const cache = await caches.open('aidedmind-v30');
             for (const path of ['/fonts/Newsreader.ttf', '/icons/mark.svg', '/tokens.css', '/shell.css', '/app.css', '/js/app.js']) {
                 if (!(await cache.match(path))) throw Error('Missing cached asset ' + path);
             }
         });
+        // A newer deployment must not swap the document under cached old assets.
+        nextDeploymentDocument = true;
+        try {
+            await page.reload();
+            await page.getByRole('heading', { name: 'Library', exact: true }).waitFor();
+            assert.equal(await page.getByRole('heading', { name: 'Next deployment markup' }).count(), 0);
+        } finally { nextDeploymentDocument = false; }
         await context.setOffline(true);
         await page.reload();
         await page.getByRole('heading', { name: 'Library', exact: true }).waitFor();
