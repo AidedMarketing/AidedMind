@@ -136,6 +136,16 @@ export class StoreCore {
             images: Math.min(200, Math.max(0, Number(capture.images) || 0)),
             review: Boolean(capture.review && item.text)
         } : {};
+        // Re-sharing a link must not start another fetch or reset an upstream
+        // cooldown. Safari's text upgrade below remains able to resume it.
+        if (!item.text && item.url) {
+            const key = substackPostKey(item.url);
+            if (key) {
+                const waiting = this.rows("SELECT * FROM inbox WHERE status IN ('pending', 'processing', 'failed') ORDER BY received_at DESC");
+                const match = waiting.find((row) => substackPostKey(row.url) === key);
+                if (match) return { ...item, id: match.id, status: match.status, queued: match.queued === 1, reused: true };
+            }
+        }
         // A link shared from the Substack app may be waiting for access. If
         // Safari later supplies the article text, finish that same item.
         if (item.text && item.url && meta.kind === 'safari') {

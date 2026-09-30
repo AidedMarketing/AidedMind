@@ -370,7 +370,50 @@ test('Shortcut inbox URL returns a plain confirmation without JSON', async () =>
     const response = await call(app, env, 'POST', '/api/inbox?shortcut=1', { token: 'owner-secret', body: { url: 'https://example.com/article' } });
     assert.strictEqual(response.status, 201);
     assert.match(response.headers.get('content-type'), /text\/plain/);
-    assert.strictEqual(await response.text(), 'Saved to AidedMind');
+    assert.match(await response.text(), /Saved link to AidedMind\. No article text was received/);
+});
+
+test('repeated Substack links keep one item and preserve its retry deadline', () => {
+    const core = sqlStore();
+    const first = core.inboxAdd({ url: 'https://open.substack.com/pub/writer/p/story?r=app' });
+    core.inboxClaim(Date.now(), 60000);
+    const deadline = Date.now() + 3600000;
+    core.inboxRetry(first.id, deadline, 'Too many requests');
+    const again = core.inboxAdd({ url: 'https://writer.substack.com/p/story?utm_medium=ios' });
+    assert.strictEqual(again.id, first.id);
+    assert.strictEqual(again.reused, true);
+    assert.strictEqual(core.inboxList().length, 1);
+    assert.strictEqual(only(core).attempts, 1);
+    assert.strictEqual(only(core).nextRetryAt, new Date(deadline).toISOString());
+    assert.strictEqual(core.inboxClaim(deadline - 1, 60000), null);
+    core.inboxFail(first.id, { error: 'Stopped', kind: 'retry_in_app' });
+    core.inboxAdd({ url: 'https://writer.substack.com/p/story' });
+    assert.strictEqual(only(core).status, 'failed');
+    assert.strictEqual(only(core).attempts, 1);
+    const different = core.inboxAdd({ url: 'https://writer.substack.com/p/another-story' });
+    assert.notStrictEqual(different.id, first.id);
+});
+
+test('re-sharing a processing Substack item does not create competing work', () => {
+    const core = sqlStore();
+    const first = core.inboxAdd({ url: 'https://writer.substack.com/p/story' });
+    core.inboxClaim(Date.now(), 60000);
+    const again = core.inboxAdd({ url: 'https://open.substack.com/pub/writer/p/story' });
+    assert.strictEqual(again.id, first.id);
+    assert.strictEqual(only(core).status, 'processing');
+    assert.strictEqual(core.inboxList().length, 1);
+});
+
+test('Shortcut confirmation distinguishes page text, empty Safari capture, and repeated links', async () => {
+    const env = fakeEnv();
+    const send = (body) => call(app, env, 'POST', '/api/inbox?shortcut=1', { token: 'owner-secret', body });
+    const empty = await send({ url: 'https://writer.substack.com/p/story', capture: { kind: 'safari', words: 999 } });
+    assert.match(await empty.text(), /No article text was received\. Safari did not capture readable text/);
+    const repeated = await send({ url: 'https://open.substack.com/pub/writer/p/story' });
+    assert.match(await repeated.text(), /Already saved to AidedMind/);
+    const text = await send({ url: 'https://writer.substack.com/p/story', text: 'Actual article text', capture: { kind: 'safari', words: 999, review: true } });
+    assert.match(await text.text(), /3 words received\. Check the captured text/);
+    assert.strictEqual(env.STORE.get('user:owner').inboxList().length, 1);
 });
 
 test('inbox update is authenticated and resumes the same failed item', async () => {
