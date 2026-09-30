@@ -19,7 +19,7 @@ const CONNECTIONS_SCHEMA = {
             items: {
                 type: 'object',
                 additionalProperties: false,
-                required: ['noteId', 'relation', 'reason'],
+                required: ['noteId', 'relation', 'reason', 'confidence'],
                 properties: {
                     noteId: { type: 'string' },
                     relation: { type: 'string', enum: RELATIONS },
