@@ -15,6 +15,29 @@ const notes = [
     { id: 'd', title: 'Unrelated', source: { sourceType: 'text' }, concepts: [], connections: [], createdAt: '2026-01-04', tldr: 't' }
 ];
 
+test('note action menus open for every source type and expose the appropriate recovery actions', async () => {
+    const app = await readFile(new URL('../js/app.js', import.meta.url), 'utf8');
+    const actions = app.slice(app.indexOf('function noteActions('), app.indexOf('\nfunction addScreenshots('));
+    for (const source of [{ sourceType: 'article' }, { sourceType: 'youtube' }, { sourceType: 'tiktok' },
+        { sourceType: 'text' }, undefined, { sourceType: 'article', partial: true, transcriptSource: 'paywall' }]) {
+        let opened = false;
+        const labels = [];
+        const context = vm.createContext({
+            safeHref: (url) => url || '', h: () => ({}),
+            actionRow: (label) => { labels.push(label); return {}; },
+            openSheet: () => { opened = true; }, closeSheet: () => {},
+            getSettings: () => ({ depth: 'auto' }), depthLabel: () => 'Auto',
+            note: { id: 'test', title: 'Saved note', source: source ? { ...source, url: 'https://example.com/story' } : undefined }
+        });
+        vm.runInContext(`${actions}\nnoteActions(note, new Map());`, context);
+        assert.strictEqual(opened, true);
+        assert.ok(labels.includes('Export as Markdown'));
+        assert.ok(labels.includes('Delete note'));
+        assert.strictEqual(labels.includes('Add screenshots'), source?.sourceType === 'article');
+        assert.strictEqual(labels.includes('Paste the full article'), source?.transcriptSource === 'paywall');
+    }
+});
+
 test('Safari Shortcut flags a short capture and chooses the largest article', async () => {
     const app = await readFile(new URL('../js/app.js', import.meta.url), 'utf8');
     const literal = app.match(/^const PAGE_SCRIPT = ('.*');$/m)?.[1];
