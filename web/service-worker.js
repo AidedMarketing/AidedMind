@@ -1,5 +1,5 @@
 // App shell cache. API calls always go to the network.
-const CACHE_NAME = 'aidedmind-v29';
+const CACHE_NAME = 'aidedmind-v30';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -45,17 +45,13 @@ self.addEventListener('fetch', (event) => {
     const url = new URL(request.url);
     if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.includes('/api/')) return;
 
-    if (request.mode === 'navigate') {
-        // Network first so updates land; fall back to the cached shell
-        // (this also covers /share?url=… launched from the share sheet).
-        event.respondWith(
-            fetch(request).catch(() => caches.match('./index.html'))
-        );
-        return;
-    }
-    // App files come only from this version's cache, filled in one go at
-    // install. Refreshing them one by one in the background could mix files
-    // from two versions; a new version arrives as a new service worker.
-    event.respondWith(caches.match(request).then((cached) => cached || fetch(request)));
+    // HTML is part of the release too. A network-first document can combine
+    // new markup with an old controller's CSS and JavaScript during an update.
+    // Serve the whole shell from this controller's cache until the new worker
+    // takes over; app.js then reloads or offers Reload when a draft is active.
+    // Share URLs still render the shell and keep their original query string.
+    event.respondWith(caches.open(CACHE_NAME).then(async (cache) => {
+        const cached = await cache.match(request.mode === 'navigate' ? './index.html' : request);
+        return cached || fetch(request);
+    }));
 });
-

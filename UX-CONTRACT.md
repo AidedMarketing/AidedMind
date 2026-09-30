@@ -15,7 +15,7 @@ The original implementation brief and current user feedback own the navigation a
 | Status feedback | Shared `toast`, notes save status | Transient feedback / persistent inline error | Live region and save-state checks |
 | Explore controls | `graphView`, `web/shell.css` | Full fabric / focused neighborhood | Theme zoom, Fit All, synchronized accessible list |
 
-Brand imprints have no href, click handler or tabindex. Only Library, Explore and More are primary destinations. Add stays a global header action. Explore controls must never obscure canvas labels; list overlays remain within the canvas. Scrolling and viewport resizing must not hide navigation targets.
+Brand imprints have no href, click handler or tabindex. Only Library, Explore and More are primary destinations. Add stays a global header action. Explore controls must never obscure canvas labels; list overlays remain within the canvas. Scrolling and viewport resizing must not hide navigation targets. Feedback cannot cover the header. Tab changes reveal the new panel heading without moving focus. The service worker serves document and assets from the same named release cache during online and offline navigation, including share URLs.
 
 The Share Sheet action saves first. A successful Shortcut response means the server stored the item, not that the breakdown is complete. A failed HTTP request must never display a saved confirmation. The one Shortcut has a Safari page branch that can include visible text and a link branch for other apps.
 

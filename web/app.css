@@ -588,7 +588,7 @@ details.card[open] summary { margin-bottom: 12px; }
     position: fixed;
     z-index: 60;
     left: 50%;
-    top: calc(var(--safe-top) + 6px);
+    top: calc(var(--safe-top) + var(--nav-h) + var(--space-2));
     transform: translate(-50%, -12px);
     width: max-content;
     max-width: calc(100vw - 32px);

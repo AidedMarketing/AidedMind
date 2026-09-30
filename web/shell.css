@@ -67,6 +67,12 @@ body[data-screen="note"][data-panel="breakdown"] .navbar.scrolled { border-color
 .tabbar a.active::before { content: ''; position: absolute; top: 0; width: 24px; height: 2px; background: var(--accent); }
 .tabbar a:hover, .nav-button:hover { background: var(--accent-soft); }
 .fabric-mark { opacity: 1; }
+/* Tint the existing imprint asset from the same token as relationship actions. */
+.fabric-mark {
+    background: var(--accent);
+    -webkit-mask: url('icons/mark.svg') center / contain no-repeat;
+    mask: url('icons/mark.svg') center / contain no-repeat;
+}
 
 /* Explore reserves its controls above the canvas; labels cannot sit behind them. */
 .graph-page {

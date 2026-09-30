@@ -3,7 +3,7 @@
 AidedMind is a personal knowledge publication whose pages become a knowledge fabric. Prefer the quieter option while reading, the clearer option while navigating, and the more expressive option when showing connections.
 
 ## Foundation
-v29 repairs the v28 shell while preserving the v27 product foundation. Library / Explore / More and global Add remain intact; saved pieces retain Breakdown / Links / Notes. Capture, source handling, automatic and manual connections, rejection memory, data architecture, exports and stable map neighborhoods remain the foundation.
+v30 keeps the v29 editorial shell coherent during updates while preserving the v27 product foundation. Library / Explore / More and global Add remain intact; saved pieces retain Breakdown / Links / Notes. Capture, source handling, automatic and manual connections, rejection memory, data architecture, exports and stable map neighborhoods remain the foundation.
 
 ## Typography
 Newsreader variable serif is bundled locally at `web/fonts/Newsreader.ttf` (SIL OFL, included alongside it). Use it for publication titles, reading leads, headings, pull quotes and relationship titles. System UI sans serves navigation, metadata, controls and diagnostics. Reading sections target 72ch and generous line height.
@@ -31,7 +31,10 @@ Explore uses three grid rows: editorial heading and controls, the canvas, then t
 Library offers a truthful count of extant note edges, including automatic links and backlinks. Reading UI stays quiet. Links uses cross-reference rules and equal treatment for automatic and manual origins. Explore expresses the fabric with stable neighborhoods. Source coloring never changes layout grouping.
 
 ## Mark
-The imprint refines the existing central-node and four-outer-node geometry. SVG, favicon, PNG PWA icons and Apple touch icon share the mark. Loading resolves once without an endless loop.
+The imprint refines the existing central-node and four-outer-node geometry. SVG, favicon, PNG PWA icons and Apple touch icon share the mark. In-app marks use the original SVG as a mask tinted by the accent token, so dark mode has the same readable lavender signature. Loading resolves once without an endless loop.
+
+## Updates and feedback
+The active service worker serves HTML, CSS and JavaScript from its own named release cache. New HTML must not arrive ahead of the matching assets. Controller changes retain the existing safe reload/draft protection. Feedback sits below the header, and switching saved-piece tabs reveals the new panel's beginning without moving keyboard focus.
 
 ## Accessibility and preferences
 System appearance is the default; local light/dark override is optional. Larger reading text and reduced motion are local display preferences, outside knowledge data and exports. OS reduced motion always applies. Touch controls target at least 44px. Sheets trap focus, inert background content, close with Escape and restore the trigger. Saved-piece tabs support arrows, Home and End. Notes announce Saving…, Saved and storage errors without discarding entered text. Map keeps its synchronized textual equivalent.
