@@ -1327,7 +1327,9 @@ function graphView(params = new URLSearchParams()) {
             const focus = notes.find((note) => note.id === focusId);
             if (focus) legend.append(h('a', { class: 'legend-item glass focus-pill', href: '#/graph' }, `Focused · ${focus.title}`, h('span', { class: 'count' }, 'All Map')));
         }
-        if (byTheme && themes.themes.length) {
+        if (themes.themes.length) {
+            // Themes are spatial neighborhoods regardless of how note dots are
+            // colored. Tap once to zoom into a neighborhood; tap again for its list.
             themes.themes.forEach((theme) => legend.append(h('button', {
                 type: 'button',
                 class: `legend-item glass${activeTheme === theme.id ? ' active' : ''}`,
@@ -1340,14 +1342,18 @@ function graphView(params = new URLSearchParams()) {
                     activeTheme = theme.id;
                     search.value = '';
                     graph.highlightTheme(theme.id);
+                    graph.fitTheme(theme.id);
                     paintLegend();
                     paintAccessibleList();
                 }
             }, topicMark(theme.label, theme.color), h('span', { class: 'count' }, String(theme.noteIds.length)))));
             if (unsorted) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': 'var(--theme-none)' } }, h('i'), 'Unsorted', h('span', { class: 'count' }, String(unsorted))));
+            if (!byTheme) {
+                types.forEach((type) => legend.append(h('span', { class: 'legend-item glass source-key', style: { '--dot': `var(--node-${type})` } }, h('i'), SOURCE_LABELS[type])));
+            }
         } else {
             types.forEach((type) => legend.append(h('span', { class: 'legend-item glass', style: { '--dot': `var(--node-${type})` } }, h('i'), SOURCE_LABELS[type])));
-            if (byTheme && notes.length >= 3) legend.append(h('span', { class: 'legend-item glass' }, 'Themes appear as your notes start to connect'));
+            if (notes.length >= 3) legend.append(h('span', { class: 'legend-item glass' }, 'Themes appear as your notes start to connect'));
         }
         if (settings.showConcepts) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': byTheme && themes.themes.length ? 'var(--theme-none)' : 'var(--node-concept)' } }, h('i', { class: 'diamond' }), 'Shared idea'));
     };
@@ -1393,6 +1399,7 @@ function graphView(params = new URLSearchParams()) {
         if (activeTheme && !graph.nodeAt(event.clientX - rect.left, event.clientY - rect.top)) {
             activeTheme = null;
             graph.highlightTheme(null);
+            graph.fit();
             paintLegend();
         }
     });
