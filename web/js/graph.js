@@ -234,6 +234,13 @@ export class GraphView {
         if ((counts.get('__unsorted__') || 0) > 1) themeOrder.push('__unsorted__');
         if (!themeOrder.length) return new Map();
 
+        // When Explore was opened from a saved piece, its own neighborhood
+        // becomes the centre of the focused map instead of whichever theme is
+        // largest globally.
+        const focusGroup = this.byId.get(this.focusId)?.layoutGroup;
+        const focusIndex = focusGroup ? themeOrder.indexOf(focusGroup) : -1;
+        if (focusIndex > 0) themeOrder.unshift(themeOrder.splice(focusIndex, 1)[0]);
+
         // Largest/primary theme occupies the visual centre. Remaining themes
         // sit on compact rings around it, so the map has recognizable places
         // instead of a single cloud that keeps expanding.
