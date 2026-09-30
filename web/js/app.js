@@ -56,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '24';
+const APP_VERSION = '25';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -912,6 +912,7 @@ async function backfillTopics({ manual = false } = {}) {
 
 function noteActions(note, byId) {
     const href = safeHref(note.source?.url);
+    const type = note.source?.sourceType || 'text';
     openSheet(
         h('h3', {}, note.title),
         h('div', { class: 'stack' },
