@@ -262,6 +262,7 @@ try {
         await context.setOffline(true);
         await page.reload();
         await page.getByRole('heading', { name: 'Library', exact: true }).waitFor();
+        await page.evaluate(() => document.fonts.ready);
         assert.ok(await page.evaluate(() => document.fonts.check('20px Newsreader')));
         await browser.close();
     });

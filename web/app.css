@@ -1453,3 +1453,6 @@ body[data-panel="notes"] .tab-panel > textarea { min-height: 260px; background: 
 :root[data-appearance="dark"] .fabric-mark { filter: brightness(1.8) saturate(.7); }
 @media (prefers-color-scheme: dark) { :root:not([data-appearance="light"]) .fabric-mark { filter: brightness(1.8) saturate(.7); } }
 @media (min-width: 960px) { .navbar-imprint { display: none; } }
+
+/* Inline references remain distinguishable from surrounding ink in both editions. */
+p a:not(.btn), .tip a, .group-footer a { text-decoration: underline; text-underline-offset: .18em; }

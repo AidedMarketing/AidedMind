@@ -34,12 +34,21 @@ function luminance(hex) {
         .map((v) => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4);
     return .2126 * values[0] + .7152 * values[1] + .0722 * values[2];
 }
-test('editorial ink, metadata and action palette meets normal-text contrast', () => {
-    for (const palette of [
-        { backgrounds: ['f6f2e9', 'fcf9f2', 'eee8dd'], foregrounds: ['302d28', '615b52', '6a6157', '6b5087'] },
-        { backgrounds: ['242320', '2c2b28', '34332f'], foregrounds: ['f4efe5', 'cbc4b8', 'b5aea3', 'c7b8e8'] }
-    ]) for (const bg of palette.backgrounds) for (const fg of palette.foregrounds) {
-        const a = luminance(bg), b = luminance(fg);
-        assert.ok((Math.max(a, b) + .05) / (Math.min(a, b) + .05) >= 4.5, fg + ' on ' + bg);
+test('editorial ink, metadata and action palette meets normal-text contrast', async () => {
+    const css = await readFile(new URL('../app.css', import.meta.url), 'utf8');
+    for (const selector of [':root {', ':root[data-appearance="light"] {']) {
+        const start = css.indexOf(selector);
+        assert.ok(start >= 0);
+        const block = css.slice(start, css.indexOf('}', start));
+        const color = (name) => {
+            const value = block.match(new RegExp('--' + name + ':\\s*#([a-f0-9]{6});', 'i'));
+            assert.ok(value, selector + ' ' + name);
+            return value[1];
+        };
+        for (const bg of ['bg', 'surface', 'surface-2'].map(color))
+            for (const fg of ['text', 'text-2', 'text-3', 'accent'].map(color)) {
+                const a = luminance(bg), b = luminance(fg);
+                assert.ok((Math.max(a, b) + .05) / (Math.min(a, b) + .05) >= 4.5, fg + ' on ' + bg);
+            }
     }
 });
