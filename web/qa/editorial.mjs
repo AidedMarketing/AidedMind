@@ -176,7 +176,7 @@ try {
             await goto('graph?focus=a');
             await page.locator('.focus-pill').waitFor();
             await page.getByRole('button', { name: 'Fit All' }).click();
-            await page.waitForURL('**/#/graph');
+            await page.waitForURL((address) => address.hash === '#/graph');
             assert.equal(await page.locator('.focus-pill').count(), 0);
         });
         await check(label + ' More, backup, ZIP and appearance', async () => {

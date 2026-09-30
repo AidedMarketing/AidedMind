@@ -1448,3 +1448,8 @@ body[data-panel="notes"] .tab-panel > textarea { min-height: 260px; background: 
 @media (forced-colors: active) {
     .chip, .btn, .float-button, .segmented button, .link-remove { border: 1px solid ButtonText; }
 }
+
+.navbar-imprint { display: flex; align-items: center; gap: var(--space-1); min-height: 44px; color: var(--ink); font: 500 1.125rem/1 var(--display-serif); padding-left: var(--space-2); }
+:root[data-appearance="dark"] .fabric-mark { filter: brightness(1.8) saturate(.7); }
+@media (prefers-color-scheme: dark) { :root:not([data-appearance="light"]) .fabric-mark { filter: brightness(1.8) saturate(.7); } }
+@media (min-width: 960px) { .navbar-imprint { display: none; } }

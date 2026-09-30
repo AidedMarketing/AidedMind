@@ -224,7 +224,9 @@ function setNav({ title = '', left = null, right = null, hidden = false } = {}) 
     document.body.dataset.screen = title === 'Library' ? 'library' : title === 'More' ? 'settings' : title === 'Add' ? 'capture' : 'note';
     navbar.classList.toggle('hidden-bar', hidden);
     document.getElementById('nav-title').textContent = title;
-    document.getElementById('nav-left').replaceChildren(...[left].flat().filter(Boolean));
+    const imprint = !hidden && !left && ['Library', 'More', 'Add', 'Explore'].includes(title)
+        ? h('a', { class: 'navbar-imprint', href: '#/library', 'aria-label': 'AidedMind Library' }, fabricMark(30), h('span', {}, 'AidedMind')) : null;
+    document.getElementById('nav-left').replaceChildren(...[left || imprint].flat().filter(Boolean));
     document.getElementById('nav-right').replaceChildren(...[right].flat().filter(Boolean));
     updateNavShadow();
 }
