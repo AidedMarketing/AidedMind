@@ -6,7 +6,7 @@ Share a link from your iPhone (an article, a YouTube video, a TikTok), take a ph
 - **In short**: a two or three sentence TL;DR
 - **Breakdown**: one fluid reading view with the section-by-section summary, takeaways, quotes worth keeping, and the source outline
 - **Links**: strong connections to notes already in your library are added automatically, each with a reason (supports / contradicts / extends / example-of). You can add your own links or mark an automatic link as not related.
-- **Map**: the payoff of those links: an Obsidian-style graph that grows as you save, grouped into colored **themes** (topics) automatically. Ideas shared by two or more notes are diamonds. Tap anything to preview it, or use the accessible list view.
+- **Map**: the payoff of those links: a knowledge graph that grows as you save, organized into stable **theme neighborhoods** so related notes stay together instead of drifting into one loose cloud. Ideas shared by two or more notes are diamonds. Tap a theme to zoom into its neighborhood, tap a point to preview it, or use the accessible list view.
 
 Built for iPhone first (installable web app, A.M. family design: warm dark / warm light with lavender accents), running hands-off on Cloudflare's free plan. Your notes live only on your device. Export them as a `.zip` of Markdown files with `[[wikilinks]]` for Obsidian, or as a JSON backup.
 

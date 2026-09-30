@@ -122,14 +122,13 @@ export class GraphView {
 
     setData({ nodes, links }) {
         const previous = new Map(this.nodes.map((n) => [n.id, n]));
-        const radius = Math.sqrt(nodes.length) * 40;
-        this.nodes = nodes.map((node, i) => {
+        this.nodes = nodes.map((node) => {
             const old = previous.get(node.id);
-            const angle = i * 2.399963; // golden angle spiral for an even start
             return {
                 ...node,
-                x: old ? old.x : Math.cos(angle) * radius * Math.sqrt(i / Math.max(1, nodes.length)),
-                y: old ? old.y : Math.sin(angle) * radius * Math.sqrt(i / Math.max(1, nodes.length)),
+                layoutGroup: node.isNote ? (node.theme || '__unsorted__') : null,
+                x: old?.x ?? 0,
+                y: old?.y ?? 0,
                 vx: 0,
                 vy: 0,
                 degree: 0
@@ -146,11 +145,63 @@ export class GraphView {
             this.neighbors.get(l.target.id).add(l.source.id);
         });
         this.byId = byId;
+
+        // Concepts that mostly live inside one theme belong visually to that
+        // neighborhood. Bridge concepts stay between their connected themes.
+        this.nodes.filter((node) => !node.isNote).forEach((node) => {
+            const counts = new Map();
+            let total = 0;
+            (this.neighbors.get(node.id) || []).forEach((id) => {
+                const neighbor = byId.get(id);
+                if (!neighbor?.isNote || !neighbor.theme) return;
+                counts.set(neighbor.theme, (counts.get(neighbor.theme) || 0) + 1);
+                total++;
+            });
+            const top = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+            if (top && top[1] >= 2 && top[1] >= total * 0.6) node.layoutGroup = top[0];
+        });
+
+        this.clusterAnchors = this.computeClusterAnchors();
+        const groupCounts = new Map();
+        this.nodes.filter((node) => node.isNote).forEach((node) => {
+            groupCounts.set(node.layoutGroup, (groupCounts.get(node.layoutGroup) || 0) + 1);
+        });
+
+        this.nodes.forEach((node, index) => {
+            if (previous.has(node.id)) return;
+            const anchor = node.layoutGroup && this.clusterAnchors.get(node.layoutGroup);
+            if (anchor) {
+                const count = groupCounts.get(node.layoutGroup) || 1;
+                const spread = Math.min(76, 24 + Math.sqrt(count) * 13);
+                const hash = this.hash(node.id);
+                const angle = ((hash % 3600) / 3600) * Math.PI * 2;
+                const distance = 8 + (((hash >>> 8) % 1000) / 1000) * spread;
+                node.x = anchor.x + Math.cos(angle) * distance;
+                node.y = anchor.y + Math.sin(angle) * distance;
+                return;
+            }
+            if (!node.isNote) {
+                const neighborAnchors = [...(this.neighbors.get(node.id) || [])]
+                    .map((id) => byId.get(id)?.layoutGroup)
+                    .map((group) => group && this.clusterAnchors.get(group))
+                    .filter(Boolean);
+                if (neighborAnchors.length) {
+                    node.x = neighborAnchors.reduce((sum, a) => sum + a.x, 0) / neighborAnchors.length;
+                    node.y = neighborAnchors.reduce((sum, a) => sum + a.y, 0) / neighborAnchors.length;
+                    return;
+                }
+            }
+            const angle = index * 2.399963;
+            const radius = 40 + Math.sqrt(nodes.length) * 16;
+            node.x = Math.cos(angle) * radius;
+            node.y = Math.sin(angle) * radius;
+        });
+
         if (!previous.size) this.fitSoon = true;
         if (this.reducedMotion) {
             // Settle to a useful static layout without showing continuous motion.
-            this.alpha = 0.35;
-            for (let i = 0; i < 45; i++) this.step();
+            this.alpha = 0.42;
+            for (let i = 0; i < 70; i++) this.step();
             this.alpha = 0;
             if (this.fitSoon) {
                 this.fit();
@@ -160,6 +211,58 @@ export class GraphView {
         } else {
             this.reheat(1);
         }
+    }
+
+    hash(value) {
+        let hash = 2166136261;
+        const text = String(value || '');
+        for (let i = 0; i < text.length; i++) {
+            hash ^= text.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
+        }
+        return hash >>> 0;
+    }
+
+    computeClusterAnchors() {
+        const counts = new Map();
+        this.nodes.filter((node) => node.isNote).forEach((node) => {
+            counts.set(node.layoutGroup, (counts.get(node.layoutGroup) || 0) + 1);
+        });
+        const themeOrder = this.themes
+            .filter((theme) => counts.has(theme.id))
+            .map((theme) => theme.id);
+        if ((counts.get('__unsorted__') || 0) > 0) themeOrder.push('__unsorted__');
+        if (!themeOrder.length) return new Map();
+
+        // When Explore was opened from a saved piece, its own neighborhood
+        // becomes the centre of the focused map instead of whichever theme is
+        // largest globally.
+        const focusGroup = this.byId.get(this.focusId)?.layoutGroup;
+        const focusIndex = focusGroup ? themeOrder.indexOf(focusGroup) : -1;
+        if (focusIndex > 0) themeOrder.unshift(themeOrder.splice(focusIndex, 1)[0]);
+
+        // Largest/primary theme occupies the visual centre. Remaining themes
+        // sit on compact rings around it, so the map has recognizable places
+        // instead of a single cloud that keeps expanding.
+        const anchors = new Map();
+        anchors.set(themeOrder[0], { x: 0, y: 0 });
+        if (themeOrder.length === 1) return anchors;
+
+        const portrait = this.height > this.width * 1.15;
+        const base = 150 + Math.min(70, Math.sqrt(this.nodes.length) * 8);
+        const peripheral = themeOrder.slice(1);
+        peripheral.forEach((id, index) => {
+            const ring = Math.floor(index / 6) + 1;
+            const slot = index % 6;
+            const slots = Math.min(6, peripheral.length - (ring - 1) * 6);
+            const angle = -Math.PI / 2 + (slot * Math.PI * 2) / Math.max(1, slots);
+            const radius = base * ring;
+            anchors.set(id, {
+                x: Math.cos(angle) * radius * (portrait ? 0.82 : 1),
+                y: Math.sin(angle) * radius * (portrait ? 1.08 : 0.92)
+            });
+        });
+        return anchors;
     }
 
     setHighlight(query) {
@@ -185,6 +288,10 @@ export class GraphView {
 
     themed() {
         return this.colorBy === 'theme' && this.themes.length > 0;
+    }
+
+    clustered() {
+        return this.areas && this.clusterAnchors?.size > 0;
     }
 
     radius(node) {
@@ -269,10 +376,9 @@ export class GraphView {
     step() {
         const nodes = this.nodes;
         const alpha = this.alpha;
-        const repulsion = 2200;
-        // With themes on, notes from different themes push apart harder so
-        // each topic gets its own area instead of overlapping.
-        const themed = this.themed() && this.areas;
+        const clustered = this.clustered();
+        const repulsion = clustered ? 850 : 1800;
+
         for (let i = 0; i < nodes.length; i++) {
             const a = nodes[i];
             for (let j = i + 1; j < nodes.length; j++) {
@@ -281,76 +387,89 @@ export class GraphView {
                 let dy = b.y - a.y;
                 let dist2 = dx * dx + dy * dy;
                 if (dist2 < 0.01) {
-                    dx = Math.random() - 0.5;
-                    dy = Math.random() - 0.5;
+                    const angle = ((this.hash(a.id + '|' + b.id) % 3600) / 3600) * Math.PI * 2;
+                    dx = Math.cos(angle) * 0.5;
+                    dy = Math.sin(angle) * 0.5;
                     dist2 = 0.25;
                 }
-                if (dist2 > 360000) continue;
-                const apart = themed && a.theme !== b.theme && (a.theme || b.theme) ? 3 : 1;
-                const force = (repulsion * apart * alpha) / dist2;
+                if (dist2 > (clustered ? 110000 : 360000)) continue;
+                const sameGroup = a.layoutGroup && b.layoutGroup && a.layoutGroup === b.layoutGroup;
+                const factor = clustered && !sameGroup ? 0.18 : 1;
+                const force = (repulsion * factor * alpha) / dist2;
                 const dist = Math.sqrt(dist2);
                 const fx = (dx / dist) * force;
                 const fy = (dy / dist) * force;
                 a.vx -= fx; a.vy -= fy;
                 b.vx += fx; b.vy += fy;
+
+                // Keep points readable without forcing the whole map outward.
+                const minDist = this.radius(a) + this.radius(b) + (sameGroup ? 13 : 9);
+                if (dist < minDist) {
+                    const push = (minDist - dist) * 0.11 * alpha;
+                    a.vx -= (dx / dist) * push;
+                    a.vy -= (dy / dist) * push;
+                    b.vx += (dx / dist) * push;
+                    b.vy += (dy / dist) * push;
+                }
             }
         }
+
         this.links.forEach((link) => {
             const { source, target } = link;
             const dx = target.x - source.x;
             const dy = target.y - source.y;
             const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            const ideal = link.kind === 'concept' ? 75 : 115;
-            // Shared-idea links pull less when themes are on, so an idea that
-            // spans two themes doesn't drag notes out of their own area.
-            const strength = (link.kind === 'concept' ? (themed ? 0.025 : 0.05) : 0.08) * alpha;
+            const sameGroup = source.layoutGroup && source.layoutGroup === target.layoutGroup;
+            const ideal = link.kind === 'concept' ? (sameGroup ? 58 : 105) : (sameGroup ? 72 : 155);
+            const strength = (link.kind === 'concept' ? 0.045 : (sameGroup ? 0.11 : 0.026)) * alpha;
             const k = ((dist - ideal) / dist) * strength;
             source.vx += dx * k; source.vy += dy * k;
             target.vx -= dx * k; target.vy -= dy * k;
         });
-        // Themes: pull each note gently toward its theme's centre, so topics
-        // settle into their own areas of the map.
-        if (this.themed() && this.areas) {
-            const centres = new Map();
+
+        if (clustered) {
             nodes.forEach((node) => {
-                if (!node.theme) return;
-                const c = centres.get(node.theme) || { x: 0, y: 0, n: 0 };
-                c.x += node.x; c.y += node.y; c.n++;
-                centres.set(node.theme, c);
-            });
-            nodes.forEach((node) => {
-                const c = node.theme && centres.get(node.theme);
-                if (!c || c.n < 2) return;
-                node.vx += (c.x / c.n - node.x) * 0.08 * alpha;
-                node.vy += (c.y / c.n - node.y) * 0.08 * alpha;
+                const anchor = node.layoutGroup && this.clusterAnchors.get(node.layoutGroup);
+                if (!anchor) return;
+                const strength = node.isNote ? (node.layoutGroup === '__unsorted__' ? 0.075 : 0.14) : 0.09;
+                node.vx += (anchor.x - node.x) * strength * alpha;
+                node.vy += (anchor.y - node.y) * strength * alpha;
             });
         }
-        // Pull harder along the short screen axis so the layout matches a
-        // portrait phone instead of settling into a wide blob.
-        const portrait = this.height > this.width * 1.2;
-        const gx = 0.008 * (portrait ? 2.2 : 1);
-        const gy = 0.008 * (portrait ? 0.8 : 1.4);
+
+        // A very light global gravity keeps bridge concepts from drifting away,
+        // while fixed cluster homes do the real organizing.
         nodes.forEach((node) => {
-            node.vx -= node.x * gx * alpha;
-            node.vy -= node.y * gy * alpha;
+            node.vx -= node.x * 0.0025 * alpha;
+            node.vy -= node.y * 0.0025 * alpha;
             if (node === this.drag?.node) return;
-            node.vx *= 0.6;
-            node.vy *= 0.6;
+            node.vx *= 0.58;
+            node.vy *= 0.58;
             node.x += node.vx;
             node.y += node.vy;
         });
-        this.alpha *= 0.985;
+        this.alpha *= clustered ? 0.978 : 0.985;
     }
 
     fit() {
-        if (!this.nodes.length || !this.width) return;
-        // Leave room for the theme areas and their names around the dots.
-        const pad = this.themed() && this.areas ? 34 : 0;
-        const xs = this.nodes.map((n) => n.x);
-        const ys = this.nodes.map((n) => n.y);
+        this.fitNodes(this.nodes, { maxZoom: 2 });
+    }
+
+    fitTheme(themeId) {
+        const members = this.nodes.filter((node) => node.theme === themeId || (!node.isNote && node.layoutGroup === themeId));
+        if (members.length) this.fitNodes(members, { maxZoom: 3.2 });
+    }
+
+    fitNodes(nodes, { maxZoom = 2 } = {}) {
+        if (!nodes?.length || !this.width) return;
+        const pad = this.clustered() ? 42 : 18;
+        const xs = nodes.map((n) => n.x);
+        const ys = nodes.map((n) => n.y);
         const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
-        const minY = Math.min(...ys) - pad * 1.6, maxY = Math.max(...ys) + pad;
-        const k = Math.min(2, Math.min((this.width - 60) / Math.max(80, maxX - minX), (this.height * 0.72) / Math.max(80, maxY - minY)));
+        const minY = Math.min(...ys) - pad * 1.35, maxY = Math.max(...ys) + pad;
+        const availableWidth = Math.max(120, this.width - 64);
+        const availableHeight = Math.max(160, this.height * 0.7);
+        const k = Math.min(maxZoom, Math.min(availableWidth / Math.max(70, maxX - minX), availableHeight / Math.max(70, maxY - minY)));
         this.transform = {
             k,
             x: this.width / 2 - ((minX + maxX) / 2) * k,
@@ -384,7 +503,7 @@ export class GraphView {
         const palette = this.palette();
         const { line: lineColor, lineStrong, label: labelColor, dimLabel } = palette;
         ctx.clearRect(0, 0, width, height);
-        if (this.themed() && this.areas) this.drawThemeAreas(palette);
+        if (this.clustered()) this.drawThemeAreas(palette);
         ctx.save();
         ctx.translate(transform.x, transform.y);
         ctx.scale(transform.k, transform.k);
@@ -433,7 +552,7 @@ export class GraphView {
             }
         });
 
-        const placedThemes = this.themed() && this.areas ? this.drawThemeLabels(palette) : [];
+        const placedThemes = this.clustered() ? this.drawThemeLabels(palette) : [];
         const fontSize = 12.5 / transform.k;
         ctx.font = `500 ${fontSize}px -apple-system, system-ui, sans-serif`;
         ctx.textAlign = 'center';

@@ -56,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '26';
+const APP_VERSION = '27';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -1302,11 +1302,12 @@ function graphView(params = new URLSearchParams()) {
         const q = search.value.trim().toLowerCase();
         const matches = notes
             .filter((note) => graphNoteIds.has(note.id))
+            .filter((note) => !activeTheme || themes.byNote.get(note.id) === activeTheme)
             .filter((note) => !q || [note.title, note.topic, note.tldr, ...(note.tags || [])].join(' ').toLowerCase().includes(q))
             .sort((a, b) => a.title.localeCompare(b.title));
         accessibleList.replaceChildren(
             h('div', { class: 'graph-access-head' },
-                h('div', {}, h('strong', {}, focusId ? 'Connected notes' : 'Map notes'), h('span', { class: 'small muted' }, `${matches.length} shown`)),
+                h('div', {}, h('strong', {}, activeTheme ? 'Theme notes' : focusId ? 'Connected notes' : 'Map notes'), h('span', { class: 'small muted' }, `${matches.length} shown`)),
                 h('button', { type: 'button', class: 'graph-list-close', 'aria-label': 'Close Map list', onclick: () => {
                     accessibleList.hidden = true;
                     listButton.setAttribute('aria-pressed', 'false');
@@ -1327,7 +1328,9 @@ function graphView(params = new URLSearchParams()) {
             const focus = notes.find((note) => note.id === focusId);
             if (focus) legend.append(h('a', { class: 'legend-item glass focus-pill', href: '#/graph' }, `Focused · ${focus.title}`, h('span', { class: 'count' }, 'All Map')));
         }
-        if (byTheme && themes.themes.length) {
+        if (themes.themes.length) {
+            // Themes are spatial neighborhoods regardless of how note dots are
+            // colored. Tap once to zoom into a neighborhood; tap again for its list.
             themes.themes.forEach((theme) => legend.append(h('button', {
                 type: 'button',
                 class: `legend-item glass${activeTheme === theme.id ? ' active' : ''}`,
@@ -1340,14 +1343,18 @@ function graphView(params = new URLSearchParams()) {
                     activeTheme = theme.id;
                     search.value = '';
                     graph.highlightTheme(theme.id);
+                    graph.fitTheme(theme.id);
                     paintLegend();
                     paintAccessibleList();
                 }
             }, topicMark(theme.label, theme.color), h('span', { class: 'count' }, String(theme.noteIds.length)))));
             if (unsorted) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': 'var(--theme-none)' } }, h('i'), 'Unsorted', h('span', { class: 'count' }, String(unsorted))));
+            if (!byTheme) {
+                types.forEach((type) => legend.append(h('span', { class: 'legend-item glass source-key', style: { '--dot': `var(--node-${type})` } }, h('i'), SOURCE_LABELS[type])));
+            }
         } else {
             types.forEach((type) => legend.append(h('span', { class: 'legend-item glass', style: { '--dot': `var(--node-${type})` } }, h('i'), SOURCE_LABELS[type])));
-            if (byTheme && notes.length >= 3) legend.append(h('span', { class: 'legend-item glass' }, 'Themes appear as your notes start to connect'));
+            if (notes.length >= 3) legend.append(h('span', { class: 'legend-item glass' }, 'Themes appear as your notes start to connect'));
         }
         if (settings.showConcepts) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': byTheme && themes.themes.length ? 'var(--theme-none)' : 'var(--node-concept)' } }, h('i', { class: 'diamond' }), 'Shared idea'));
     };
@@ -1393,6 +1400,7 @@ function graphView(params = new URLSearchParams()) {
         if (activeTheme && !graph.nodeAt(event.clientX - rect.left, event.clientY - rect.top)) {
             activeTheme = null;
             graph.highlightTheme(null);
+            graph.fit();
             paintLegend();
         }
     });
@@ -1627,7 +1635,7 @@ function settingsView() {
                 })(),
                 h('div', { class: 'small muted', style: { margin: '14px 2px 6px' } }, 'Shared ideas'),
                 segmentedControl('Shared ideas', [['show', 'Show'], ['hide', 'Hide']], settings.showConcepts ? 'show' : 'hide', (value) => saveSettings({ ...getSettings(), showConcepts: value === 'show' })),
-                h('p', { class: 'small muted', style: { margin: '8px 2px 0' } }, `Shared ideas are the diamonds linking notes that mention the same concept.${themes.themes.length ? ' Tap a theme under the map to light it up; tap it again to see its notes.' : ''}`)
+                h('p', { class: 'small muted', style: { margin: '8px 2px 0' } }, `Map neighborhoods always follow themes, even when dots are colored by source. Shared ideas are the diamonds linking notes that mention the same concept.${themes.themes.length ? ' Tap a theme under the map to zoom into its neighborhood; tap it again to see its notes.' : ''}`)
             );
         })(),
 
