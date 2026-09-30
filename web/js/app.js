@@ -330,6 +330,13 @@ async function finishNote(result, title) {
         };
         note.connections = keepAllowedLinks(note, note.connections);
     }
+    note.connections = (note.connections || []).map((connection) => ({
+        ...connection,
+        sourceId: note.id,
+        targetId: connection.noteId,
+        origin: connection.origin === 'user' ? 'user' : 'aidedmind',
+        createdAt: connection.createdAt || new Date().toISOString()
+    }));
     await saveNote(note);
     notes = await allNotes();
     syncPreferences();
@@ -369,7 +376,8 @@ async function startCapture(input, title = '', photos = []) {
         const note = await pending;
         draft = { input: '', title: '', photos: [] };
         pending = null;
-        toast('Saved to your library');
+        const addedLinks = (note.connections || []).length;
+        toast(addedLinks ? `Saved · ${addedLinks} connection${addedLinks === 1 ? '' : 's'} added` : 'Saved to your Library');
         location.hash = `#/note/${encodeURIComponent(note.id)}`;
     } catch (error) {
         pending = null;
