@@ -1,7 +1,7 @@
 # AidedMind
 Your personal knowledge publication. Your knowledge, connected quietly.
 
-**v28 — Editorial Knowledge + Knowledge Fabric:** warm paper and charcoal editions, locally bundled Newsreader typography, a quiet reading surface and a more expressive relationship layer. Mobile keeps Library / Explore / More with global Add; desktop expands the same system with a left rail. More now groups Capture & Sharing, Data & Backup, Accessibility, Appearance and collapsed Advanced Diagnostics. The underlying v27 capture, automatic linking and map neighborhoods remain intact. See [release notes](RELEASE-v28.md) and [design system](DESIGN.md).
+**v29 — Editorial Knowledge + Knowledge Fabric:** repaired mobile navigation, a static publication imprint, aligned Explore controls around a dedicated map canvas, and cleaner warm-paper/graphite editions with restrained lavender. Locally bundled Newsreader typography keeps the reading surface quiet. Mobile keeps Library / Explore / More with global Add; desktop expands the same system with a left rail. The underlying v27 capture, automatic linking and stable map neighborhoods remain intact. See [release notes](RELEASE-v29.md), [design system](DESIGN.md) and [screen review](docs/qa/v29/README.md).
 
 Share a link from your iPhone (an article, a YouTube video, a TikTok), take a photo, or paste any text, and AidedMind gives you:
 
@@ -299,7 +299,7 @@ worker/
   src/store-core.js     SQLite tables: users, inbox, usage, transcript cache, cost ledger
   src/store.js          Durable Object wrapper
 web/
-  index.html, app.css, manifest.webmanifest, service-worker.js, _headers
+  index.html, tokens.css, app.css, shell.css, manifest.webmanifest, service-worker.js, _headers
   js/app.js             views, routing, sheets, inbox sync, settings, accounts, updates
   js/themes.js          map themes: topics, note similarity, clustering, names, colors
   js/graph.js           canvas map (themes, touch, pinch, label placement)

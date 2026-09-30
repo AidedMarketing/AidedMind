@@ -56,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '28';
+const APP_VERSION = '29';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -221,11 +221,12 @@ function noteRow(note) {
 // ---------- Nav bar ----------
 
 function setNav({ title = '', left = null, right = null, hidden = false } = {}) {
-    document.body.dataset.screen = title === 'Library' ? 'library' : title === 'More' ? 'settings' : title === 'Add' ? 'capture' : 'note';
+    document.body.dataset.screen = title === 'Library' ? 'library' : title === 'More' ? 'settings' : title === 'Add' ? 'capture' : title === 'Explore' ? 'graph' : 'note';
     navbar.classList.toggle('hidden-bar', hidden);
     document.getElementById('nav-title').textContent = title;
     const imprint = !hidden && !left && ['Library', 'More', 'Add', 'Explore'].includes(title)
-        ? h('a', { class: 'navbar-imprint', href: '#/library', 'aria-label': 'AidedMind Library' }, fabricMark(30), h('span', {}, 'AidedMind')) : null;
+        ? h('div', { class: 'navbar-imprint', 'aria-label': 'AidedMind' }, fabricMark(24), h('span', {}, 'AidedMind')) : null;
+    navbar.classList.toggle('has-imprint', Boolean(imprint));
     document.getElementById('nav-left').replaceChildren(...[left || imprint].flat().filter(Boolean));
     document.getElementById('nav-right').replaceChildren(...[right].flat().filter(Boolean));
     updateNavShadow();
@@ -238,6 +239,7 @@ function updateNavShadow() {
 window.addEventListener('scroll', updateNavShadow, { passive: true });
 
 function navButton(label, onclick, iconName) {
+    if (iconName === 'add' && !label) label = 'Add';
     return h('button', { type: 'button', class: `nav-button${label ? '' : ' icon-only'}`, onclick, 'aria-label': label || iconName },
         iconName ? icon(iconName, { size: 24, strokeWidth: 2 }) : null,
         label
@@ -285,9 +287,9 @@ function openSheet(...content) {
         else if (event.shiftKey && (document.activeElement === first || document.activeElement === sheet)) { event.preventDefault(); last.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     });
-    requestAnimationFrame(() => {
-        if (sheet.isConnected && !sheet.contains(document.activeElement)) (sheet.querySelector('input:not([type="file"]), textarea:not([readonly])') || sheet.querySelector('button') || sheet).focus();
-    });
+    // Focus before returning so early Escape/Tab cannot land on inert background.
+    const initialFocus = sheet.querySelector('input:not([type="file"]), textarea:not([readonly])') || sheet.querySelector('button') || sheet;
+    initialFocus.focus({ preventScroll: true });
     let startY = null;
     sheet.addEventListener('touchstart', (event) => { startY = sheet.scrollTop <= 0 ? event.touches[0].clientY : null; }, { passive: true });
     sheet.addEventListener('touchend', (event) => {
@@ -1381,7 +1383,7 @@ function themeSheet(theme) {
 }
 
 function graphView(params = new URLSearchParams()) {
-    setNav({ hidden: true });
+    setNav({ title: 'Explore', right: navButton('', () => { location.hash = '#/capture'; }, 'add') });
     document.body.dataset.screen = 'graph';
     const settings = getSettings();
     const requestedFocus = params.get('focus') || '';
@@ -1410,8 +1412,7 @@ function graphView(params = new URLSearchParams()) {
     }, icon('themes', { size: 20, strokeWidth: 2 }));
     const conceptsButton = h('button', { type: 'button', class: `float-button glass${settings.showConcepts ? ' on' : ''}`, 'aria-label': 'Toggle shared ideas', 'aria-pressed': String(settings.showConcepts) }, icon('concept', { size: 20, strokeWidth: 2 }));
     const listButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Show Map as a list', 'aria-pressed': 'false' }, icon('library', { size: 20, strokeWidth: 2 }));
-    const addButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Add to AidedMind', onclick: () => { location.hash = '#/capture'; } }, icon('add', { size: 20, strokeWidth: 2 }));
-    const fitButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Fit All' }, icon('fit', { size: 20, strokeWidth: 2 }));
+    const fitButton = h('button', { type: 'button', class: 'float-button glass fit-all', 'aria-label': 'Fit All' }, icon('fit', { size: 20, strokeWidth: 2 }), h('span', {}, 'Fit All'));
     const types = [...new Set(notes.map((n) => n.source?.sourceType || 'text'))];
     const unsorted = notes.length - themes.byNote.size;
 
@@ -1483,17 +1484,14 @@ function graphView(params = new URLSearchParams()) {
     closeSheet();
     view.classList.add('full');
     view.replaceChildren(h('div', { class: 'graph-page' },
-        canvas,
-        publicationHeader('VISUAL INDEX', 'Explore', 'Your knowledge fabric, organized into stable neighborhoods.'),
-        h('div', { class: 'graph-top' },
-            h('label', { class: 'search glass' }, icon('search', { size: 18, strokeWidth: 2.2 }), search),
-            listButton,
-            addButton,
-            colorButton,
-            conceptsButton,
-            fitButton
+        h('div', { class: 'graph-toolbar' },
+            publicationHeader('VISUAL INDEX', 'Explore', 'Your knowledge fabric, organized into stable neighborhoods.'),
+            h('div', { class: 'graph-top', role: 'group', 'aria-label': 'Map controls' },
+                h('label', { class: 'search' }, icon('search', { size: 18, strokeWidth: 2.2 }), search),
+                h('div', { class: 'graph-actions' }, listButton, colorButton, conceptsButton, fitButton)
+            )
         ),
-        accessibleList,
+        h('div', { class: 'graph-canvas' }, canvas, accessibleList),
         legend
     ));
 

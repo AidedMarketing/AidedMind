@@ -25,6 +25,33 @@ jobs:
       - run: npx playwright install --with-deps chromium webkit
       - name: Chromium and WebKit interaction, accessibility and offline checks
         run: node web/qa/editorial.mjs
+      - name: Visual review images
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+          images = [
+              'chromium-320-light-library-viewport.png',
+              'chromium-390-dark-library-viewport.png',
+              'webkit-390-light-more-viewport.png',
+              'chromium-390-dark-map-viewport.png',
+              'chromium-1280-light-map-viewport.png',
+              'webkit-1280-dark-map-viewport.png',
+              'chromium-1280-light-breakdown-viewport.png',
+              'webkit-390-light-links-viewport.png',
+              'webkit-390-light-notes-viewport.png',
+          ]
+          for name in images:
+              path = Path('qa-results') / name
+              if not path.exists():
+                  continue
+              data = base64.b64encode(path.read_bytes()).decode('ascii')
+              print('QA_IMAGE_BEGIN ' + name)
+              for offset in range(0, len(data), 8000):
+                  print('QA_IMAGE_DATA ' + data[offset:offset + 8000])
+              print('QA_IMAGE_END ' + name)
+          PY
       - name: Screenshots and QA report
         if: always()
         uses: actions/upload-artifact@v7

@@ -33,6 +33,8 @@ const configurations = [
     { engine: 'chromium', width: 320, height: 740, colorScheme: 'light' },
     { engine: 'chromium', width: 390, height: 844, colorScheme: 'dark', reducedMotion: 'reduce' },
     { engine: 'chromium', width: 768, height: 1024, colorScheme: 'dark' },
+    { engine: 'chromium', width: 959, height: 900, colorScheme: 'light' },
+    { engine: 'chromium', width: 960, height: 900, colorScheme: 'dark' },
     { engine: 'chromium', width: 1280, height: 900, colorScheme: 'light', largeText: true },
     { engine: 'webkit', width: 390, height: 844, colorScheme: 'light' },
     { engine: 'webkit', width: 1280, height: 900, colorScheme: 'dark' }
@@ -75,7 +77,63 @@ try {
             const serious = result.violations.filter((v) => ['serious', 'critical'].includes(v.impact));
             assert.deepEqual(serious.map((v) => ({ id: v.id, nodes: v.nodes.map((n) => n.target) })), [], label + ' ' + screen + ' accessibility');
         };
-        const screenshot = async (screen) => page.screenshot({ path: resolve(output, label + '-' + screen + '.png'), fullPage: true });
+        const visibleControls = async (selector) => {
+            const problems = await page.locator(selector).evaluateAll((controls) => controls.flatMap((control) => {
+                const box = control.getBoundingClientRect();
+                if (!box.width || !box.height) return [control.textContent + ': hidden'];
+                if (box.left < -1 || box.top < -1 || box.right > innerWidth + 1 || box.bottom > innerHeight + 1)
+                    return [control.textContent + ': outside viewport'];
+                if (box.width < 44 || box.height < 44) return [control.textContent + ': small target'];
+                const points = [[.5,.5], [.1,.1], [.9,.9]];
+                return points.flatMap(([x,y]) => {
+                    const hit = document.elementFromPoint(box.left + box.width * x, box.top + box.height * y);
+                    return hit && (hit === control || control.contains(hit)) ? [] : [control.textContent + ': covered'];
+                });
+            }));
+            assert.deepEqual(problems, [], label + ' ' + selector);
+        };
+        const shellGeometry = async () => {
+            assert.equal(await page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link').count(), 3);
+            assert.equal(await page.getByRole('link', { name: 'AidedMind Library', exact: true }).count(), 0);
+            await visibleControls('.tabbar a');
+            await visibleControls('#navbar button');
+            const overlaps = await page.locator('#navbar').evaluate((navbar) => {
+                const children = [...navbar.children].filter((node) => getComputedStyle(node).display !== 'none');
+                return children.flatMap((node, i) => {
+                    const a = node.getBoundingClientRect();
+                    return children.slice(i + 1).flatMap((other) => {
+                        const b = other.getBoundingClientRect();
+                        return Math.min(a.right,b.right) - Math.max(a.left,b.left) > 1 ? ['header columns overlap'] : [];
+                    });
+                });
+            });
+            assert.deepEqual(overlaps, [], label + ' header');
+        };
+        const mapGeometry = async () => {
+            await shellGeometry();
+            await visibleControls('.graph-top input, .graph-actions button');
+            const geometry = await page.evaluate(() => {
+                const toolbar = document.querySelector('.graph-toolbar').getBoundingClientRect();
+                const canvas = document.querySelector('.graph-canvas').getBoundingClientRect();
+                const legend = document.querySelector('.graph-legend').getBoundingClientRect();
+                const search = document.querySelector('.graph-top .search').getBoundingClientRect();
+                const controls = document.querySelector('.graph-top').getBoundingClientRect();
+                return { toolbarBottom:toolbar.bottom, canvasTop:canvas.top, canvasBottom:canvas.bottom,
+                    canvasHeight:canvas.height, legendTop:legend.top, searchLeft:search.left, controlsLeft:controls.left,
+                    searchWidth:search.width, controlsWidth:controls.width, width:innerWidth };
+            });
+            assert.ok(geometry.toolbarBottom <= geometry.canvasTop + 1, label + ': controls cover canvas');
+            assert.ok(geometry.canvasBottom <= geometry.legendTop + 1, label + ': themes cover canvas');
+            assert.ok(geometry.canvasHeight > 120, label + ': map has no usable space');
+            assert.ok(Math.abs(geometry.searchLeft - geometry.controlsLeft) < 1, label + ': search drifts right');
+            if (geometry.width < 600) assert.ok(Math.abs(geometry.searchWidth - geometry.controlsWidth) < 1, label + ': mobile search is not full width');
+        };
+        const screenshot = async (screen) => {
+            await shellGeometry();
+            await page.screenshot({ path: resolve(output, label + '-' + screen + '.png'), fullPage: true });
+            // Fixed bars need a viewport capture too: full-page images can disguise clipping.
+            await page.screenshot({ path: resolve(output, label + '-' + screen + '-viewport.png') });
+        };
         await check(label + ' empty Library', async () => {
             await goto('library');
             await page.getByText('Your Library is ready for its first idea.', { exact: true }).waitFor();
@@ -103,6 +161,7 @@ try {
             await page.getByRole('button', { name: 'View source passage' }).click();
             assert.equal(await page.locator('[role="dialog"] mark').textContent(), 'Rest helps ideas settle.');
             assert.ok(await page.locator('main').evaluate((el) => el.inert));
+            assert.ok(await page.evaluate(() => Boolean(document.activeElement.closest('[role="dialog"]'))));
             await page.keyboard.press('Escape');
             await page.locator('[role="dialog"]').waitFor({ state: 'detached' });
             assert.equal(await page.evaluate(() => document.activeElement.textContent), 'View source passage');
@@ -161,6 +220,7 @@ try {
         });
         await check(label + ' full Map, theme zoom, Fit All and text equivalent', async () => {
             await goto('graph');
+            await mapGeometry();
             await page.getByRole('button', { name: 'Show Map as a list' }).click();
             assert.equal(await page.locator('.graph-access-item').count(), 4);
             await page.getByRole('button', { name: 'Close Map list' }).click();
@@ -175,6 +235,9 @@ try {
             await noOverflow(); await axe('map-list'); await screenshot('map-list');
             await page.getByRole('button', { name: 'Close Map list' }).click();
             await screenshot('map');
+            await page.setViewportSize({ width: 320, height: 568 });
+            await mapGeometry();
+            await page.setViewportSize({ width: config.width, height: config.height });
             await page.getByRole('button', { name: 'Color by source' }).click();
             await page.getByRole('button', { name: 'Toggle shared ideas' }).click();
         });
@@ -244,7 +307,12 @@ try {
             await page.getByText('Updated waiting article', { exact: true }).waitFor();
             assert.equal(await page.getByRole('searchbox', { name: 'Search library' }).inputValue(), 'no-match-fixture');
             await page.getByText('No results', { exact: true }).waitFor();
-            await page.setViewportSize({ width: 320, height: 740 }); await noOverflow();
+            await page.setViewportSize({ width: 320, height: 740 }); await noOverflow(); await shellGeometry();
+            for (const destination of ['Explore', 'More', 'Library']) {
+                await page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: destination, exact: true }).click();
+                await page.getByRole('heading', { name: destination, exact: true }).waitFor();
+                await shellGeometry();
+            }
             assert.deepEqual(errors, [], label + ' browser errors');
         });
         } catch (error) {
@@ -261,8 +329,8 @@ try {
         await page.evaluate(async () => { await navigator.serviceWorker.ready; });
         await page.reload();
         await page.evaluate(async () => {
-            const cache = await caches.open('aidedmind-v28');
-            for (const path of ['/fonts/Newsreader.ttf', '/icons/mark.svg', '/app.css', '/js/app.js']) {
+            const cache = await caches.open('aidedmind-v29');
+            for (const path of ['/fonts/Newsreader.ttf', '/icons/mark.svg', '/tokens.css', '/shell.css', '/app.css', '/js/app.js']) {
                 if (!(await cache.match(path))) throw Error('Missing cached asset ' + path);
             }
         });
