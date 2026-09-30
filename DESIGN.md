@@ -1,76 +1,30 @@
----
-version: alpha
-name: AidedMind
-description: An iPhone-first reading notebook with quiet, warm surfaces and lavender actions.
-colors:
-  primary: "#c4b6e8"
-  background-dark: "#1c1c27"
-  surface-dark: "#252532"
-  text-dark: "#f0edf5"
-  accent-dark: "#c4b6e8"
-  background-light: "#f7f4ef"
-  surface-light: "#fffdfa"
-  text-light: "#312a40"
-  accent-light: "#695085"
-  danger-dark: "#e9a095"
-  danger-light: "#a14238"
-typography:
-  body:
-    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Text, ui-sans-serif, Segoe UI, Roboto, sans-serif"
-  display:
-    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Display, ui-sans-serif, sans-serif"
-  reading:
-    fontFamily: "ui-serif, New York, Georgia, serif"
-rounded:
-  DEFAULT: "24px"
-  md: "16px"
-  sm: "12px"
-omitted:
-  - section: spacing
-    reason: "The existing app uses component-level spacing, safe-area variables, and responsive rules in web/app.css."
-components:
-  card: {}
-  button: {}
-  bottom-sheet: {}
-  shared-links: {}
----
+# AidedMind — Editorial Knowledge + Knowledge Fabric
 
-# AidedMind Design System
+AidedMind is a personal knowledge publication whose pages become a knowledge fabric. Prefer the quieter option while reading, the clearer option while navigating, and the more expressive option when showing connections.
 
-## Overview
-
-An iPhone reading notebook: the source and the user's note should feel more important than the machinery behind a breakdown. The audience saves articles and videos while reading in other apps, often quickly and with limited attention. The app is an English-language product surface with a compact phone layout. Its signature is the warm dark and light palette with lavender actions; processing and recovery states should remain calm and literal.
-
-This file records the established visual identity. `web/app.css` owns the runtime tokens under `:root` and the light color-scheme override; change both together for a durable token decision. The interface should not resemble a busy feed or an AI chat transcript.
-
-## Colors
-
-Use the existing dark and light surface, text, accent, and danger tokens above. Lavender denotes the primary action; danger colors signal an item needing attention. Do not use danger styling merely because an item is still queued. The additional graph and source colors remain in `web/app.css`.
+## Foundation
+v28 evolves the v27 shell. Library / Explore / More and global Add remain intact; saved pieces retain Breakdown / Links / Notes. Capture, source handling, automatic and manual connections, rejection memory, data architecture, exports and stable map neighborhoods remain the foundation.
 
 ## Typography
+Newsreader variable serif is bundled locally at `web/fonts/Newsreader.ttf` (SIL OFL, included alongside it). Use it for publication titles, reading leads, headings, pull quotes and relationship titles. System UI sans serves navigation, metadata, controls and diagnostics. Reading sections target 72ch and generous line height.
 
-Use the existing system body and display stacks so controls feel native on iPhone. The serif stack is reserved for reading treatment. State labels and errors use short, plain sentences; visible actions name the operation, such as “Add text.”
+## Surfaces and tokens
+Runtime tokens live in `web/app.css`. Warm paper and warm charcoal are the daylight/night editions of the same publication. Lavender signals action and relationships. Semantic aliases include paper, paper-secondary, surface-muted, ink, text-secondary, rule, display-serif and ui-sans. Use the spacing scale from space-1 through space-16.
+Prefer fine rules and whitespace to cards. Reserve containment for capture, sheets, recovery and map context.
 
-## Layout
+## Relationship progression
+Library offers a truthful count of extant note edges, including automatic links and backlinks. Reading UI stays quiet. Links uses cross-reference rules and equal treatment for automatic and manual origins. Explore expresses the fabric with stable neighborhoods. Source coloring never changes layout grouping.
 
-The app uses a narrow phone-first shell, bottom tabs, cards and grouped rows. Respect the safe-area variables in `web/app.css`. Shared links use the established group-row structure so statuses and actions remain scannable without a separate dashboard.
-Scrollable collections use the global thin scrollbar treatment in `web/app.css`, with a visible thumb drawn from existing surface and line tokens.
+## Mark
+The imprint refines the existing central-node and four-outer-node geometry. SVG, favicon, PNG PWA icons and Apple touch icon share the mark. Loading resolves once without an endless loop.
 
-## Elevation & Depth
+## Accessibility and preferences
+System appearance is the default; local light/dark override is optional. Larger reading text and reduced motion are local display preferences, outside knowledge data and exports. OS reduced motion always applies. Touch controls target at least 44px. Sheets trap focus, inert background content, close with Escape and restore the trigger. Saved-piece tabs support arrows, Home and End. Notes announce Saving…, Saved and storage errors without discarding entered text. Map keeps its synchronized textual equivalent.
 
-Tonal layers and the existing glass navigation treatment create hierarchy. Recovery actions belong in the row that needs them; avoid extra banners for every background retry.
+## Quotes and recovery
+Worth Quoting displays only literal strings present in captured source text, with a source passage control; saved quote data remains untouched. Quotes with normalized punctuation may be omitted until exact verification is possible. Recovery explains what the reader can do and retains technical errors under Advanced diagnostics.
 
-## Shapes
-
-The current CSS variables define 24px containers, 16px medium shapes and 12px small controls. Preserve that grammar for new inbox states.
-
-## Components
-
-Reuse `h`, `openSheet`, `toast`, `setBanner`, group rows and buttons from `web/js/app.js`. A queued item says it is saved and waiting; an unreadable item shows its reason and offers Add text or Remove. A successful edit returns to the same Shared links list. All actions are buttons and remain keyboard and touch accessible. Icons supplement labels rather than replace them. Background movement should communicate work, with reduced-motion behavior inherited from the stylesheet.
-
-## Do's and Don'ts
-
-- Do show that a shared link was saved before AI processing begins.
-- Do keep recovery on the same item and preserve its URL.
-- Don't imply a paywall teaser is a complete article.
-- Don't turn a provider outage into a destructive or alarming screen.
+## Validation
+`npm test` runs worker, capture, graph, theme, connection and web tests. `npm --prefix worker run check` validates the deployment bundle.
+The Editorial browser QA workflow runs Chromium and WebKit across 320px, 390px, tablet and desktop, both schemes, larger text and reduced motion. It exercises captures with mocked API responses, links and rejection persistence, autosave failure/recovery, sheets, exports, maps and offline assets. It runs axe WCAG checks and publishes screenshots plus a JSON report.
+This automation does not replace physical iPhone Share Sheet, real publisher access, installed iOS PWA or VoiceOver testing.

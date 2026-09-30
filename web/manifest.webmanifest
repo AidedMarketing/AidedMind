@@ -1,12 +1,12 @@
 {
     "name": "AidedMind",
     "short_name": "AidedMind",
-    "description": "Save anything you find online and get a summary, outline and connections on a map of your ideas.",
+    "description": "Your personal knowledge publication. Your knowledge, connected quietly.",
     "start_url": "./#/",
     "scope": "./",
     "display": "standalone",
-    "background_color": "#1c1c27",
-    "theme_color": "#1c1c27",
+    "background_color": "#242320",
+    "theme_color": "#242320",
     "icons": [
         { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
         { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },

@@ -1,0 +1,33 @@
+name: Editorial browser QA
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ["web/**", ".github/workflows/editorial-qa.yml"]
+  push:
+    branches: [main]
+    paths: ["web/**", ".github/workflows/editorial-qa.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install isolated browser QA tools
+        run: npm install --no-save --ignore-scripts --package-lock=false playwright @axe-core/playwright
+      - run: npx playwright install --with-deps chromium webkit
+      - name: Chromium and WebKit interaction, accessibility and offline checks
+        run: node web/qa/editorial.mjs
+      - name: Screenshots and QA report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: editorial-browser-qa
+          path: qa-results/

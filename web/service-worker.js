@@ -1,9 +1,11 @@
 // App shell cache. API calls always go to the network.
-const CACHE_NAME = 'aidedmind-v27';
+const CACHE_NAME = 'aidedmind-v28';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
     './app.css',
+    './fonts/Newsreader.ttf',
+    './icons/mark.svg',
     './manifest.webmanifest',
     './js/app.js',
     './js/api.js',
