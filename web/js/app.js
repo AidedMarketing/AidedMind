@@ -286,7 +286,7 @@ function openSheet(...content) {
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     });
     requestAnimationFrame(() => {
-        if (sheet.isConnected) (sheet.querySelector('input:not([type="file"]), textarea:not([readonly])') || sheet.querySelector('button') || sheet).focus();
+        if (sheet.isConnected && !sheet.contains(document.activeElement)) (sheet.querySelector('input:not([type="file"]), textarea:not([readonly])') || sheet.querySelector('button') || sheet).focus();
     });
     let startY = null;
     sheet.addEventListener('touchstart', (event) => { startY = sheet.scrollTop <= 0 ? event.touches[0].clientY : null; }, { passive: true });
@@ -461,7 +461,7 @@ async function startCapture(input, title = '', photos = []) {
             try {
                 await queueInboxItem({ url, text, title });
                 draft = { input: '', title: '', photos: [] };
-                toast('Saved in Shared links. AidedMind will finish it when Claude is available.');
+                toast('Saved in Shared links. AidedMind will finish preparing it when the service is available.');
                 location.hash = '#/library';
                 drainInbox();
                 return;
@@ -1095,7 +1095,6 @@ function openManualLinkSheet(note) {
         results,
         h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel')
     );
-    requestAnimationFrame(() => search.focus());
 }
 
 function topicSheet(note) {
@@ -2163,7 +2162,9 @@ function sharedItemsSection() {
         h('span', { class: 'row-label' },
             h('div', { style: { 'font-weight': '600', 'overflow-wrap': 'anywhere' } }, label(item)),
             h('div', { class: 'small', role: status.error ? 'alert' : 'status', style: { color: status.error ? 'var(--danger)' : 'var(--text-2)' } }, status.text),
-            item.error ? h('details', { class: 'diagnostic-detail' }, h('summary', {}, 'Advanced diagnostics'), h('p', { class: 'small muted' }, item.error)) : null,
+            item.error || item.nextRetryAt ? h('details', { class: 'diagnostic-detail' }, h('summary', {}, 'Advanced diagnostics'),
+                item.error ? h('p', { class: 'small muted' }, item.error) : null,
+                inboxAction(item) === 'wait' ? h('p', { class: 'small muted' }, retryTime(item)) : null) : null,
             h('div', { class: 'row', style: { display: 'flex', gap: '8px', 'margin-top': '8px', 'flex-wrap': 'wrap' } }, actions)
         )
     );
@@ -2181,7 +2182,7 @@ function sharedItemsSection() {
                         ? { text: 'Needs your help. This link is saved. Open it in Safari and share the readable page, or add text here.', error: true }
                         : item.status === 'processing'
                             ? { text: 'Preparing. You can keep reading.' }
-                            : { text: `Link received. AidedMind is preparing it. You can keep reading. ${retryTime(item)}` };
+                            : { text: `${item.url ? 'Link received' : 'Text received'}. AidedMind is preparing it. You can keep reading.` };
                 const actions = action === 'needs_review'
                     ? [openArticle(item), reviewItem(item), removeItem(item)]
                     : action === 'attention'

@@ -38,8 +38,11 @@ const configurations = [
     { engine: 'webkit', width: 1280, height: 900, colorScheme: 'dark' }
 ];
 let passed = 0;
+let failed = 0;
+let currentCheck = '';
 const report = [];
 async function check(name, operation) {
+    currentCheck = name;
     await operation(); passed++; report.push({ name, status: 'passed' }); console.log('PASS ' + name);
 }
 try {
@@ -49,6 +52,7 @@ try {
         const context = await browser.newContext({ viewport: { width: config.width, height: config.height }, colorScheme: config.colorScheme, reducedMotion: config.reducedMotion || 'no-preference', serviceWorkers: 'block', acceptDownloads: true });
         const page = await context.newPage();
         const errors = [];
+        try {
         page.on('pageerror', (error) => errors.push(error.message));
         await page.addInitScript(({ largeText }) => {
             localStorage.setItem('aidedmind.settings', JSON.stringify({ token: 'fixture-token' }));
@@ -236,7 +240,10 @@ try {
             await page.setViewportSize({ width: 320, height: 740 }); await noOverflow();
             assert.deepEqual(errors, [], label + ' browser errors');
         });
-        await context.close(); await browser.close();
+        } catch (error) {
+            failed++; report.push({ name: currentCheck, status: 'failed', error: error.message });
+            console.error('FAIL ' + currentCheck + '\n' + error.stack);
+        } finally { await context.close(); await browser.close(); }
     }
     // Separate real service worker context verifies atomic cache includes the font and imprint.
     await check('service worker offline publication assets', async () => {
@@ -258,8 +265,9 @@ try {
         assert.ok(await page.evaluate(() => document.fonts.check('20px Newsreader')));
         await browser.close();
     });
-    console.log('Browser checks passed: ' + passed);
+    console.log('Browser checks passed: ' + passed + '; failed: ' + failed);
+    if (failed) process.exitCode = 1;
 } finally {
-    await writeFile(resolve(output, 'report.json'), JSON.stringify({ passed, checks: report }, null, 2));
+    await writeFile(resolve(output, 'report.json'), JSON.stringify({ passed, failed, checks: report }, null, 2));
     await new Promise((done) => server.close(done));
 }
