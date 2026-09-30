@@ -4,10 +4,9 @@ Tool for saving, summarizing, breaking down, and mapping anything you find onlin
 Share a link from your iPhone (an article, a YouTube video, a TikTok), take a photo, or paste any text, and AidedMind gives you:
 
 - **In short**: a two or three sentence TL;DR
-- **Summary**: section-by-section breakdown, takeaways and quotes worth keeping
-- **Outline**: a three-level outline of the whole piece
-- **Links**: connections to notes already in your library, each with a reason (supports / contradicts / extends / example-of), plus backlinks
-- **Map**: an Obsidian-style graph of everything you've saved, grouped into colored **themes** (topics) automatically. Ideas shared by two or more notes are diamonds. Tap anything to preview it.
+- **Breakdown**: one fluid reading view with the section-by-section summary, takeaways, quotes worth keeping, and the source outline
+- **Links**: strong connections to notes already in your library are added automatically, each with a reason (supports / contradicts / extends / example-of). You can add your own links or mark an automatic link as not related.
+- **Map**: the payoff of those links: an Obsidian-style graph that grows as you save, grouped into colored **themes** (topics) automatically. Ideas shared by two or more notes are diamonds. Tap anything to preview it, or use the accessible list view.
 
 Built for iPhone first (installable web app, A.M. family design: warm dark / warm light with lavender accents), running hands-off on Cloudflare's free plan. Your notes live only on your device. Export them as a `.zip` of Markdown files with `[[wikilinks]]` for Obsidian, or as a JSON backup.
 
@@ -30,10 +29,10 @@ iPhone                                   Cloudflare (free plan)                 
 
 - **Nothing to babysit.** Cloudflare Workers don't sleep, the inbox and usage live in durable SQLite storage, and inbox items clean themselves up after 30 days.
 - **Updates itself.** A new version downloads in the background when you open the app and reloads it on its own (or offers a *Reload* button if you're in the middle of something). Settings → *About* shows the version you're running.
-- **Works while the app is closed.** A link you share is broken down on the server right away (Cloudflare's Durable Object alarms), retried if something hiccups, and waits as a finished note until you open the app, which collects it and links it to your other notes. See [Background breakdowns](#background-breakdowns).
+- **Works while the app is closed.** A link you share is broken down on the server right away (Cloudflare's Durable Object alarms), retried if something hiccups, and waits as a finished note until you open the app, which collects it and automatically adds its strongest useful connections to your Map. See [Background breakdowns](#background-breakdowns).
 - **Watches itself.** A daily GitHub check tests the live app, its storage and every API key, and emails you if anything fails.
 - **Low server cost.** The Worker only moves data and waits on Claude. Article pages are cleaned up on the phone (Readability), which keeps each request well inside the free plan's CPU limit.
-- **Your notes stay on your phone.** Each breakdown request carries a compact index of related notes (titles, TL;DRs, concept names) so Claude can suggest connections; the server doesn't keep notes.
+- **Your notes stay on your phone.** Each breakdown request carries a compact index of related notes (titles, TL;DRs, concept names) so AidedMind can create strong automatic connections; the server doesn't keep notes. Automatic links are confidence-filtered, capped at six per new piece, explain why they exist, and remember when you mark one as not related.
 - **Cost stays flat as the library grows.** Up to 20 notes the whole index is sent. Past that, the phone picks the 20 notes most related to the new source (shared concepts, tags and title words, rarer words counting more) and adds a list of your most-used concept names so the map keeps linking up. A breakdown costs about the same with 50 notes or 5,000.
 - **No paying twice.** A link that's already in your library (including short links, `youtu.be` vs `youtube.com`, and links with tracking parameters) opens the existing note instead of being broken down again. Transcripts are cached for 30 days, so a retried link never pays for transcription twice.
 
