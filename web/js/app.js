@@ -1245,21 +1245,27 @@ function themeSheet(theme) {
     );
 }
 
-function graphView() {
+function graphView(params = new URLSearchParams()) {
     setNav({ hidden: true });
     const settings = getSettings();
+    const requestedFocus = params.get('focus') || '';
+    const focusId = notes.some((note) => note.id === requestedFocus) ? requestedFocus : null;
     if (!notes.length) {
-        setNav({ title: 'Map' });
+        setNav({ title: 'Explore', right: navButton('', () => { location.hash = '#/capture'; }, 'add') });
         render(
-            h('h1', { class: 'large-title' }, 'Map'),
-            h('div', { class: 'empty' }, icon('graph', { size: 44, strokeWidth: 1.4 }), h('strong', {}, 'Your map is empty'), 'Every note you save becomes a point here, linked to related ideas.')
+            h('h1', { class: 'large-title' }, 'Explore'),
+            h('div', { class: 'empty' }, icon('graph', { size: 44, strokeWidth: 1.4 }), h('strong', {}, 'Your map is ready to grow'), 'Every piece you save can connect automatically to the ideas already in your Library.')
         );
         return;
     }
     const themes = currentThemes();
     const byTheme = settings.mapColor === 'theme';
-    const canvas = h('canvas', { 'aria-label': 'Map of your notes' });
-    const search = h('input', { type: 'search', placeholder: 'Find on map', 'aria-label': 'Find on map', enterkeyhint: 'search' });
+    const graphData = buildGraph(notes, { showConcepts: settings.showConcepts, focusId, depth: 2, themes });
+    const graphNoteIds = new Set(graphData.nodes.filter((node) => node.isNote).map((node) => node.id));
+    const canvas = h('canvas', {
+        'aria-label': focusId ? 'Knowledge map around this saved piece. Use the list button for an accessible list of the same notes.' : 'Knowledge map of your Library. Use the list button for an accessible list of the same notes.'
+    });
+    const search = h('input', { type: 'search', placeholder: 'Find in your Map', 'aria-label': 'Find in your Map', enterkeyhint: 'search' });
     const colorButton = h('button', {
         type: 'button',
         class: `float-button glass${byTheme ? ' on' : ''}`,
@@ -1267,6 +1273,8 @@ function graphView() {
         'aria-pressed': String(byTheme)
     }, icon('themes', { size: 20, strokeWidth: 2 }));
     const conceptsButton = h('button', { type: 'button', class: `float-button glass${settings.showConcepts ? ' on' : ''}`, 'aria-label': 'Toggle shared ideas', 'aria-pressed': String(settings.showConcepts) }, icon('concept', { size: 20, strokeWidth: 2 }));
+    const listButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Show Map as a list', 'aria-pressed': 'false' }, icon('library', { size: 20, strokeWidth: 2 }));
+    const addButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Add to AidedMind', onclick: () => { location.hash = '#/capture'; } }, icon('add', { size: 20, strokeWidth: 2 }));
     const fitButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Fit to screen' }, icon('fit', { size: 20, strokeWidth: 2 }));
     const types = [...new Set(notes.map((n) => n.source?.sourceType || 'text'))];
     const unsorted = notes.length - themes.byNote.size;
@@ -1274,10 +1282,37 @@ function graphView() {
     let graph = null;
     let activeTheme = null;
     const legend = h('div', { class: 'graph-legend' });
+    const accessibleList = h('section', { class: 'graph-access-list glass', hidden: true, 'aria-label': 'Map items' });
+    const paintAccessibleList = () => {
+        const q = search.value.trim().toLowerCase();
+        const matches = notes
+            .filter((note) => graphNoteIds.has(note.id))
+            .filter((note) => !q || [note.title, note.topic, note.tldr, ...(note.tags || [])].join(' ').toLowerCase().includes(q))
+            .sort((a, b) => a.title.localeCompare(b.title));
+        accessibleList.replaceChildren(
+            h('div', { class: 'graph-access-head' },
+                h('div', {}, h('strong', {}, focusId ? 'Connected notes' : 'Map notes'), h('span', { class: 'small muted' }, `${matches.length} shown`)),
+                h('button', { type: 'button', class: 'graph-list-close', 'aria-label': 'Close Map list', onclick: () => {
+                    accessibleList.hidden = true;
+                    listButton.setAttribute('aria-pressed', 'false');
+                    listButton.focus();
+                } }, icon('close', { size: 18, strokeWidth: 2 }))
+            ),
+            matches.length
+                ? h('div', { class: 'graph-access-items' }, matches.map((note) => h('a', { class: 'graph-access-item', href: `#/note/${encodeURIComponent(note.id)}` },
+                    h('span', { class: 'graph-access-title' }, note.title),
+                    h('span', { class: 'graph-access-meta' }, `${note.topic || SOURCE_LABELS[note.source?.sourceType || 'text']} · ${connectionCount(note)} connection${connectionCount(note) === 1 ? '' : 's'}`)
+                )))
+                : h('div', { class: 'group-body small muted' }, 'No notes match that search.')
+        );
+    };
     const paintLegend = () => {
         legend.replaceChildren();
+        if (focusId) {
+            const focus = notes.find((note) => note.id === focusId);
+            if (focus) legend.append(h('a', { class: 'legend-item glass focus-pill', href: '#/graph' }, `Focused · ${focus.title}`, h('span', { class: 'count' }, 'All Map')));
+        }
         if (byTheme && themes.themes.length) {
-            // Tap a theme to light it up on the map; tap it again for its notes.
             themes.themes.forEach((theme) => legend.append(h('button', {
                 type: 'button',
                 class: `legend-item glass${activeTheme === theme.id ? ' active' : ''}`,
@@ -1291,14 +1326,13 @@ function graphView() {
                     search.value = '';
                     graph.highlightTheme(theme.id);
                     paintLegend();
+                    paintAccessibleList();
                 }
             }, topicMark(theme.label, theme.color), h('span', { class: 'count' }, String(theme.noteIds.length)))));
             if (unsorted) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': 'var(--theme-none)' } }, h('i'), 'Unsorted', h('span', { class: 'count' }, String(unsorted))));
         } else {
             types.forEach((type) => legend.append(h('span', { class: 'legend-item glass', style: { '--dot': `var(--node-${type})` } }, h('i'), SOURCE_LABELS[type])));
-            if (byTheme && notes.length >= 3) {
-                legend.append(h('span', { class: 'legend-item glass' }, 'Themes appear as your notes start to connect'));
-            }
+            if (byTheme && notes.length >= 3) legend.append(h('span', { class: 'legend-item glass' }, 'Themes appear as your notes start to connect'));
         }
         if (settings.showConcepts) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': byTheme && themes.themes.length ? 'var(--theme-none)' : 'var(--node-concept)' } }, h('i', { class: 'diamond' }), 'Shared idea'));
     };
@@ -1309,25 +1343,37 @@ function graphView() {
         canvas,
         h('div', { class: 'graph-top' },
             h('label', { class: 'search glass' }, icon('search', { size: 18, strokeWidth: 2.2 }), search),
+            listButton,
+            addButton,
             colorButton,
             conceptsButton,
             fitButton
         ),
+        accessibleList,
         legend
     ));
 
-    graph = new GraphView(canvas, { onOpen: previewNode, colorBy: settings.mapColor, themes: themes.themes });
-    graph.setData(buildGraph(notes, { showConcepts: settings.showConcepts, themes }));
+    graph = new GraphView(canvas, { focusId, onOpen: previewNode, colorBy: settings.mapColor, themes: themes.themes });
+    graph.setData(graphData);
     paintLegend();
+    paintAccessibleList();
+    listButton.addEventListener('click', () => {
+        accessibleList.hidden = !accessibleList.hidden;
+        listButton.setAttribute('aria-pressed', String(!accessibleList.hidden));
+        if (!accessibleList.hidden) {
+            paintAccessibleList();
+            accessibleList.querySelector('a, button')?.focus();
+        }
+    });
     search.addEventListener('input', () => {
         if (activeTheme) {
             activeTheme = null;
             paintLegend();
         }
         graph.setHighlight(search.value);
+        paintAccessibleList();
     });
     canvas.addEventListener('click', (event) => {
-        // Tapping empty map space (not a dot, not a drag) clears a theme highlight.
         const rect = canvas.getBoundingClientRect();
         if (activeTheme && !graph.nodeAt(event.clientX - rect.left, event.clientY - rect.top)) {
             activeTheme = null;
@@ -1338,11 +1384,11 @@ function graphView() {
     fitButton.addEventListener('click', () => graph.fit());
     colorButton.addEventListener('click', () => {
         saveSettings({ ...getSettings(), mapColor: byTheme ? 'source' : 'theme' });
-        graphView();
+        graphView(params);
     });
     conceptsButton.addEventListener('click', () => {
         saveSettings({ ...getSettings(), showConcepts: !settings.showConcepts });
-        graphView();
+        graphView(params);
     });
 }
 
