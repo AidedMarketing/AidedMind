@@ -287,7 +287,7 @@ try {
             await page.getByRole('checkbox', { name: 'Reduce motion' }).check();
             assert.equal(await page.locator('html').getAttribute('data-reduced-motion'), 'true');
             await noOverflow(); await axe('more');
-            await goto('settings');
+            await page.evaluate(() => window.scrollTo(0, 0));
             await screenshot('more');
         });
         await check(label + ' partial capture diagnostics', async () => {
