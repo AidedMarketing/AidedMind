@@ -132,8 +132,7 @@ try {
             await shellGeometry();
             await page.screenshot({ path: resolve(output, label + '-' + screen + '.png'), fullPage: true });
             // Fixed bars need a viewport capture too: full-page images can disguise clipping.
-            if (['library','more','map','map-list'].includes(screen))
-                await page.screenshot({ path: resolve(output, label + '-' + screen + '-viewport.png') });
+            await page.screenshot({ path: resolve(output, label + '-' + screen + '-viewport.png') });
         };
         await check(label + ' empty Library', async () => {
             await goto('library');
@@ -162,6 +161,7 @@ try {
             await page.getByRole('button', { name: 'View source passage' }).click();
             assert.equal(await page.locator('[role="dialog"] mark').textContent(), 'Rest helps ideas settle.');
             assert.ok(await page.locator('main').evaluate((el) => el.inert));
+            assert.ok(await page.evaluate(() => Boolean(document.activeElement.closest('[role="dialog"]'))));
             await page.keyboard.press('Escape');
             await page.locator('[role="dialog"]').waitFor({ state: 'detached' });
             assert.equal(await page.evaluate(() => document.activeElement.textContent), 'View source passage');

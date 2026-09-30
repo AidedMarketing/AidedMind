@@ -287,9 +287,9 @@ function openSheet(...content) {
         else if (event.shiftKey && (document.activeElement === first || document.activeElement === sheet)) { event.preventDefault(); last.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     });
-    requestAnimationFrame(() => {
-        if (sheet.isConnected && !sheet.contains(document.activeElement)) (sheet.querySelector('input:not([type="file"]), textarea:not([readonly])') || sheet.querySelector('button') || sheet).focus();
-    });
+    // Focus before returning so early Escape/Tab cannot land on inert background.
+    const initialFocus = sheet.querySelector('input:not([type="file"]), textarea:not([readonly])') || sheet.querySelector('button') || sheet;
+    initialFocus.focus({ preventScroll: true });
     let startY = null;
     sheet.addEventListener('touchstart', (event) => { startY = sheet.scrollTop <= 0 ? event.touches[0].clientY : null; }, { passive: true });
     sheet.addEventListener('touchend', (event) => {
