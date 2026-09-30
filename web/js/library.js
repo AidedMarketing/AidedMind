@@ -126,6 +126,12 @@ export function canonicalUrl(raw) {
         const id = url.searchParams.get('v') || (url.pathname.match(/^\/(?:shorts|live|embed)\/([\w-]+)/) || [])[1];
         if (id) return `youtube:${id}`;
     }
+    // Substack's app shares and browser captures identify the same post.
+    // Referral parameters (including r) are not part of its identity.
+    const shared = host === 'open.substack.com' && url.pathname.match(/^\/pub\/([\w-]+)\/p\/([\w-]+)\/?$/i);
+    if (shared) return `${shared[1].toLowerCase()}.substack.com/p/${shared[2].toLowerCase()}`;
+    const post = host.match(/^([\w-]+)\.substack\.com$/i) && url.pathname.match(/^\/p\/([\w-]+)\/?$/i);
+    if (post) return `${host}/p/${post[1].toLowerCase()}`;
     const params = [...url.searchParams.entries()]
         .filter(([key]) => !TRACKING_PARAMS.test(key))
         .sort(([a], [b]) => a.localeCompare(b));

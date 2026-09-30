@@ -132,11 +132,18 @@ function fail(core, item, error, nowMs) {
     return core.inboxFail(item.id, { error: message, kind: 'retry_in_app' });
 }
 
-// True when a link (with no page text of its own) is already in the library.
-async function alreadySaved(item, prefs) {
-    if (item.text || !item.url || !prefs.urls?.length) return false;
+// Full notes are duplicates even when the new share includes Safari text.
+// Partial notes are deliberately excluded so a capture can upgrade them.
+async function alreadySaved(core, item, prefs) {
+    if (!item.url) return false;
     const key = canonicalUrl(item.url);
     if (!key) return false;
+    // Two completed shares may still be waiting for the app to collect them,
+    // before it has synced their fingerprints into prefs.
+    if (core.inboxList().some((row) => row.status === 'done' && row.result?.source &&
+        !row.result.source.partial && [row.url, row.result.source.url, row.result.source.sharedUrl]
+            .some((url) => canonicalUrl(url) === key))) return true;
+    if (!prefs.urls?.length) return false;
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
     const hash = [...new Uint8Array(digest).slice(0, 8)].map((b) => b.toString(16).padStart(2, '0')).join('');
     return prefs.urls.includes(hash);
@@ -144,14 +151,14 @@ async function alreadySaved(item, prefs) {
 
 async function processItem(core, env, item, nowMs) {
     const capture = JSON.parse(item.capture_meta || '{}');
-    if (capture.review && !item.capture_confirmed && item.text) {
-        return core.inboxFail(item.id, { error: `Safari captured ${countWords(item.text)} words. Check the text before breaking it down.`, kind: 'needs_review' });
-    }
     const month = currentMonth(new Date(nowMs));
     const prefs = core.metaGet('prefs') || {};
-    if (await alreadySaved(item, prefs)) {
+    if (await alreadySaved(core, item, prefs)) {
         // No fetch, no Claude call, no quota used.
         return core.inboxComplete(item.id, { duplicate: true });
+    }
+    if (capture.review && !item.capture_confirmed && item.text) {
+        return core.inboxFail(item.id, { error: `Safari captured ${countWords(item.text)} words. Check the text before breaking it down.`, kind: 'needs_review' });
     }
     const reservation = core.reserveCapture(month, item.quotaLimit);
     if (!reservation.ok) {

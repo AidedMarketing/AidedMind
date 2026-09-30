@@ -464,14 +464,54 @@ test('a link already in the library is skipped without fetching or spending anyt
     // The app syncs fingerprints of finished notes' links (tracking parameters and www don't matter).
     core.metaSet('prefs', { urls: [await urlHash('https://example.com/habits')] });
     core.inboxAdd({ url: 'https://www.example.com/habits/?utm_source=x' }, { limit: 1 });
-    // Page text you captured yourself is always processed, even for a saved link.
+    // A text capture of a complete saved article is also a duplicate.
     core.inboxAdd({ url: 'https://example.com/habits', text: 'A long logged-in article. '.repeat(300) }, { limit: 1 });
     await processInbox(core, env);
     const [skipped, captured] = core.inboxList();
     assert.deepStrictEqual([skipped.status, skipped.result], ['done', { duplicate: true }]);
-    assert.strictEqual(captured.status, 'done');
-    assert.strictEqual(captured.result.source.title, '');
+    assert.deepStrictEqual([captured.status, captured.result], ['done', { duplicate: true }]);
     assert.deepStrictEqual(calls, []);
+    assert.strictEqual(stub.requests.length, 0);
+    assert.strictEqual(core.usageFor(month()).captures, 0);
+});
+
+test('Safari Substack captures match full library fingerprints across app and browser URLs', async (t) => {
+    const { stub, env, core } = await setup(t);
+    const calls = mockFetch(t, {});
+    core.metaSet('prefs', { urls: [await urlHash('https://open.substack.com/pub/writer/p/story?r=old')] });
+    core.inboxAdd({ url: 'https://writer.substack.com/p/story?r=new&utm_medium=ios', text: 'Full article. '.repeat(300),
+        capture: { kind: 'safari', words: 600, review: false } });
+    await processInbox(core, env);
+    assert.deepStrictEqual(only(core).result, { duplicate: true });
+    assert.strictEqual(stub.requests.length, 0);
+    assert.strictEqual(core.usageFor(month()).captures, 0);
+    assert.deepStrictEqual(calls, []);
+});
+
+test('completed inbox articles prevent duplicate captures before the app syncs its library', async (t) => {
+    const { stub, env, core } = await setup(t);
+    const calls = mockFetch(t, {});
+    const first = core.inboxAdd({ url: 'https://open.substack.com/pub/writer/p/story?r=old' });
+    core.inboxComplete(first.id, { source: { url: 'https://writer.substack.com/p/story', partial: false } });
+    const again = core.inboxAdd({ url: 'https://writer.substack.com/p/story?r=new', text: 'Full article. '.repeat(300) });
+    await processInbox(core, env);
+    assert.deepStrictEqual(core.inboxList().find((row) => row.id === again.id).result, { duplicate: true });
+    assert.strictEqual(stub.requests.length, 0);
+    assert.strictEqual(core.usageFor(month()).captures, 0);
+    assert.deepStrictEqual(calls, []);
+});
+
+test('a full Safari capture can still upgrade a completed partial Substack article', async (t) => {
+    const { stub, env, core } = await setup(t);
+    const calls = mockFetch(t, {});
+    const first = core.inboxAdd({ url: 'https://open.substack.com/pub/writer/p/story' });
+    core.inboxComplete(first.id, { source: { url: 'https://writer.substack.com/p/story', partial: true } });
+    const capture = core.inboxAdd({ url: 'https://writer.substack.com/p/story?r=new', text: 'Full readable article. '.repeat(300),
+        capture: { kind: 'safari', words: 900, review: false } });
+    await processInbox(core, env);
+    const done = core.inboxList().find((row) => row.id === capture.id);
+    assert.strictEqual(done.status, 'done');
+    assert.strictEqual(done.result.source.partial, false);
     assert.strictEqual(stub.requests.length, 1);
-    assert.strictEqual(core.usageFor(month()).captures, 1);
+    assert.deepStrictEqual(calls, []);
 });

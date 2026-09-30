@@ -2,6 +2,15 @@
 
 Updated September 29, 2026. Read current main, recent PRs, and deployment checks before treating this snapshot as live status.
 
+## September 30 duplicate follow-up
+
+- PR #27 deployed successfully; it deduplicates waiting URL-only shares and reports captured word counts. It did not cover completed notes or text captures.
+- User confirmed Safari capture worked, but it created a second breakdown of the Matt Paige article. Screenshots also show a network-loss notification; that notification alone cannot establish whether the server accepted a request.
+- Substack post identity now maps app `/pub/<publication>/p/<slug>` and publication `/p/<slug>` URLs to the same key, ignoring referral/query parameters on these known routes. Other sites retain meaningful query parameters.
+- Full saved library fingerprints now skip text captures too. Full completed inbox results also prevent duplicate analysis before the app collects and syncs them. Partial results remain eligible for full-text upgrades.
+- App shell and service-worker cache now use version 24, since browser duplicate matching also changed. Existing duplicate notes are not automatically deleted.
+- The Library timestamp is assigned when a note is imported into the app; it does not prove when background processing succeeded. The reason an earlier failed share later appeared remains unverified without per-item history.
+
 ## Product intent
 
 Adrian wants the Substack app's Share button → Save to AidedMind Shortcut to remain the primary path. Keep the frontend simple and put recovery logic on the backend. Safari capture is an optional recovery path, not a prerequisite for every share.
