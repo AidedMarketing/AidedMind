@@ -12,6 +12,8 @@ const QUICK_MAX_CHARS = 350000; // Haiku 4.5 has a 200K context; longer sources 
 const MAX_LIBRARY_NOTES = 60;
 const MAX_VOCABULARY = 200;
 const MAX_TOPICS = 100;
+const AUTO_LINK_MIN_CONFIDENCE = 0.72;
+const AUTO_LINK_MAX = 6;
 
 // Breakdown styles. Each maps to a model and reasoning level; the model ids
 // can be overridden per style with AIDEDMIND_MODEL_QUICK / _BALANCED / _THOROUGH.
@@ -193,11 +195,12 @@ export const ANALYSIS_SCHEMA = {
             items: {
                 type: 'object',
                 additionalProperties: false,
-                required: ['noteId', 'relation', 'reason'],
+                required: ['noteId', 'relation', 'reason', 'confidence'],
                 properties: {
                     noteId: { type: 'string' },
                     relation: { type: 'string', enum: ['supports', 'contradicts', 'extends', 'example-of', 'related'] },
-                    reason: { type: 'string', description: 'One sentence explaining the link' }
+                    reason: { type: 'string', description: 'One plain-language sentence explaining why the two notes are meaningfully connected' },
+                    confidence: { type: 'number', minimum: 0, maximum: 1, description: 'How confident you are that this relationship is genuinely useful, from 0 to 1' }
                 }
             }
         }
@@ -211,7 +214,7 @@ Produce a faithful breakdown of the source: a TL;DR, a sectioned summary, a hier
 
 The topic is what the source is about as a whole: a piece on journaling that mentions using an AI app is about Journaling, not Artificial Intelligence. Keep topics broad enough to be shared by many notes, and reuse a name from known_topics (or a note's topic in the library index) whenever it fits, so notes on the same subject sort together.
 
-For connections, only link to notes from the provided library index, using their exact ids. Link when the two notes share a subject, or when one directly builds on, supports, contradicts or is an example of the other. Sharing a passing mention, a tool or a buzzword (for example both mentioning AI) is not a connection. When the notes have different topics, link only if the relationship is specific and would genuinely help the reader. Prefer a few strong links over many weak ones; no links is a fine answer. The index holds the notes most related to this source, not the whole library. Reuse concept names that already appear in the library index or the known concepts list when they refer to the same idea, so the knowledge graph links up.
+For connections, only link to notes from the provided library index, using their exact ids. Link when the two notes share a subject, or when one directly builds on, supports, contradicts or is an example of the other. Sharing a passing mention, a tool or a buzzword (for example both mentioning AI) is not a connection. When the notes have different topics, link only if the relationship is specific and would genuinely help the reader. Score each link's confidence from 0 to 1 and return only genuinely useful links at 0.72 or higher. Return the strongest 3-6 links when that many truly qualify; fewer or none is better than filling the graph with weak associations. The index holds the notes most related to this source, not the whole library. Reuse concept names that already appear in the library index or the known concepts list when they refer to the same idea, so the knowledge graph links up.
 
 When images are supplied (screenshots, book pages, slides, whiteboards, charts), read them carefully: transcribe their text faithfully into sourceText, and explain what charts or diagrams show. An article may also include its original text: consider both, and place only the newly read image content in sourceText. Quotes must be verbatim from the supplied source. If an image is unreadable, say so rather than guessing.
 
@@ -316,9 +319,24 @@ export function normalize(raw, libraryIds) {
         tags: [...new Set(asArray(raw.tags).map((t) => clean(t).toLowerCase().replace(/^#/, '').replace(/\s+/g, '-')).filter(Boolean))],
         quotes: asArray(raw.quotes).map(clean).filter(Boolean),
         takeaways: asArray(raw.takeaways).map(clean).filter(Boolean),
-        connections: asArray(raw.connections)
-            .filter((c) => c && libraryIds.has(String(c.noteId)))
-            .map((c) => ({ noteId: String(c.noteId), relation: clean(c.relation) || 'related', reason: clean(c.reason) }))
+        connections: (() => {
+            const seen = new Set();
+            return asArray(raw.connections)
+                .map((c) => {
+                    const confidenceValue = Number(c?.confidence);
+                    const confidence = Number.isFinite(confidenceValue) ? Math.max(0, Math.min(1, confidenceValue)) : 0.8;
+                    return {
+                        noteId: String(c?.noteId || ''),
+                        relation: clean(c?.relation) || 'related',
+                        reason: clean(c?.reason),
+                        confidence
+                    };
+                })
+                .filter((c) => libraryIds.has(c.noteId) && c.reason && c.confidence >= AUTO_LINK_MIN_CONFIDENCE && !seen.has(c.noteId) && seen.add(c.noteId))
+                .sort((a, b) => b.confidence - a.confidence)
+                .slice(0, AUTO_LINK_MAX)
+                .map((c) => ({ ...c, origin: 'aidedmind' }));
+        })()
     };
 }
 
