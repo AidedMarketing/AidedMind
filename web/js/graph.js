@@ -231,7 +231,7 @@ export class GraphView {
         const themeOrder = this.themes
             .filter((theme) => counts.has(theme.id))
             .map((theme) => theme.id);
-        if ((counts.get('__unsorted__') || 0) > 1) themeOrder.push('__unsorted__');
+        if ((counts.get('__unsorted__') || 0) > 0) themeOrder.push('__unsorted__');
         if (!themeOrder.length) return new Map();
 
         // When Explore was opened from a saved piece, its own neighborhood
