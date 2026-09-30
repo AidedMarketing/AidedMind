@@ -47,5 +47,7 @@ export class Store extends DurableObject {
     costsFor(month) { return this.core.costsFor(month); }
     metaGet(key) { return this.core.metaGet(key); }
     metaSet(key, value) { return this.core.metaSet(key, value); }
+    beginOperation(kind, limit) { return this.core.beginOperation(kind, limit); }
+    endOperation(id) { return this.core.endOperation(id); }
     ping() { return 'ok'; }
 }

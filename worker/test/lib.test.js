@@ -61,7 +61,7 @@ test('oversized sources are rejected, not truncated', async () => {
     await assert.rejects(analyze({ text: 'x'.repeat(700000) }, [], {}), (error) => error.status === 413);
 });
 
-test('store: quota reservation and inbox expiry', () => {
+test('store: quota reservation and preservation of old uncollected shares', () => {
     const store = sqlStore();
     assert.deepStrictEqual(store.reserveCapture('2026-09', 1), { ok: true, captures: 1 });
     assert.deepStrictEqual(store.reserveCapture('2026-09', 1), { ok: false, captures: 1 });
@@ -71,7 +71,7 @@ test('store: quota reservation and inbox expiry', () => {
 
     store.inboxAdd({ url: 'https://example.com/new' });
     store.sql.exec('INSERT INTO inbox (id, url, received_at) VALUES (?, ?, ?)', 'old', 'https://example.com/old', '2020-01-01T00:00:00.000Z');
-    assert.deepStrictEqual(store.inboxList().map((i) => i.url), ['https://example.com/new']);
+    assert.deepStrictEqual(store.inboxList().map((i) => i.url), ['https://example.com/old', 'https://example.com/new']);
     assert.strictEqual(store.inboxAdd({ url: '', text: '  ' }), null);
 });
 

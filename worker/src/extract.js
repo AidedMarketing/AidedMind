@@ -23,10 +23,19 @@ export function isPrivateAddress(address) {
     }
     const lower = address.toLowerCase();
     if (!lower.includes(':')) return false;
-    if (lower.startsWith('::ffff:')) return isPrivateAddress(lower.slice(7));
+    if (lower.startsWith('::ffff:')) {
+        const tail = lower.slice(7);
+        if (tail.includes('.')) return isPrivateAddress(tail);
+        const words = tail.split(':');
+        if (words.length === 2) {
+            const n = words.map((word) => parseInt(word, 16));
+            return isPrivateAddress(`${n[0] >> 8}.${n[0] & 255}.${n[1] >> 8}.${n[1] & 255}`);
+        }
+        return true;
+    }
     return lower === '::1' || lower === '::' ||
         lower.startsWith('fc') || lower.startsWith('fd') ||
-        lower.startsWith('fe80') || lower.startsWith('ff');
+        /^fe[89ab]/.test(lower) || lower.startsWith('ff') || !/^[23]/.test(lower);
 }
 
 export function assertPublicUrl(rawUrl) {
@@ -39,7 +48,7 @@ export function assertPublicUrl(rawUrl) {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
         throw new HttpError(400, 'Only http and https links are supported.');
     }
-    const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.$/, '');
     if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || isPrivateAddress(host)) {
         throw new HttpError(400, 'Links to private or local network addresses are blocked.');
     }
@@ -86,15 +95,23 @@ function retryAfterMs(value) {
 }
 
 export async function fetchPage(rawUrl, accept = 'text/html,application/xhtml+xml,*/*;q=0.8') {
-    const url = assertPublicUrl(rawUrl);
+    let url = assertPublicUrl(rawUrl);
     let response;
     try {
-        response = await fetch(url, {
-            redirect: 'follow',
-            signal: AbortSignal.timeout(TIMEOUT_MS),
-            headers: { 'User-Agent': USER_AGENT, Accept: accept, 'Accept-Language': 'en;q=0.9,*;q=0.5' }
-        });
+        const signal = AbortSignal.timeout(TIMEOUT_MS);
+        for (let hop = 0; hop <= 5; hop++) {
+            response = await fetch(url, {
+                redirect: 'manual', signal,
+                headers: { 'User-Agent': USER_AGENT, Accept: accept, 'Accept-Language': 'en;q=0.9,*;q=0.5' }
+            });
+            if (![301, 302, 303, 307, 308].includes(response.status)) break;
+            const location = response.headers.get('location');
+            await response.body?.cancel();
+            if (!location || hop === 5) throw new HttpError(502, 'That page redirected too many times or has an invalid redirect.');
+            url = assertPublicUrl(new URL(location, url).href);
+        }
     } catch (error) {
+        if (error instanceof HttpError) throw error;
         console.warn(`fetch ${url.hostname} failed: ${error.message}`);
         const slow = error.name === 'TimeoutError' || error.name === 'AbortError';
         const site = url.hostname.replace(/^www\./, '');

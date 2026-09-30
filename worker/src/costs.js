@@ -38,7 +38,7 @@ export function summarizeCosts(rows = []) {
             claudeUsd += usd;
         } else if (item === 'gemini:videos') geminiVideos += amount;
         else if (item === 'gemini:analysis') geminiBreakdowns += amount;
-        else if (item === 'gemini:input' || item === 'gemini:output') geminiTokens += amount;
+        else if (['gemini:input', 'gemini:output', 'gemini:analysis_input', 'gemini:analysis_output'].includes(item)) geminiTokens += amount;
         else if (item === 'supadata:requests') supadataRequests += amount;
     });
     const round = (n) => Math.round(n * 10000) / 10000;

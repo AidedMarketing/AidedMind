@@ -314,8 +314,9 @@ test('plan limits apply to background breakdowns', async (t) => {
     await processInbox(core, env);
     const [a, b] = core.inboxList();
     assert.strictEqual(a.status, 'done');
-    assert.deepStrictEqual([b.status, b.errorKind], ['failed', 'permanent']);
-    assert.match(b.error, /used all 1 breakdowns/);
+    assert.strictEqual(b.status, 'pending');
+    assert.match(b.error, /monthly breakdown allowance/);
+    assert.ok(Date.parse(b.nextRetryAt) > Date.now());
     assert.strictEqual(stub.requests.length, 1);
 });
 
@@ -495,7 +496,9 @@ test('completed inbox articles prevent duplicate captures before the app syncs i
     core.inboxComplete(first.id, { source: { url: 'https://writer.substack.com/p/story', partial: false } });
     const again = core.inboxAdd({ url: 'https://writer.substack.com/p/story?r=new', text: 'Full article. '.repeat(300) });
     await processInbox(core, env);
-    assert.deepStrictEqual(core.inboxList().find((row) => row.id === again.id).result, { duplicate: true });
+    assert.strictEqual(again.id, first.id);
+    assert.strictEqual(core.inboxList().length, 1);
+    assert.strictEqual(core.inboxList()[0].result.source.partial, false);
     assert.strictEqual(stub.requests.length, 0);
     assert.strictEqual(core.usageFor(month()).captures, 0);
     assert.deepStrictEqual(calls, []);

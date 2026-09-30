@@ -228,6 +228,15 @@ export class GraphView {
             this.destroy();
             return;
         }
+        if (document.documentElement.classList.contains('a11y-motion') || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            this.alpha = 0;
+            this.fitSoon = false;
+            this.refitSoon = false;
+            if (!this.userMoved) this.fit();
+            this.draw();
+            this.running = false;
+            return;
+        }
         this.step();
         if (this.fitSoon && this.alpha < 0.3) {
             this.fit();

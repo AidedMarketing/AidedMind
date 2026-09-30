@@ -106,7 +106,7 @@ export async function capture({ url, text, title, depth, photos, retry, replace,
     // replaced in place.
     let replaces = retry || replace || augment || null;
     const saved = url && !photos?.length && !retry && !replace ? findDuplicate(notes, url) : null;
-    if (saved && !saved.source?.partial && !text) throw new DuplicateError(saved);
+    if (saved && !saved.source?.partial) throw new DuplicateError(saved);
     if (saved?.source?.partial) replaces = saved;
     let source;
     if (augment && photos?.length) {
@@ -132,7 +132,7 @@ export async function capture({ url, text, title, depth, photos, retry, replace,
             const { readableFromHtml } = await import('./readable.js');
             const article = readableFromHtml(fetched.html, fetched.url);
             // Only the free start of the article: say so instead of pretending.
-            const paywalled = looksPaywalled(fetched.html, article.text);
+            const paywalled = Boolean(fetched.restricted) || looksPaywalled(fetched.html, article.text);
             source = { sourceType: 'article', url: fetched.url, ...article, partial: paywalled, transcriptSource: paywalled ? 'paywall' : '' };
         } else {
             source = fetched;

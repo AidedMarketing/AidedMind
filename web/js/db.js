@@ -36,7 +36,7 @@ async function run(mode, fn) {
 
 export async function allNotes() {
     const notes = await run('readonly', (store) => store.getAll());
-    return (notes || []).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return (notes || []).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
 }
 
 export function saveNote(note) {
@@ -53,4 +53,13 @@ export function deleteNote(id) {
 
 export function newId() {
     return crypto.randomUUID ? crypto.randomUUID() : `n-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Read and add within one transaction so a concurrent tab cannot be replaced
+// between the restore preview and commit.
+export function restoreMissing(notes) {
+    return run('readwrite', (store) => notes.forEach((note) => {
+        const request = store.get(note.id);
+        request.onsuccess = () => { if (!request.result) store.add(note); };
+    }));
 }

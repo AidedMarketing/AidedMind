@@ -157,27 +157,29 @@ async function processItem(core, env, item, nowMs) {
         // No fetch, no Claude call, no quota used.
         return core.inboxComplete(item.id, { duplicate: true });
     }
+    if (!core.inboxIsCurrent(item)) return;
     if (capture.review && !item.capture_confirmed && item.text) {
         return core.inboxFail(item.id, { error: `Safari captured ${countWords(item.text)} words. Check the text before breaking it down.`, kind: 'needs_review' });
     }
     const reservation = core.reserveCapture(month, item.quotaLimit);
     if (!reservation.ok) {
-        return core.inboxFail(item.id, {
-            error: `You've used all ${item.quotaLimit} breakdowns for this month. They reset on the 1st.`,
-            kind: 'permanent'
-        });
+        const now = new Date();
+        const reset = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+        return core.inboxRetry(item.id, reset, `Saved and waiting for your monthly breakdown allowance to reset on the 1st.`);
     }
     try {
         const source = await buildSource(core, env, item, month);
+        if (!core.inboxIsCurrent(item)) { core.releaseCapture(month); return; }
         // The server doesn't keep your library, only the breakdown style and the
         // topic and concept names the app last synced, so names still get reused.
         // Connections to other notes are added when the app collects the note.
         const result = await analyze(source, [], env, prefs.depth, { concepts: prefs.concepts, topics: prefs.topics });
         await recordClaude(core, month, result.model, result.tokens);
+        if (!core.inboxIsCurrent(item)) { core.releaseCapture(month); return; }
         core.inboxComplete(item.id, pack(source, result));
     } catch (error) {
         core.releaseCapture(month);
-        fail(core, item, error, nowMs);
+        if (core.inboxIsCurrent(item)) fail(core, item, error, nowMs);
     }
 }
 

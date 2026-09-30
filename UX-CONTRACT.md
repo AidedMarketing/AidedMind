@@ -20,3 +20,14 @@ The Share Sheet action saves first. A successful Shortcut response means the ser
 ## Feedback and recovery
 
 Use short, literal status text in grouped rows. Success feedback can disappear; failure and required action remain on the item. Keep the same operation names in Settings, Shared links, and note menus. Use semantic buttons and links, visible focus, and the existing app sheet and toast primitives.
+
+## Rebuild authorization and scope (2026-09-30)
+
+Source: owner accepted the completed audit and requested “go through with your findings and rebuild,” with robust accessibility and a side-menu reference. Existing account plans and monthly breakdown allowances remain unchanged.
+
+- Retention: shared links are retained until imported or explicitly removed. At 200 entries, new shares receive a recoverable capacity error; repeats can reuse existing entries.
+- Quota: exhausted background work stays queued until the next UTC month. Supporting source/connection requests also respect quota; each has a four-times-plan supporting-call budget, with at most three concurrent calls and twenty starts/minute per account. Unlimited plans have concurrency/rate bounds but no monthly supporting-call cap. Failed attempts count toward supporting-call budgets to bound provider spend.
+- Restore: validate the complete supported backup before writes, preview additions, preserve existing IDs unchanged. A single transaction adds missing notes; restoring never deletes or overwrites local work. Unsupported/invalid files show failure and leave storage unchanged.
+- Deletion: explicit app-owned confirmation names the note and irreversible local consequence; initial focus is Keep note. Trash/Undo is tracked separately and is not implied by this release.
+- Sheets: named dialog, isolated background, focus confinement, Escape dismissal, scroll lock, return to opener. Accessibility controls use the same primitive.
+- Preferences: local to this browser/device, persist immediately, reset explicitly. OS reduced motion is always honored. No claim of WCAG conformance is made without the broader device/assistive-technology matrix.

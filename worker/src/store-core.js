@@ -2,30 +2,17 @@
 // Durable Object SQL API (`sql.exec(query, ...bindings)`). Each user gets
 // their own instance (inbox + usage); a single "directory" instance maps
 // access-token hashes to users.
+import { canonicalUrl } from '../../web/js/library.js';
+
 const INBOX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const INBOX_MAX = 200;
 const MAX_TEXT = 600000;
-
-function substackPostKey(rawUrl) {
-    try {
-        const url = new URL(rawUrl);
-        const host = url.hostname.toLowerCase();
-        if (host === 'open.substack.com') {
-            const match = url.pathname.match(/^\/pub\/([\w-]+)\/p\/([\w-]+)\/?$/i);
-            return match ? `${match[1].toLowerCase()}/${match[2].toLowerCase()}` : '';
-        }
-        const match = url.pathname.match(/^\/p\/([\w-]+)\/?$/i);
-        const publication = host.match(/^([\w-]+)\.substack\.com$/);
-        return match && publication ? `${publication[1]}/${match[1].toLowerCase()}` : '';
-    } catch {
-        return '';
-    }
-}
 
 // Columns added to the inbox after it first shipped; existing tables get them
 // on first use. `queued` marks items the server processes in the background
 // (older rows are 0 and are still handled by the app when it opens).
 const INBOX_COLUMNS = {
+    capture_revision: 'INTEGER NOT NULL DEFAULT 0',
     status: "TEXT NOT NULL DEFAULT 'pending'",
     queued: 'INTEGER NOT NULL DEFAULT 0',
     attempts: 'INTEGER NOT NULL DEFAULT 0',
@@ -87,6 +74,32 @@ export class StoreCore {
         return this.sql.exec(query, ...bindings).toArray();
     }
 
+    // Atomic per-account limits on supporting paid calls. Leases expire if a
+    // Worker is interrupted, so an abandoned request cannot lock the account.
+    beginOperation(kind, limit, now = Date.now()) {
+        const month = new Date(now).toISOString().slice(0, 7);
+        if (limit !== null && this.usageFor(month).captures >= limit) return { error: 'quota' };
+        const previous = this.metaGet('operations') || {};
+        const state = previous.month === month ? previous : { month, counts: {}, active: [], recent: [] };
+        state.active = (state.active || []).filter((x) => x.expires > now);
+        state.recent = (state.recent || []).filter((time) => time > now - 60000);
+        if (state.active.length >= 3 || state.recent.length >= 20) return { error: 'busy' };
+        if (limit !== null && (state.counts[kind] || 0) >= Math.max(4, limit * 4)) return { error: 'budget' };
+        const id = crypto.randomUUID();
+        state.counts[kind] = (state.counts[kind] || 0) + 1;
+        state.active.push({ id, expires: now + 10 * 60000 });
+        state.recent.push(now);
+        this.metaSet('operations', state);
+        return { id };
+    }
+
+    endOperation(id) {
+        const state = this.metaGet('operations');
+        if (!state) return;
+        state.active = state.active.filter((x) => x.id !== id);
+        this.metaSet('operations', state);
+    }
+
     // ----- directory -----
 
     findUser(tokenHash) {
@@ -136,40 +149,53 @@ export class StoreCore {
             images: Math.min(200, Math.max(0, Number(capture.images) || 0)),
             review: Boolean(capture.review && item.text)
         } : {};
+        if (item.url && item.text) {
+            const key = canonicalUrl(item.url);
+            const matches = this.rows('SELECT * FROM inbox ORDER BY received_at DESC').filter((row) => canonicalUrl(row.url) === key);
+            const match = matches.find((row) => {
+                if (row.text === item.text) return true;
+                if (row.status !== 'done') return false;
+                try { const result = JSON.parse(row.result); return result.duplicate || (result.source && !result.source.partial); }
+                catch { return false; }
+            });
+            if (match) return { ...item, id: match.id, status: match.status, queued: match.queued === 1, reused: true };
+        }
         // Re-sharing a link must not start another fetch or reset an upstream
         // cooldown. Safari's text upgrade below remains able to resume it.
         if (!item.text && item.url) {
-            const key = substackPostKey(item.url);
+            const key = canonicalUrl(item.url);
             if (key) {
-                const waiting = this.rows("SELECT * FROM inbox WHERE status IN ('pending', 'processing', 'failed') ORDER BY received_at DESC");
-                const match = waiting.find((row) => substackPostKey(row.url) === key);
+                const waiting = this.rows("SELECT * FROM inbox WHERE status IN ('pending', 'processing', 'failed', 'done') ORDER BY received_at DESC");
+                const match = waiting.find((row) => canonicalUrl(row.url) === key);
                 if (match) return { ...item, id: match.id, status: match.status, queued: match.queued === 1, reused: true };
             }
         }
         // A link shared from the Substack app may be waiting for access. If
         // Safari later supplies the article text, finish that same item.
         if (item.text && item.url && meta.kind === 'safari') {
-            const key = substackPostKey(item.url);
+            const key = canonicalUrl(item.url);
             if (key) {
-                const waiting = this.rows("SELECT id, url FROM inbox WHERE status IN ('pending', 'failed') AND text = '' ORDER BY received_at DESC LIMIT 100");
-                const match = waiting.find((row) => substackPostKey(row.url) === key);
+                const waiting = this.rows("SELECT id, url FROM inbox WHERE status IN ('pending', 'processing', 'failed') AND text = '' ORDER BY received_at DESC");
+                const match = waiting.find((row) => canonicalUrl(row.url) === key);
                 if (match) {
-                    this.sql.exec("UPDATE inbox SET text = ?, title = CASE WHEN ? = '' THEN title ELSE ? END, received_at = ?, status = 'pending', attempts = 0, next_attempt_at = ?, capture_meta = ?, capture_confirmed = 0, error = '', error_kind = '' WHERE id = ?",
+                    this.sql.exec("UPDATE inbox SET capture_revision = capture_revision + 1, text = ?, title = CASE WHEN ? = '' THEN title ELSE ? END, received_at = ?, status = 'pending', attempts = 0, next_attempt_at = ?, capture_meta = ?, capture_confirmed = 0, error = '', error_kind = '' WHERE id = ?",
                         item.text, item.title, item.title, now, now, JSON.stringify(meta), match.id);
                     return { ...item, id: match.id, url: match.url, status: 'pending', queued: Boolean(queue) };
                 }
             }
         }
+        if (this.rows('SELECT COUNT(*) AS count FROM inbox')[0].count >= INBOX_MAX) {
+            return { full: true };
+        }
         this.sql.exec(`INSERT INTO inbox (id, url, text, title, received_at, status, queued, next_attempt_at, quota_limit, capture_meta)
             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
         item.id, item.url, item.text, item.title, now, queue ? 1 : 0, now, limit === null ? -1 : Number(limit), JSON.stringify(meta));
-        this.sql.exec(`DELETE FROM inbox WHERE id NOT IN (SELECT id FROM inbox ORDER BY received_at DESC LIMIT ${INBOX_MAX})`);
+
         return { ...item, status: 'pending', queued: Boolean(queue) };
     }
 
     inboxList() {
-        const cutoff = new Date(Date.now() - INBOX_TTL_MS).toISOString();
-        this.sql.exec('DELETE FROM inbox WHERE received_at < ?', cutoff);
+        // Uncollected work is retained until the user imports or removes it.
         return this.rows('SELECT * FROM inbox ORDER BY received_at').map((row) => {
             let result = null;
             if (row.status === 'done' && row.result) {
@@ -209,7 +235,7 @@ export class StoreCore {
         if (!item || !['failed', 'pending'].includes(item.status)) return false;
         const content = String(text || '').trim().slice(0, MAX_TEXT);
         if (content) {
-            this.sql.exec("UPDATE inbox SET text = ?, title = CASE WHEN ? = '' THEN title ELSE ? END, received_at = ?, status = 'pending', attempts = 0, next_attempt_at = ?, capture_confirmed = 1, error = '', error_kind = '' WHERE id = ?",
+            this.sql.exec("UPDATE inbox SET capture_revision = capture_revision + 1, text = ?, title = CASE WHEN ? = '' THEN title ELSE ? END, received_at = ?, status = 'pending', attempts = 0, next_attempt_at = ?, capture_confirmed = 1, error = '', error_kind = '' WHERE id = ?",
                 content, String(title || '').trim(), String(title || '').trim().slice(0, 300), new Date().toISOString(), new Date().toISOString(), id);
         } else {
             this.sql.exec("UPDATE inbox SET status = 'pending', attempts = 0, next_attempt_at = ?, capture_confirmed = CASE WHEN ? THEN 1 ELSE capture_confirmed END, error = '', error_kind = '' WHERE id = ?",
@@ -222,15 +248,20 @@ export class StoreCore {
     // "lease" keeps another run from taking it, and expires if this one dies.
     inboxClaim(nowMs, leaseMs) {
         const now = new Date(nowMs).toISOString();
-        const [row] = this.rows(`SELECT id, url, text, title, attempts, quota_limit, capture_meta, capture_confirmed FROM inbox
+        const [row] = this.rows(`SELECT id, url, text, title, attempts, quota_limit, capture_meta, capture_confirmed, capture_revision FROM inbox
             WHERE queued = 1 AND status IN ('pending', 'processing') AND next_attempt_at <= ?
             ORDER BY received_at LIMIT 1`, now);
         if (!row) return null;
         this.sql.exec("UPDATE inbox SET status = 'processing', attempts = attempts + 1, next_attempt_at = ? WHERE id = ?",
             new Date(nowMs + leaseMs).toISOString(), row.id);
         return { id: row.id, url: row.url, text: row.text, title: row.title, attempts: row.attempts + 1,
-            capture_meta: row.capture_meta, capture_confirmed: row.capture_confirmed,
+            capture_meta: row.capture_meta, capture_confirmed: row.capture_confirmed, capture_revision: row.capture_revision,
             quotaLimit: row.quota_limit < 0 ? null : row.quota_limit };
+    }
+
+    inboxIsCurrent(item) {
+        const [row] = this.rows('SELECT capture_revision FROM inbox WHERE id = ?', item.id);
+        return row && row.capture_revision === item.capture_revision;
     }
 
     // When the next queued item is due (ms since epoch), or null.

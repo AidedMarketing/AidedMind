@@ -135,12 +135,15 @@ const routes = [
         const { url } = await readJson(request);
         const store = userStore(env, user.id);
         const month = currentMonth();
+        const operation = await beginPaidOperation(store, 'source', user, env);
+        try {
         return json(await fetchSource(url, {
             env,
             cacheGet: (key) => store.transcriptGet(key),
             cachePut: (key, source) => store.transcriptPut(key, source),
             record: (item, amount) => store.addCost(month, item, amount)
         }));
+        } finally { await store.endOperation(operation); }
     }, { auth: true }],
 
     ['POST', /^\/api\/analyze$/, async (request, env, user) => {
@@ -199,9 +202,12 @@ const routes = [
     ['POST', /^\/api\/connections$/, async (request, env, user) => {
         const { note, library } = await readJson(request, 1024 * 1024);
         const store = userStore(env, user.id);
+        const operation = await beginPaidOperation(store, 'connections', user, env);
+        try {
         const result = await suggestConnections(note, library, env);
         if (result.model) await recordClaude(store, currentMonth(), result.model, result.tokens);
         return json({ connections: result.connections });
+        } finally { await store.endOperation(operation); }
     }, { auth: true }],
 
     // The app tells the server its breakdown style and the topic and concept
@@ -227,6 +233,7 @@ const routes = [
             { url: body.url, text: body.text, title: body.title, capture: body.capture },
             { limit: monthlyLimit(user.plan, env) }
         );
+        if (item?.full) throw new HttpError(409, 'Your shared links inbox is full. Open AidedMind to collect completed items or remove links before sharing more. Existing items are safe.');
         if (!item) throw new HttpError(400, 'Nothing to save: send a url or text.');
         if (new URL(request.url).searchParams.get('shortcut') === '1') {
             const words = (item.text.match(/\S+/g) || []).length;
@@ -322,3 +329,11 @@ export default {
         return new Response(response.body, { status: response.status, headers });
     }
 };
+
+async function beginPaidOperation(store, kind, user, env) {
+    const reservation = await store.beginOperation(kind, monthlyLimit(user.plan, env));
+    if (reservation.error === 'quota') throw new HttpError(402, 'Your monthly breakdown allowance is used up. Saved items will wait until it resets on the 1st.');
+    if (reservation.error === 'budget') throw new HttpError(429, 'The monthly allowance for supporting requests has been reached. It resets on the 1st.');
+    if (reservation.error) throw new HttpError(429, 'AidedMind is handling several requests. Please try again shortly.');
+    return reservation.id;
+}

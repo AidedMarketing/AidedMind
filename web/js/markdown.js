@@ -10,10 +10,10 @@ function yamlString(value) {
 }
 
 // theme: optional theme name from the map, written to the frontmatter.
-export function toMarkdown(note, notesById, { theme = '' } = {}) {
+export function toMarkdown(note, notesById, { theme = '', fileNames = null } = {}) {
     const linkTo = (id) => {
         const target = notesById.get(id);
-        return target ? `[[${fileName(target).replace(/\.md$/, '')}]]` : null;
+        return target ? `[[${(fileNames?.get(id) || fileName(target)).replace(/\.md$/, '')}]]` : null;
     };
     const lines = [
         '---',

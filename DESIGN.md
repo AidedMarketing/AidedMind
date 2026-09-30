@@ -74,3 +74,18 @@ Reuse `h`, `openSheet`, `toast`, `setBanner`, group rows and buttons from `web/j
 - Do keep recovery on the same item and preserve its URL.
 - Don't imply a paywall teaser is a complete article.
 - Don't turn a provider outage into a destructive or alarming screen.
+
+## Accessibility preferences and ownership
+
+Runtime CSS remains canonical (Model B). `web/js/accessibility.js` owns device preferences and `openSheet` owns every modal's focus, Escape, inert background and scroll lock. The fixed Aa button is below the sheet/backdrop layer and above navigation content; Settings also offers the same panel. No image inversion or grayscale filter is applied.
+
+| Role | Runtime owner | Accepted values / behavior |
+|---|---|---|
+| Secondary metadata contrast | `web/app.css --text-3` | Dark `#aaa5bb`; light `#71657d` |
+| Text scaling | `--text-scale` | 1, 1.15, 1.3, 1.5, 2; controls wrap where needed |
+| Reading font | `--font-serif` | Established serif, optionally system body stack |
+| Reading space | `.a11y-spacing` | 1.9 line height, .025em letter spacing, .08em word spacing |
+| High contrast | `.a11y-contrast` semantic variables | Light/dark text and boundaries; photographs remain unchanged |
+| Motion | OS media query + `.a11y-motion` | CSS movement suppressed; map simulation stops |
+
+Keyboard users can open Map as a list and navigate notes or shared ideas without interacting with canvas. This is an accessible alternate view, not a claim that the canvas itself is screen-reader navigable. Native iPhone VoiceOver and 200% narrow-screen reflow remain release verification targets.

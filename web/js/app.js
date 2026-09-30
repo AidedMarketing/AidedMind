@@ -1,4 +1,6 @@
-import { allNotes, saveNote, saveMany, deleteNote, newId } from './db.js';
+import { applyAccessibility, accessibilityPanel } from './accessibility.js';
+import { prepareRestore } from './backup.js';
+import { allNotes, saveNote, saveMany, restoreMissing, deleteNote, newId } from './db.js';
 import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, queueInboxItem, removeInboxItem, updateInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { buildThemes, THEME_DETAIL } from './themes.js';
@@ -56,7 +58,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '25';
+const APP_VERSION = '26';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -192,7 +194,7 @@ function updateNavShadow() {
 window.addEventListener('scroll', updateNavShadow, { passive: true });
 
 function navButton(label, onclick, iconName) {
-    return h('button', { type: 'button', class: `nav-button${label ? '' : ' icon-only'}`, onclick, 'aria-label': label || iconName },
+    return h('button', { type: 'button', class: `nav-button${label ? '' : ' icon-only'}`, onclick, 'aria-label': label || (iconName === 'more' ? 'Note actions' : iconName) },
         iconName ? icon(iconName, { size: 24, strokeWidth: 2 }) : null,
         label
     );
@@ -200,16 +202,49 @@ function navButton(label, onclick, iconName) {
 
 // ---------- Sheets ----------
 
+let sheetState = null;
 function closeSheet() {
-    document.getElementById('sheet-root').replaceChildren();
+    if (sheetState) {
+        const { origin, background, overflow, onKey } = sheetState;
+        document.removeEventListener('keydown', onKey, true);
+        background.forEach(([el, inert]) => { el.inert = inert; });
+        document.body.style.overflow = overflow;
+        sheetState = null;
+        document.getElementById('sheet-root').replaceChildren();
+        if (origin?.isConnected) origin.focus({ preventScroll: true });
+        else view.focus({ preventScroll: true });
+    } else document.getElementById('sheet-root').replaceChildren();
 }
 
 function openSheet(...content) {
+    const origin = sheetState?.origin || document.activeElement;
+    closeSheet();
     const root = document.getElementById('sheet-root');
-    const sheet = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true' }, h('div', { class: 'grabber' }), content);
+    const sheet = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', tabindex: '-1' }, h('div', { class: 'grabber' }), content);
+    const heading = sheet.querySelector('h1, h2, h3');
+    if (heading) { heading.id = 'sheet-heading'; sheet.setAttribute('aria-labelledby', heading.id); }
+    else sheet.setAttribute('aria-label', 'AidedMind options');
     root.replaceChildren(h('div', { class: 'sheet-scrim', onclick: closeSheet }), sheet);
+    const background = [...document.body.children].filter((el) => el !== root && el.id !== 'toast').map((el) => [el, el.inert]);
+    background.forEach(([el]) => { el.inert = true; });
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const focusable = () => [...sheet.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')].filter((el) => !el.hidden && el.getClientRects().length);
+    const onKey = (event) => {
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSheet(); }
+        if (event.key === 'Tab') {
+            const targets = focusable();
+            const first = targets[0], last = targets.at(-1);
+            if (!first) { event.preventDefault(); sheet.focus(); }
+            else if (event.shiftKey && (document.activeElement === first || document.activeElement === sheet)) { event.preventDefault(); last.focus(); }
+            else if (!event.shiftKey && (document.activeElement === last || !sheet.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+        }
+    };
+    sheetState = { origin, background, overflow, onKey };
+    document.addEventListener('keydown', onKey, true);
+    sheet.focus({ preventScroll: true });
     let startY = null;
-    sheet.addEventListener('touchstart', (event) => { startY = sheet.scrollTop <= 0 ? event.touches[0].clientY : null; }, { passive: true });
+    sheet.addEventListener('touchstart', (event) => { startY = event.target.closest('button, input, textarea, select') ? null : sheet.scrollTop <= 0 ? event.touches[0].clientY : null; }, { passive: true });
     sheet.addEventListener('touchend', (event) => {
         if (startY !== null && event.changedTouches[0].clientY - startY > 80) closeSheet();
         startY = null;
@@ -930,21 +965,31 @@ function noteActions(note, byId) {
                 type === 'article' ? actionRow('Add screenshots', 'camera', () => addScreenshots(note)) : null
             ),
             h('div', { class: 'group' },
-                actionRow('Delete note', 'trash', async () => {
-                    if (!confirm(`Delete "${note.title}"?`)) return;
-                    closeSheet();
-                    await deleteNote(note.id);
-                    const touched = notes.filter((n) => n.id !== note.id && (n.connections || []).some((c) => c.noteId === note.id));
-                    touched.forEach((n) => { n.connections = n.connections.filter((c) => c.noteId !== note.id); });
-                    if (touched.length) await saveMany(touched);
-                    notes = await allNotes();
-                    toast('Deleted');
-                    location.hash = '#/library';
-                }, 'danger')
+                actionRow('Delete note', 'trash', () => confirmDeleteNote(note), 'danger')
             ),
             h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel')
         )
     );
+}
+
+function confirmDeleteNote(note) {
+    const status = h('p', { role: 'status' });
+    const cancel = h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Keep note');
+    const remove = h('button', { type: 'button', class: 'btn block danger', onclick: async () => {
+        remove.disabled = true;
+        try {
+            await deleteNote(note.id);
+            const touched = notes.filter((n) => n.id !== note.id && (n.connections || []).some((c) => c.noteId === note.id));
+            const cleaned = touched.map((n) => ({ ...n, connections: n.connections.filter((c) => c.noteId !== note.id) }));
+            if (cleaned.length) await saveMany(cleaned);
+            notes = await allNotes();
+            closeSheet();
+            toast('Note deleted');
+            location.hash = '#/library';
+        } catch (error) { status.textContent = `Could not finish deleting: ${error.message}`; remove.disabled = false; }
+    } }, 'Delete note');
+    openSheet(h('h2', {}, 'Delete note?'), h('p', {}, `“${note.title}” and its connections will be removed from this device. This cannot be undone without a backup.`), status, cancel, remove);
+    cancel.focus();
 }
 
 function addScreenshots(note) {
@@ -993,7 +1038,8 @@ async function retryTranscript(note) {
 // open the page where you're logged in, copy the text, paste it here.
 function pasteFullTextSheet(note) {
     const field = h('textarea', { class: 'field', rows: '8', placeholder: 'Paste the full text here', 'aria-label': 'Full text' });
-    const submit = h('button', { type: 'submit', class: 'btn primary block' }, 'Break it down');
+    const submit = h('button', { type: 'submit', class: 'btn primary block', disabled: true }, 'Break it down');
+    field.addEventListener('input', () => { submit.disabled = !field.value.trim(); });
     openSheet(
         h('h3', {}, 'Paste the full text'),
         h('p', { class: 'small muted' }, note.source?.transcriptSource === 'paywall'
@@ -1177,7 +1223,19 @@ function graphView() {
             h('label', { class: 'search glass' }, icon('search', { size: 18, strokeWidth: 2.2 }), search),
             colorButton,
             conceptsButton,
-            fitButton
+            fitButton,
+            h('button', { type: 'button', class: 'btn', onclick: () => {
+                const data = buildGraph(notes, { showConcepts: settings.showConcepts, themes });
+                const results = h('div', { class: 'stack' });
+                const input = h('input', { type: 'search', class: 'field', 'aria-label': 'Search map notes and ideas' });
+                const paint = () => {
+                    const matches = data.nodes.filter((n) => n.label.toLowerCase().includes(input.value.toLowerCase()));
+                    results.replaceChildren(...matches.map((n) => h('button', { type: 'button', class: 'btn', onclick: () => { closeSheet(); openNode(n); } }, `${n.label} — ${n.isNote ? 'Note' : 'Shared idea'}`)));
+                    if (!matches.length) results.append(h('p', { role: 'status' }, 'No matching notes or ideas.'));
+                };
+                input.addEventListener('input', paint); paint();
+                openSheet(h('h2', {}, 'Map as a list'), input, results, h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Done'));
+            } }, 'List')
         ),
         legend
     ));
@@ -1343,11 +1401,25 @@ function settingsView() {
         const file = fileInput.files[0];
         if (!file) return;
         try {
+            if (file.size > 50 * 1024 * 1024) throw new Error('Choose a backup smaller than 50 MB.');
             const data = JSON.parse(await file.text());
-            const incoming = (Array.isArray(data) ? data : data.notes || []).filter((n) => n && n.id && n.title && n.createdAt);
-            await saveMany(incoming);
-            notes = await allNotes();
-            toast(`Restored ${incoming.length} notes`);
+            const preview = prepareRestore(data, await allNotes());
+            const status = h('p', { role: 'status' });
+            const restore = h('button', { type: 'button', class: 'btn primary block', onclick: async () => {
+                restore.disabled = true;
+                try {
+                    // Recheck after preview in case another tab saved a note.
+                    const current = prepareRestore(data, await allNotes());
+                    await restoreMissing(current.additions);
+                    notes = await allNotes();
+                    closeSheet();
+                    settingsView();
+                    syncPreferences();
+                    toast(`Restored ${current.additions.length} notes; kept ${current.skipped} existing notes`);
+                } catch (error) { status.textContent = `Restore failed: ${error.message}`; restore.disabled = false; }
+            } }, 'Restore notes');
+            openSheet(h('h2', {}, 'Restore backup'), h('p', {}, `${preview.additions.length} new notes will be added. ${preview.skipped} existing notes will be kept unchanged.`),
+                status, h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel'), restore);
         } catch (error) {
             toast(`Restore failed: ${error.message}`);
         }
@@ -1381,6 +1453,7 @@ function settingsView() {
 
     render(
         h('h1', { class: 'large-title' }, 'Settings'),
+        h('div', { class: 'group' }, actionRow('Accessibility', 'settings', () => accessibilityPanel({ h, openSheet, closeSheet, toast }))),
 
         h('div', { class: 'section-label' }, 'Breakdown style'),
         (() => {
@@ -1527,20 +1600,22 @@ async function renderAccounts(container) {
         h('div', { class: 'section-label' }, 'Accounts'),
         h('div', { class: 'group' },
             data.users.map(row),
-            actionRow('Add an account', 'add', async () => {
-                const label = prompt('Who is this account for?');
-                if (label === null) return;
-                try {
-                    const created = await adminCreateUser({ label: label.trim(), plan: 'free' });
-                    openSheet(
-                        h('h3', {}, `Account for ${created.label || 'new user'}`),
-                        h('p', { class: 'muted small' }, `Free plan, ${created.limit} breakdowns a month. Send them this token; it is shown only once.`),
-                        copyField(created.token, 'Token'),
-                        h('div', { class: 'stack' }, h('button', { type: 'button', class: 'btn block', onclick: () => { closeSheet(); renderAccounts(container); } }, 'Done'))
-                    );
-                } catch (error) {
-                    toast(error.message);
-                }
+            actionRow('Add an account', 'add', () => {
+                const label = h('input', { type: 'text', class: 'field', 'aria-label': 'Account label', placeholder: 'Who is this account for?', maxlength: '100' });
+                const status = h('p', { role: 'status' });
+                const create = h('button', { type: 'submit', class: 'btn primary block' }, 'Create free account');
+                openSheet(h('h2', {}, 'Add an account'), h('form', { novalidate: true, class: 'stack', onsubmit: async (event) => {
+                    event.preventDefault();
+                    if (create.disabled) return;
+                    create.disabled = true;
+                    try {
+                        const created = await adminCreateUser({ label: label.value.trim(), plan: 'free' });
+                        openSheet(h('h3', {}, `Account for ${created.label || 'new user'}`),
+                            h('p', { class: 'muted small' }, `Free plan, ${created.limit} breakdowns a month. Send them this token; it is shown only once.`),
+                            copyField(created.token, 'Token'),
+                            h('button', { type: 'button', class: 'btn block', onclick: () => { closeSheet(); renderAccounts(container); } }, 'Done'));
+                    } catch (error) { status.textContent = error.message; create.disabled = false; }
+                } }, label, status, create, h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel')));
             })
         ),
         h('p', { class: 'group-footer' }, `Breakdowns used in ${data.month}. Paid plans can plug in here later.`)
@@ -1554,12 +1629,14 @@ function exportVault() {
     }
     const byId = new Map(notes.map((n) => [n.id, n]));
     const used = new Set();
-    const files = notes.map((note) => {
+    const fileNames = new Map();
+    notes.forEach((note) => {
         let name = fileName(note);
         for (let i = 2; used.has(name.toLowerCase()); i++) name = fileName(note).replace(/\.md$/, ` ${i}.md`);
         used.add(name.toLowerCase());
-        return { name: `AidedMind/${name}`, content: toMarkdown(note, byId, { theme: themeOf(note.id)?.label }) };
+        fileNames.set(note.id, name);
     });
+    const files = notes.map((note) => ({ name: `AidedMind/${fileNames.get(note.id)}`, content: toMarkdown(note, byId, { theme: themeOf(note.id)?.label, fileNames }) }));
     const zip = createZip(files);
     shareFile(new File([zip], `AidedMind-${new Date().toISOString().slice(0, 10)}.zip`, { type: 'application/zip' }));
 }
@@ -1951,3 +2028,6 @@ async function start() {
 }
 
 start();
+
+applyAccessibility();
+document.body.append(h('button', { id: 'accessibility-button', class: 'accessibility-button', type: 'button', 'aria-label': 'Accessibility preferences', onclick: () => accessibilityPanel({ h, openSheet, closeSheet, toast }) }, 'Aa'));
