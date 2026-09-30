@@ -17,9 +17,11 @@ Adrian wants the Substack app's Share button → Save to AidedMind Shortcut to r
 
 ## This change
 
-- Preserve a fallback API's 429 and Retry-After when a direct publication page returns a different failure such as 404.
-- An API retry no longer repeats the API if its one page fallback also fails. Missing APIs and empty post responses still allow a readable public page to complete the share.
-- Regression coverage includes recovery to a completed note on the same inbox item, with no quota spent on failed reads.
+- Baseline now includes PR #26 (`7632696`), which preserves fallback API rate limits and avoids repeating a failed API route.
+- Repeated URL-only Substack shares match the same pending, processing, or failed item across app and publication URLs. They preserve attempts and Retry-After deadlines; Try again remains the explicit reset action.
+- The Shortcut plain-text confirmation now distinguishes received article text (actual word count) from a URL-only share, an empty Safari capture, and a repeated link.
+- Safari text recovery still completes the same waiting item without an upstream fetch. Existing duplicate rows are not deleted, and custom-domain aliases are not inferred.
+- September 29 late-evening screenshot showed mattpaige68.substack.com throttling after both app and Safari shares. Exact post URL and the user's Shortcut configuration are still needed to diagnose that capture path; do not claim this change lifts the publisher's rate limit.
 
 ## Verification and remaining checks
 

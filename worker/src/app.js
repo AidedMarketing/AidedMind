@@ -229,7 +229,11 @@ const routes = [
         );
         if (!item) throw new HttpError(400, 'Nothing to save: send a url or text.');
         if (new URL(request.url).searchParams.get('shortcut') === '1') {
-            return new Response('Saved to AidedMind', { status: 201, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+            const words = (item.text.match(/\S+/g) || []).length;
+            const message = item.text
+                ? `Saved to AidedMind — ${words.toLocaleString('en-US')} words received.${body.capture?.review ? ' Check the captured text in Shared links.' : ''}`
+                : `${item.reused ? 'Already saved to AidedMind. The existing item keeps its progress.' : 'Saved link to AidedMind.'} No article text was received.${body.capture?.kind === 'safari' ? ' Safari did not capture readable text; use Add text in Shared links.' : ' If you shared from Safari, check that the Shortcut runs the Safari script and posts its JavaScript Result.'}`;
+            return new Response(message, { status: 201, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
         }
         return json({ ok: true, id: item.id, message: 'Saved to AidedMind. Check Shared links for progress or to add article text if needed.' }, 201);
     }, { auth: true }],
