@@ -36,7 +36,7 @@ function luminance(hex) {
 }
 test('editorial ink, metadata and action palette meets normal-text contrast', () => {
     for (const palette of [
-        { backgrounds: ['f6f2e9', 'fcf9f2', 'eee8dd'], foregrounds: ['302d28', '615b52', '71685d', '6b5087'] },
+        { backgrounds: ['f6f2e9', 'fcf9f2', 'eee8dd'], foregrounds: ['302d28', '615b52', '6a6157', '6b5087'] },
         { backgrounds: ['242320', '2c2b28', '34332f'], foregrounds: ['f4efe5', 'cbc4b8', 'b5aea3', 'c7b8e8'] }
     ]) for (const bg of palette.backgrounds) for (const fg of palette.foregrounds) {
         const a = luminance(bg), b = luminance(fg);
