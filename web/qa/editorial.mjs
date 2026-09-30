@@ -177,6 +177,7 @@ try {
             await page.locator('.focus-pill').waitFor();
             await page.getByRole('button', { name: 'Fit All' }).click();
             await page.waitForURL((address) => address.hash === '#/graph');
+            await page.locator('.focus-pill').waitFor({ state: 'detached' });
             assert.equal(await page.locator('.focus-pill').count(), 0);
         });
         await check(label + ' More, backup, ZIP and appearance', async () => {
@@ -190,6 +191,8 @@ try {
             assert.match(backup.suggestedFilename(), /\.json$/);
             const data = JSON.parse(await readFile(await backup.path(), 'utf8'));
             assert.equal(data.notes.length, 4);
+            await page.locator('input[type="file"]').setInputFiles({ name: 'restore.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(data)) });
+            await page.getByText('Restored 4 notes', { exact: true }).waitFor();
             downloaded = page.waitForEvent('download');
             await page.getByRole('button', { name: 'Export to Obsidian (.zip)' }).click();
             const zip = await downloaded;
@@ -226,7 +229,8 @@ try {
             inbox = [{ id: 'waiting', title: 'Waiting article', url: 'https://example.com/waiting', status: 'failed', queued: true, errorKind: 'retry_in_app', error: 'too many requests', attempts: 4 }];
             await goto('library');
             await page.getByRole('button', { name: 'inbox', exact: true }).click();
-            await page.getByText(/Needs your help/).first().waitFor();
+            await page.getByText('Waiting article', { exact: true }).waitFor();
+            await page.getByText('Needs your help. This link is saved. Open it in Safari and share the readable page, or add text here.', { exact: true }).waitFor();
             await page.getByRole('searchbox', { name: 'Search library' }).fill('no-match-fixture');
             await page.getByText('No results', { exact: true }).waitFor();
             await page.setViewportSize({ width: 320, height: 740 }); await noOverflow();
