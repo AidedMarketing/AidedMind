@@ -1,9 +1,11 @@
 // App shell cache. API calls always go to the network.
-const CACHE_NAME = 'aidedmind-v28';
+const CACHE_NAME = 'aidedmind-v29';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
     './app.css',
+    './tokens.css',
+    './shell.css',
     './fonts/Newsreader.ttf',
     './icons/mark.svg',
     './manifest.webmanifest',
@@ -56,3 +58,4 @@ self.addEventListener('fetch', (event) => {
     // from two versions; a new version arrives as a new service worker.
     event.respondWith(caches.match(request).then((cached) => cached || fetch(request)));
 });
+

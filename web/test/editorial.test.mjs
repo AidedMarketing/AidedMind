@@ -35,7 +35,7 @@ function luminance(hex) {
     return .2126 * values[0] + .7152 * values[1] + .0722 * values[2];
 }
 test('editorial ink, metadata and action palette meets normal-text contrast', async () => {
-    const css = await readFile(new URL('../app.css', import.meta.url), 'utf8');
+    const css = await readFile(new URL('../tokens.css', import.meta.url), 'utf8');
     for (const selector of [':root {', ':root[data-appearance="light"] {']) {
         const start = css.indexOf(selector);
         assert.ok(start >= 0);

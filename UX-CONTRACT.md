@@ -1,5 +1,22 @@
 # AidedMind share and note behavior
 
+## Canonical UI map
+
+The original implementation brief and current user feedback own the navigation and visual requirements. Domain behavior remains defined by worker routes, storage and existing capture/connection tests.
+
+| Capability | Canonical owner | Variants | Verification |
+| --- | --- | --- | --- |
+| Navigation and page layout | `web/index.html`, `setNav`, `web/shell.css` | Three-link mobile bar / desktop rail; static branding | Browser geometry, pointer navigation, keyboard |
+| Tokens and theme | `web/tokens.css`, `applyDisplay` | System / light / dark | Token contrast, appearance browser checks |
+| Tabs / display choices | Existing `segmentedControl` and saved-piece tablist | Radiogroup / Breakdown–Links–Notes | Keyboard and browser tests |
+| Forms | Existing capture and manual-link controls | Capture / search / notes autosave | Success, failure and persistence browser checks |
+| Sheets | `openSheet` / `closeSheet` | Existing capture, connections, source passage | Focus trap, inert background, Escape and restoration |
+| Scrollbar | Global baseline in `web/app.css` | Document / canvas list | Theme contrast and browser inspection |
+| Status feedback | Shared `toast`, notes save status | Transient feedback / persistent inline error | Live region and save-state checks |
+| Explore controls | `graphView`, `web/shell.css` | Full fabric / focused neighborhood | Theme zoom, Fit All, synchronized accessible list |
+
+Brand imprints have no href, click handler or tabindex. Only Library, Explore and More are primary destinations. Add stays a global header action. Explore controls must never obscure canvas labels; list overlays remain within the canvas. Scrolling and viewport resizing must not hide navigation targets.
+
 The Share Sheet action saves first. A successful Shortcut response means the server stored the item, not that the breakdown is complete. A failed HTTP request must never display a saved confirmation. The one Shortcut has a Safari page branch that can include visible text and a link branch for other apps.
 
 ## Shared links

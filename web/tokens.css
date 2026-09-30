@@ -1,0 +1,148 @@
+/* AidedMind: iPhone-first, A.M. family palette (warm dark / warm light, lavender accent). */
+:root {
+    color-scheme: dark;
+    --bg: #262429;
+    --surface: #302d33;
+    --surface-2: #38343d;
+    --surface-3: #45404b;
+    --field: #2b282f;
+    --text: #f4f0e8;
+    --text-2: #cec7d1;
+    --text-3: #bab2bf;
+    --line: #4b454f;
+    --line-strong: #82798a;
+    --accent: #c5b3e3;
+    --accent-soft: #40364e;
+    --accent-ink: #292232;
+    --danger: #e9a095;
+    --node-article: #b1c8d8;
+    --node-youtube: #e9a095;
+    --node-tiktok: #9fd3c7;
+    --node-text: #c4b6e8;
+    --node-concept: #d9b887;
+    --node-photo: #e8c4d8;
+    --graph-line: #82798a;
+    --graph-line-strong: #c5b3e3;
+    /* Map themes: eight distinct, soft hues that read on the warm dark bg. */
+    --theme-0: #c4b6e8;
+    --theme-1: #9fd3c7;
+    --theme-2: #e9a095;
+    --theme-3: #a7bfd5;
+    --theme-4: #9dbde6;
+    --theme-5: #e8c4d8;
+    --theme-6: #b8d69a;
+    --theme-7: #dfaabd;
+    --theme-none: #6e6a80;
+    --bar-bg: #262429;
+    --scrim: rgba(16, 15, 13, 0.65);
+    --radius: 14px;
+    --radius-md: 10px;
+    --radius-sm: 6px;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --nav-h: 56px;
+    --tab-h: 64px;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", ui-sans-serif, "Segoe UI", Roboto, sans-serif;
+    --font-display: "Newsreader", "New York", Georgia, serif;
+    --font-serif: "Newsreader", "New York", Georgia, serif;
+    --paper: var(--bg);
+    --paper-secondary: var(--surface-2);
+    --surface-muted: var(--surface-2);
+    --ink: var(--text);
+    --text-secondary: var(--text-2);
+    --rule: var(--line);
+    --display-serif: var(--font-serif);
+    --ui-sans: var(--font);
+    --reading-size: 1.125rem;
+    --metadata-size: .8125rem;
+    --section-label-size: .6875rem;
+    --space-1: .25rem;
+    --space-2: .5rem;
+    --space-3: .75rem;
+    --space-4: 1rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+    --space-12: 3rem;
+    --space-16: 4rem;
+    --rail-width: 208px;
+}
+
+@media (prefers-color-scheme: light) {
+    :root:not([data-appearance="dark"]) {
+        color-scheme: light;
+        --bg: #f7f4ef;
+        --surface: #fdfbf7;
+        --surface-2: #efebe6;
+        --surface-3: #e5dfd8;
+        --field: #faf8f4;
+        --text: #302c33;
+        --text-2: #625c66;
+        --text-3: #6d6571;
+        --line: #dcd5cd;
+        --line-strong: #918591;
+        --accent: #70538f;
+        --accent-soft: #ece5f3;
+        --accent-ink: #fdfbf7;
+        --danger: #a14238;
+        --node-article: #385e7b;
+        --node-youtube: #a14238;
+        --node-tiktok: #2f7a6b;
+        --node-text: #695085;
+        --node-concept: #806023;
+        --node-photo: #8a4a6e;
+        --graph-line: #918591;
+        --graph-line-strong: #70538f;
+        --theme-0: #695085;
+        --theme-1: #2f7a6b;
+        --theme-2: #a14238;
+        --theme-3: #506b86;
+        --theme-4: #385e9b;
+        --theme-5: #8a4a6e;
+        --theme-6: #4f7a2e;
+        --theme-7: #92566d;
+        --theme-none: #a79db2;
+        --bar-bg: #f7f4ef;
+        --scrim: rgba(40, 35, 28, 0.35);
+    }
+}
+
+:root[data-appearance="light"] {
+        color-scheme: light;
+        --bg: #f7f4ef;
+        --surface: #fdfbf7;
+        --surface-2: #efebe6;
+        --surface-3: #e5dfd8;
+        --field: #faf8f4;
+        --text: #302c33;
+        --text-2: #625c66;
+        --text-3: #6d6571;
+        --line: #dcd5cd;
+        --line-strong: #918591;
+        --accent: #70538f;
+        --accent-soft: #ece5f3;
+        --accent-ink: #fdfbf7;
+        --danger: #a14238;
+        --node-article: #385e7b;
+        --node-youtube: #a14238;
+        --node-tiktok: #2f7a6b;
+        --node-text: #695085;
+        --node-concept: #806023;
+        --node-photo: #8a4a6e;
+        --graph-line: #918591;
+        --graph-line-strong: #70538f;
+        --theme-0: #695085;
+        --theme-1: #2f7a6b;
+        --theme-2: #a14238;
+        --theme-3: #506b86;
+        --theme-4: #385e9b;
+        --theme-5: #8a4a6e;
+        --theme-6: #4f7a2e;
+        --theme-7: #92566d;
+        --theme-none: #a79db2;
+        --bar-bg: #f7f4ef;
+        --scrim: rgba(40, 35, 28, 0.35);
+}
+
+
