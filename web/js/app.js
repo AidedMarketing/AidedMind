@@ -12,7 +12,7 @@ const view = document.getElementById('view');
 const navbar = document.getElementById('navbar');
 const SOURCE_LABELS = { article: 'Article', youtube: 'YouTube', tiktok: 'TikTok', text: 'Text', photo: 'Photos' };
 const SOURCE_ICONS = { article: 'article', youtube: 'youtube', tiktok: 'tiktok', text: 'text', concept: 'concept', photo: 'photo' };
-const NOTE_TABS = ['Summary', 'Outline', 'Links', 'Notes'];
+const NOTE_TABS = ['Breakdown', 'Links', 'Notes'];
 const PARTIAL_NOTES = {
     caption: 'Only the caption was available, so this is a partial breakdown. Paste the transcript for the full picture.',
     description: 'This video had no transcript, so the breakdown is based on its title and description. Paste the transcript for the full picture.',
@@ -56,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '25';
+const APP_VERSION = '26';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -155,9 +155,18 @@ function topicMark(label, colorIndex = null) {
     ];
 }
 
+function connectionCount(note) {
+    const ids = new Set((note.connections || []).map((c) => c.noteId).filter(Boolean));
+    notes.forEach((other) => {
+        if (other.id !== note.id && (other.connections || []).some((c) => c.noteId === note.id)) ids.add(other.id);
+    });
+    return ids.size;
+}
+
 function noteRow(note) {
     const type = note.source?.sourceType || 'text';
     const origin = note.source?.author || note.source?.siteName || hostOf(note.source?.url) || SOURCE_LABELS[type];
+    const links = connectionCount(note);
     return h('a', { class: 'note-row', href: `#/note/${encodeURIComponent(note.id)}` },
         sourceTile(type),
         h('div', { class: 'body' },
@@ -171,7 +180,9 @@ function noteRow(note) {
                     return topic ? [h('span', { class: 'meta-topic' }, topicMark(topic, theme ? theme.color : null)), ' · '] : null;
                 })(),
                 `${origin} · ${relativeDate(note.createdAt)}`)
-        )
+        ),
+        links ? h('span', { class: 'connection-glyph', 'aria-label': `${links} connection${links === 1 ? '' : 's'}` },
+            icon('graph', { size: 15, strokeWidth: 2 }), String(links)) : null
     );
 }
 
@@ -228,9 +239,11 @@ function actionRow(label, iconName, onclick, extraClass = '') {
 
 function buildNote(result, title) {
     const a = result.analysis;
+    const id = newId();
+    const createdAt = new Date().toISOString();
     return {
-        id: newId(),
-        createdAt: new Date().toISOString(),
+        id,
+        createdAt,
         source: {
             sourceType: result.source.sourceType,
             url: result.source.url,
@@ -256,7 +269,17 @@ function buildNote(result, title) {
         tags: a.tags,
         quotes: a.quotes,
         takeaways: a.takeaways,
-        connections: a.connections,
+        connections: (a.connections || []).map((c) => ({
+            ...c,
+            noteId: String(c.noteId || ''),
+            targetId: String(c.noteId || ''),
+            sourceId: id,
+            origin: c.origin === 'user' ? 'user' : 'aidedmind',
+            confidence: Number.isFinite(Number(c.confidence)) ? Number(c.confidence) : 0.8,
+            createdAt
+        })).filter((c) => c.noteId),
+        removedLinks: [],
+        rejectedLinks: [],
         photos: result.photos || [],
         userNotes: '',
         model: result.model,
@@ -301,6 +324,7 @@ async function finishNote(result, title) {
             createdAt: previous.createdAt,
             userNotes: previous.userNotes || '',
             removedLinks: previous.removedLinks || [],
+            rejectedLinks: previous.rejectedLinks || [],
             photos: [...(previous.photos || []), ...(note.photos || [])],
             ...(previous.topicByUser ? { topic: previous.topic, topicByUser: true } : {})
         };
@@ -550,7 +574,10 @@ function groupNotes(list, sort, { themes, byNote }) {
 }
 
 function libraryView(params) {
-    setNav({ title: 'Library', right: navButton('', () => drainInbox({ manual: true }), 'inbox') });
+    setNav({ title: 'Library', right: [
+        navButton('', () => drainInbox({ manual: true }), 'inbox'),
+        navButton('', () => { location.hash = '#/capture'; }, 'add')
+    ] });
     let activeTag = params.get('tag') || '';
     let activeType = '';
     let activeTheme = params.get('theme') || '';
@@ -608,7 +635,7 @@ function libraryView(params) {
         ].filter(Boolean));
 
         if (!notes.length) {
-            list.replaceChildren(h('div', { class: 'empty' }, icon('library', { size: 44, strokeWidth: 1.4 }), h('strong', {}, 'Nothing saved yet'), 'Paste a link on the Add tab, or share one with the Shortcut. Tap the inbox button above to check for shared links.'));
+            list.replaceChildren(h('div', { class: 'empty' }, icon('library', { size: 44, strokeWidth: 1.4 }), h('strong', {}, 'Nothing saved yet'), 'Tap + above to save something, or share it with the AidedMind Shortcut. Tap the inbox button to check shared links.'));
             return;
         }
         if (!matches.length) {
@@ -1330,7 +1357,7 @@ async function checkForUpdates() {
 }
 
 function settingsView() {
-    setNav({ title: 'Settings' });
+    setNav({ title: 'More', right: navButton('', () => { location.hash = '#/capture'; }, 'add') });
     const settings = getSettings();
     const serverUrl = h('input', { class: 'field', type: 'url', inputmode: 'url', autocapitalize: 'off', autocorrect: 'off', placeholder: 'Server URL (blank = this site)', 'aria-label': 'Server URL' });
     serverUrl.value = settings.serverUrl;
@@ -1380,7 +1407,7 @@ function settingsView() {
     const accounts = h('div');
 
     render(
-        h('h1', { class: 'large-title' }, 'Settings'),
+        h('h1', { class: 'large-title' }, 'More'),
 
         h('div', { class: 'section-label' }, 'Breakdown style'),
         (() => {
@@ -1904,7 +1931,7 @@ function route() {
     const [path, query = ''] = (location.hash.slice(1) || '/').split('?');
     const params = new URLSearchParams(query);
     const parts = path.split('/').filter(Boolean);
-    const name = parts[0] || 'capture';
+    const name = parts[0] || 'library';
     document.querySelectorAll('.tabbar a').forEach((a) => {
         const on = a.dataset.route === name || (name === 'note' && a.dataset.route === 'library');
         a.classList.toggle('active', on);
@@ -1914,9 +1941,10 @@ function route() {
     window.scrollTo(0, 0);
     if (name === 'library') libraryView(params);
     else if (name === 'note') noteView(decodeURIComponent(parts[1] || ''));
-    else if (name === 'graph') graphView();
+    else if (name === 'graph') graphView(params);
     else if (name === 'settings') settingsView();
-    else captureView();
+    else if (name === 'capture') captureView();
+    else libraryView(params);
 }
 
 function consumeShare() {
@@ -1924,7 +1952,7 @@ function consumeShare() {
     if (!location.pathname.endsWith('/share')) return null;
     const params = new URLSearchParams(location.search);
     const shared = [params.get('url'), params.get('text')].filter(Boolean).join(' ').trim();
-    history.replaceState(null, '', `${location.pathname.replace(/share$/, '')}#/`);
+    history.replaceState(null, '', `${location.pathname.replace(/share$/, '')}#/capture`);
     return shared;
 }
 
