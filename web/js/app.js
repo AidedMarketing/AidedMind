@@ -1690,7 +1690,7 @@ function settingsView() {
     const inboxUrl = `${serverBase()}/api/inbox?shortcut=1`;
     const setupIssue = connectionSetupIssue(settings);
     const usage = getLastUsage();
-    const spendBox = h('div');
+    const spendBox = h('div', { class: 'usage-container' });
     const fillSpend = (u) => {
         spendBox.replaceChildren();
         if (!u) return;
@@ -1859,6 +1859,7 @@ function organizeSettings() {
     children.forEach((element) => {
         if (element.classList.contains('publication-header') || element.matches('input[type="file"]')) return;
         if (element.classList.contains('accounts-container')) { groups.set('Accounts', [element]); return; }
+        if (element.classList.contains('usage-container')) { groups.set('This month', [element]); return; }
         if (element.classList.contains('section-label')) name = element.textContent;
         if (!groups.has(name)) groups.set(name, []);
         groups.get(name).push(element);

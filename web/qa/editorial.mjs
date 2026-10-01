@@ -300,6 +300,7 @@ try {
             await goto('settings');
             const captureSection = page.locator('.settings-section').filter({ has: page.getByRole('heading', { name: 'Capture & Sharing', exact: true }) });
             await captureSection.locator('summary').click();
+            assert.equal(await captureSection.getByText('This month', { exact: true }).count(), 0);
             await page.getByRole('textbox', { name: 'Server URL', exact: true }).fill('https://aidedmarketing.github.io');
             await page.getByRole('button', { name: 'Save & Test', exact: true }).click();
             await page.getByRole('status').filter({ hasText: 'GitHub Pages hosts the app' }).waitFor();
