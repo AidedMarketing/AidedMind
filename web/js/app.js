@@ -1911,9 +1911,9 @@ async function renderAccounts(container) {
         h('div', { class: 'group' },
             data.users.map(row),
             actionRow('Add an account', 'add', async () => {
-                const label = h('input', { type: 'text', 'aria-label': 'Account name', placeholder: 'Name', autocomplete: 'off' });
+                const label = h('input', { class: 'field', type: 'text', 'aria-label': 'Account name', placeholder: 'Name', autocomplete: 'off' });
                 const status = h('p', { class: 'small', role: 'status', 'aria-live': 'polite', tabindex: '-1' });
-                const submit = h('button', { type: 'submit', class: 'btn block' }, 'Create account');
+                const submit = h('button', { type: 'submit', class: 'btn primary block' }, 'Create account');
                 let saving = false;
                 openSheet(h('h3', {}, 'Add an account'), h('form', { class: 'stack', onsubmit: async (event) => {
                 event.preventDefault();
