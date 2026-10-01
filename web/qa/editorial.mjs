@@ -16,8 +16,8 @@ const server = createServer(async (request, response) => {
     try {
         const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
         // Match Cloudflare's canonical HTML redirect, absent from the original fixture.
-        if (pathname === '/index.html') { response.writeHead(308, { Location: '/' }).end(); return; }
-        const file = resolve(root, pathname === '/' ? 'index.html' : '.' + pathname);
+        if (pathname === '/index.html') { response.writeHead(307, { Location: '/' }).end(); return; }
+        const file = resolve(root, pathname === '/api/recover' ? 'recovery.html' : pathname === '/api/recovery.js' ? 'recovery.js' : pathname === '/' ? 'index.html' : '.' + pathname);
         if (!file.startsWith(root + sep)) throw Error('Invalid path');
         response.setHeader('Content-Type', mime[extname(file)] || 'text/plain');
         if (file.endsWith('service-worker.js')) response.setHeader('Cache-Control', 'no-cache');
@@ -429,6 +429,17 @@ try {
         await page.getByRole('heading', { name: 'Library', exact: true }).waitFor();
         await page.evaluate(() => document.fonts.ready);
         assert.ok(await page.evaluate(() => document.fonts.check('20px Newsreader')));
+        await context.setOffline(false);
+        await page.evaluate(async () => {
+            localStorage.setItem('repair-preservation', 'keep');
+            const db = await import('/js/db.js');
+            await db.saveNote({ id: 'repair-note', title: 'Keep this idea', createdAt: '2026-10-01' });
+        });
+        await page.goto(url + '/api/recover');
+        await page.getByRole('button', { name: 'Repair and open AidedMind', exact: true }).click();
+        await page.getByRole('heading', { name: 'Library', exact: true }).waitFor();
+        assert.equal(await page.evaluate(() => localStorage.getItem('repair-preservation')), 'keep');
+        assert.equal(await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()).some((note) => note.id === 'repair-note')), true);
         await browser.close();
     });
     console.log('Browser checks passed: ' + passed + '; failed: ' + failed);

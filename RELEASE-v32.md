@@ -5,3 +5,5 @@ Cloudflare redirects /index.html to /. The cached final response retains its red
 App and service-worker versions advance together to 32. No IndexedDB, local settings, capture API or knowledge graph changes. Do not clear website data to recover: it contains saved pieces.
 
 Regression coverage includes redirected cached HTML and network fallback. The browser fixture now reproduces the Cloudflare canonical redirect, with WebKit checking controlled reload, fresh-tab reopening and offline navigation.
+
+A same-origin /api/recover page bypasses old controllers. Its explicit Repair action refreshes only AidedMind app caches and the root service-worker registration; saved pieces and settings are untouched.

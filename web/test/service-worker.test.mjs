@@ -72,3 +72,23 @@ test('redirected network fallback is also safe when the shell cache is missing',
     assert.equal(await response.text(), 'Fallback document');
     assert.deepEqual(missing.requests, ['https://app.test/']);
 });
+
+
+test('loading repair refreshes only app caches and registration, preserving device data', async () => {
+    const source = await readFile(new URL('../recovery.js', import.meta.url), 'utf8');
+    let repair;
+    const deleted = [], unregistered = [], navigations = [];
+    const button = { addEventListener: (_, callback) => { repair = callback; } };
+    runInNewContext(source, {
+        URL, document: { getElementById: (id) => id === 'repair' ? button : {} },
+        location: { href: 'https://app.test/api/recover', replace: (url) => navigations.push(url) },
+        navigator: { serviceWorker: { getRegistrations: async () => ['https://app.test/', 'https://app.test/other/'].map((scope) => ({ scope, unregister: async () => unregistered.push(scope) })) } },
+        caches: { keys: async () => ['aidedmind-v31', 'aidedmind-v32', 'other-cache'], delete: async (key) => deleted.push(key) },
+        indexedDB: { open: () => { throw Error('Must not access saved pieces'); } },
+        localStorage: { clear: () => { throw Error('Must not clear settings'); } }
+    });
+    await repair();
+    assert.deepEqual(deleted, ['aidedmind-v31', 'aidedmind-v32']);
+    assert.deepEqual(unregistered, ['https://app.test/']);
+    assert.deepEqual(navigations, ['/']);
+});
