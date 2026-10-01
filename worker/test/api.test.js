@@ -301,3 +301,15 @@ test('photos: sent to Claude as images, auto style by count, text read back', as
     const usage = await env.STORE.get('user:owner').usageFor(new Date().toISOString().slice(0, 7));
     assert.strictEqual(usage.captures, 3);
 });
+
+
+test('recovery files bypass authentication and map only to dedicated static assets', async () => {
+    const paths = [];
+    const env = { ASSETS: { fetch: async (request) => { paths.push(new URL(request.url).pathname); return new Response('recovery file'); } } };
+    for (const path of ['/api/recover', '/api/recovery.js']) {
+        const response = await app.fetch(new Request('https://app.test' + path), env);
+        assert.equal(response.status, 200);
+        assert.equal(await response.text(), 'recovery file');
+    }
+    assert.deepEqual(paths, ['/recovery', '/recovery.js']);
+});

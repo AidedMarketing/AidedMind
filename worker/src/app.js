@@ -103,6 +103,10 @@ function requireOwner(user) {
 }
 
 const routes = [
+    // /api/* bypasses every shipped app-shell controller, including the broken
+    // redirected-document cache. These public files never read account data.
+    ['GET', /^\/api\/recover$/, (request, env) => env.ASSETS.fetch(new Request(new URL('/recovery', request.url)))],
+    ['GET', /^\/api\/recovery\.js$/, (request, env) => env.ASSETS.fetch(new Request(new URL('/recovery.js', request.url)))],
     ['GET', /^\/api\/health$/, async (request, env) => {
         const url = new URL(request.url);
         const checks = {

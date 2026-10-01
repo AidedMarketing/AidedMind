@@ -15,7 +15,9 @@ let nextDeploymentDocument = false;
 const server = createServer(async (request, response) => {
     try {
         const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
-        const file = resolve(root, pathname === '/' ? 'index.html' : '.' + pathname);
+        // Match Cloudflare's canonical HTML redirect, absent from the original fixture.
+        if (pathname === '/index.html') { response.writeHead(307, { Location: '/' }).end(); return; }
+        const file = resolve(root, pathname === '/api/recover' ? 'recovery.html' : pathname === '/api/recovery.js' ? 'recovery.js' : pathname === '/' ? 'index.html' : '.' + pathname);
         if (!file.startsWith(root + sep)) throw Error('Invalid path');
         response.setHeader('Content-Type', mime[extname(file)] || 'text/plain');
         if (file.endsWith('service-worker.js')) response.setHeader('Cache-Control', 'no-cache');
@@ -397,18 +399,24 @@ try {
     }
     // Separate real service worker context verifies atomic cache includes the font and imprint.
     await check('service worker offline publication assets', async () => {
-        const browser = await chromium.launch();
+        const browser = await webkit.launch();
         const context = await browser.newContext({ serviceWorkers: 'allow' });
         const page = await context.newPage();
         await page.goto(url);
         await page.evaluate(async () => { await navigator.serviceWorker.ready; });
         await page.reload();
         await page.evaluate(async () => {
-            const cache = await caches.open('aidedmind-v31');
+            const cache = await caches.open('aidedmind-v32');
             for (const path of ['/fonts/Newsreader.ttf', '/icons/mark.svg', '/tokens.css', '/shell.css', '/app.css', '/js/app.js']) {
                 if (!(await cache.match(path))) throw Error('Missing cached asset ' + path);
             }
         });
+        assert.equal(await page.evaluate(async () => (await (await caches.open('aidedmind-v32')).match('/index.html')).redirected), true);
+        // Reopen a fresh tab under the installed controller, as on Safari launch.
+        const reopened = await context.newPage();
+        await reopened.goto(url + '/?reopen=1');
+        await reopened.getByRole('heading', { name: 'Library', exact: true }).waitFor();
+        await reopened.close();
         // A newer deployment must not swap the document under cached old assets.
         nextDeploymentDocument = true;
         try {
@@ -421,6 +429,17 @@ try {
         await page.getByRole('heading', { name: 'Library', exact: true }).waitFor();
         await page.evaluate(() => document.fonts.ready);
         assert.ok(await page.evaluate(() => document.fonts.check('20px Newsreader')));
+        await context.setOffline(false);
+        await page.evaluate(async () => {
+            localStorage.setItem('repair-preservation', 'keep');
+            const db = await import('/js/db.js');
+            await db.saveNote({ id: 'repair-note', title: 'Keep this idea', createdAt: '2026-10-01' });
+        });
+        await page.goto(url + '/api/recover');
+        await page.getByRole('button', { name: 'Repair and open AidedMind', exact: true }).click();
+        await page.getByRole('heading', { name: 'Library', exact: true }).waitFor();
+        assert.equal(await page.evaluate(() => localStorage.getItem('repair-preservation')), 'keep');
+        assert.equal(await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()).some((note) => note.id === 'repair-note')), true);
         await browser.close();
     });
     console.log('Browser checks passed: ' + passed + '; failed: ' + failed);
