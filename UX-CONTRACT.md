@@ -37,3 +37,5 @@ The Share Sheet action saves first. A successful Shortcut response means the ser
 ## Feedback and recovery
 
 Use short, literal status text in grouped rows. Success feedback can disappear; failure and required action remain on the item. Keep the same operation names in Settings, Shared links, and note menus. Use semantic buttons and links, visible focus, and the existing app sheet and toast primitives.
+
+Connection setup belongs first in Capture & Sharing. Shortcut copy controls require a token and a valid receiving server; GitHub Pages cannot receive captures. Owner account creation uses the shared focus-managed sheet, preserves its name on failure, and announces progress/errors.

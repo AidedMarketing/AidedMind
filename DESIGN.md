@@ -3,7 +3,7 @@
 AidedMind is a personal knowledge publication whose pages become a knowledge fabric. Prefer the quieter option while reading, the clearer option while navigating, and the more expressive option when showing connections.
 
 ## Foundation
-v30 keeps the v29 editorial shell coherent during updates while preserving the v27 product foundation. Library / Explore / More and global Add remain intact; saved pieces retain Breakdown / Links / Notes. Capture, source handling, automatic and manual connections, rejection memory, data architecture, exports and stable map neighborhoods remain the foundation.
+v31 keeps connection setup visible in Capture & Sharing and uses the shared sheet for account creation, building on the coherent v30 editorial shell while preserving the v27 product foundation. Library / Explore / More and global Add remain intact; saved pieces retain Breakdown / Links / Notes. Capture, source handling, automatic and manual connections, rejection memory, data architecture, exports and stable map neighborhoods remain the foundation.
 
 ## Typography
 Newsreader variable serif is bundled locally at `web/fonts/Newsreader.ttf` (SIL OFL, included alongside it). Use it for publication titles, reading leads, headings, pull quotes and relationship titles. System UI sans serves navigation, metadata, controls and diagnostics. Reading sections target 72ch and generous line height.

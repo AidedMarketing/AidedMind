@@ -2,11 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { buildGraph } from '../js/graph.js';
 import { toMarkdown, fileName } from '../js/markdown.js';
-import { splitInput } from '../js/api.js';
+import { splitInput, connectionSetupIssue } from '../js/api.js';
 import { relatedNotes, conceptVocabulary, canonicalUrl, findDuplicate, urlHash, knownUrlHashes } from '../js/library.js';
 import { sourceTypeForUrl } from '../js/api.js';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+
+test('capture setup requires a token and a server capable of receiving captures', () => {
+    assert.match(connectionSetupIssue({ token: '' }, 'https://app.example'), /access token/);
+    assert.match(connectionSetupIssue({ token: 'test' }, 'https://aidedmarketing.github.io'), /Cloudflare/);
+    assert.match(connectionSetupIssue({ token: 'test', serverUrl: 'invalid' }, 'https://app.example'), /full AidedMind server URL/);
+    assert.match(connectionSetupIssue({ token: 'test', serverUrl: 'javascript:alert(1)' }, 'https://app.example'), /https/);
+    assert.equal(connectionSetupIssue({ token: 'test' }, 'https://worker.example'), '');
+    assert.equal(connectionSetupIssue({ token: 'test', serverUrl: 'https://worker.example/' }, 'https://aidedmarketing.github.io'), '');
+});
 
 const notes = [
     { id: 'a', title: 'Spacing effect', source: { sourceType: 'article' }, concepts: [{ name: 'Memory' }], connections: [{ noteId: 'b', relation: 'supports', reason: 'r' }], tags: ['learning'], createdAt: '2026-01-01', tldr: 't' },

@@ -17,6 +17,17 @@ export function saveSettings(settings) {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
 
+// Static GitHub Pages hosts the reading shell, never the capture API.
+export function connectionSetupIssue(settings = getSettings(), origin = location.origin) {
+    if (!settings.token?.trim()) return 'Add your access token, then choose Save & Test.';
+    let server;
+    try { server = new URL(settings.serverUrl?.trim() || origin); }
+    catch { return 'Enter the full AidedMind server URL, including https://.'; }
+    if (!['http:', 'https:'].includes(server.protocol)) return 'Use an http:// or https:// server URL.';
+    if (server.hostname.endsWith('.github.io')) return 'Enter your Cloudflare AidedMind server URL. GitHub Pages hosts the app but cannot receive captures.';
+    return '';
+}
+
 function endpoint(path) {
     const base = getSettings().serverUrl.trim().replace(/\/+$/, '');
     return `${base}/api${path}`;
