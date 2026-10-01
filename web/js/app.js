@@ -1912,7 +1912,7 @@ async function renderAccounts(container) {
             data.users.map(row),
             actionRow('Add an account', 'add', async () => {
                 const label = h('input', { type: 'text', 'aria-label': 'Account name', placeholder: 'Name', autocomplete: 'off' });
-                const status = h('p', { class: 'small', role: 'status', 'aria-live': 'polite' });
+                const status = h('p', { class: 'small', role: 'status', 'aria-live': 'polite', tabindex: '-1' });
                 const submit = h('button', { type: 'submit', class: 'btn block' }, 'Create account');
                 let saving = false;
                 openSheet(h('h3', {}, 'Add an account'), h('form', { class: 'stack', onsubmit: async (event) => {
@@ -1922,6 +1922,7 @@ async function renderAccounts(container) {
                 submit.disabled = true;
                 status.className = 'small muted';
                 status.textContent = 'Creating account…';
+                status.focus({ preventScroll: true });
                 try {
                     const created = await adminCreateUser({ label: label.value.trim(), plan: 'free' });
                     openSheet(
@@ -1935,6 +1936,7 @@ async function renderAccounts(container) {
                     status.textContent = error.message;
                     saving = false;
                     submit.disabled = false;
+                    label.focus({ preventScroll: true });
                 }
                 } }, h('label', {}, 'Who is this account for?', label), status, submit));
             })
