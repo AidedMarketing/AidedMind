@@ -1922,6 +1922,7 @@ async function renderAccounts(container) {
                 submit.disabled = true;
                 status.className = 'small muted';
                 status.textContent = 'Creating account…';
+                status.tabIndex = 0;
                 status.focus({ preventScroll: true });
                 try {
                     const created = await adminCreateUser({ label: label.value.trim(), plan: 'free' });
@@ -1936,6 +1937,7 @@ async function renderAccounts(container) {
                     status.textContent = error.message;
                     saving = false;
                     submit.disabled = false;
+                    status.tabIndex = -1;
                     label.focus({ preventScroll: true });
                 }
                 } }, h('label', {}, 'Who is this account for?', label), status, submit));
