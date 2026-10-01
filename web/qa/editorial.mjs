@@ -139,7 +139,7 @@ try {
         const screenshot = async (screen, modal = false) => {
             if (modal) {
                 assert.equal(await page.getByRole('dialog').evaluate((dialog) => dialog.contains(document.activeElement)), true);
-                assert.equal(await page.getByRole('link', { name: 'Library', exact: true }).evaluate((link) => Boolean(link.closest('[inert]'))), true);
+                assert.equal(await page.locator('.tabbar').evaluate((nav) => Boolean(nav.closest('[inert]'))), true);
             } else await shellGeometry();
             await page.screenshot({ path: resolve(output, label + '-' + screen + '.png'), fullPage: true });
             // Fixed bars need a viewport capture too: full-page images can disguise clipping.
