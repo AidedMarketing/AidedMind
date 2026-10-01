@@ -136,8 +136,11 @@ try {
             assert.ok(Math.abs(geometry.searchLeft - geometry.controlsLeft) < 1, label + ': search drifts right');
             if (geometry.width < 600) assert.ok(Math.abs(geometry.searchWidth - geometry.controlsWidth) < 1, label + ': mobile search is not full width');
         };
-        const screenshot = async (screen) => {
-            await shellGeometry();
+        const screenshot = async (screen, modal = false) => {
+            if (modal) {
+                assert.equal(await page.getByRole('dialog').evaluate((dialog) => dialog.contains(document.activeElement)), true);
+                assert.equal(await page.getByRole('link', { name: 'Library', exact: true }).evaluate((link) => Boolean(link.closest('[inert]'))), true);
+            } else await shellGeometry();
             await page.screenshot({ path: resolve(output, label + '-' + screen + '.png'), fullPage: true });
             // Fixed bars need a viewport capture too: full-page images can disguise clipping.
             await page.screenshot({ path: resolve(output, label + '-' + screen + '-viewport.png') });
@@ -340,7 +343,7 @@ try {
             await page.getByRole('button', { name: 'Create account', exact: true }).click();
             await page.getByRole('status').filter({ hasText: 'Please try again later.' }).waitFor();
             assert.equal(await name.inputValue(), 'Reader');
-            await screenshot('account-error');
+            await screenshot('account-error', true);
             await axe('account sheet');
             accountFailure = false;
             await page.getByRole('button', { name: 'Create account', exact: true }).click();
