@@ -2,7 +2,9 @@
 // Never open, clear or migrate IndexedDB, localStorage or user content here.
 const button = document.getElementById('repair');
 const status = document.getElementById('status');
-button.addEventListener('click', async () => {
+document.getElementById('repair-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (button.disabled) return;
     button.disabled = true;
     status.textContent = 'Refreshing the app files…';
     try {

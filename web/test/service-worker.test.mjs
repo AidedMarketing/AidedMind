@@ -80,14 +80,14 @@ test('loading repair refreshes only app caches and registration, preserving devi
     const deleted = [], unregistered = [], navigations = [];
     const button = { addEventListener: (_, callback) => { repair = callback; } };
     runInNewContext(source, {
-        URL, document: { getElementById: (id) => id === 'repair' ? button : {} },
+        URL, document: { getElementById: (id) => id.startsWith('repair') ? button : {} },
         location: { href: 'https://app.test/api/recover', replace: (url) => navigations.push(url) },
         navigator: { serviceWorker: { getRegistrations: async () => ['https://app.test/', 'https://app.test/other/'].map((scope) => ({ scope, unregister: async () => unregistered.push(scope) })) } },
         caches: { keys: async () => ['aidedmind-v31', 'aidedmind-v32', 'other-cache'], delete: async (key) => deleted.push(key) },
         indexedDB: { open: () => { throw Error('Must not access saved pieces'); } },
         localStorage: { clear: () => { throw Error('Must not clear settings'); } }
     });
-    await repair();
+    await repair({ preventDefault() {} });
     assert.deepEqual(deleted, ['aidedmind-v31', 'aidedmind-v32']);
     assert.deepEqual(unregistered, ['https://app.test/']);
     assert.deepEqual(navigations, ['/']);
