@@ -1711,7 +1711,7 @@ function settingsView() {
     };
     fillSpend(usage);
     if (settings.token) checkAuth().then((result) => fillSpend(result.usage)).catch(() => {});
-    const accounts = h('div');
+    const accounts = h('div', { class: 'accounts-container' });
 
     render(
         publicationHeader('BACK MATTER', 'More', 'Care for your collection, and make yourself at home.'),
@@ -1858,6 +1858,7 @@ function organizeSettings() {
     let name = '';
     children.forEach((element) => {
         if (element.classList.contains('publication-header') || element.matches('input[type="file"]')) return;
+        if (element.classList.contains('accounts-container')) { groups.set('Accounts', [element]); return; }
         if (element.classList.contains('section-label')) name = element.textContent;
         if (!groups.has(name)) groups.set(name, []);
         groups.get(name).push(element);
@@ -1882,11 +1883,11 @@ function organizeSettings() {
         h('p', { class: 'small muted' }, 'Your device’s reduced motion setting is always respected. Explore also has a synchronized text list.'));
     const header = children.find((el) => el.classList.contains('publication-header'));
     const fileInput = children.find((el) => el.matches('input[type="file"]'));
-    // The unlabeled account container is kept inside diagnostics for its async update.
+    // Keep the account container in diagnostics before its async content arrives.
     view.replaceChildren(...[
         header, section('Capture & Sharing', ['Connection', 'Save from the Share button', 'Install']),
         section('Data & Backup', ['Your data']), access, appearance,
-        section('Advanced Diagnostics', ['This month', 'Server status', '']),
+        section('Advanced Diagnostics', ['This month', 'Server status', 'Accounts']),
         ...(groups.get('About') || []), fileInput
     ].filter(Boolean));
 }

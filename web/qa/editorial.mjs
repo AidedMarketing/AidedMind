@@ -315,6 +315,12 @@ try {
             await page.getByLabel('Access token', { exact: true }).fill('');
             await page.getByRole('button', { name: 'Save & Test', exact: true }).click();
             await page.getByRole('status').filter({ hasText: 'Add your access token' }).waitFor();
+            await page.evaluate(() => localStorage.setItem('aidedmind.settings', JSON.stringify({ token: '', serverUrl: 'https://capture.example' })));
+            await page.getByRole('link', { name: 'Library', exact: true }).click();
+            await page.getByRole('link', { name: 'More', exact: true }).click();
+            await captureSection.locator('summary').click();
+            assert.equal(await page.getByRole('button', { name: 'Copy Inbox URL', exact: true }).count(), 0);
+            assert.equal(await page.getByRole('button', { name: 'Copy Token', exact: true }).count(), 0);
             await noOverflow(); await axe('connection setup');
         });
         await check(label + ' account sheet recovery and focus', async () => {
