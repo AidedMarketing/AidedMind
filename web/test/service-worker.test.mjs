@@ -3,24 +3,24 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 
-async function controller() {
+async function controller(document = 'current document', network = 'new deployment from network') {
     const source = await readFile(new URL('../service-worker.js', import.meta.url), 'utf8');
     const version = source.match(/const CACHE_NAME = '([^']+)'/)[1];
     const listeners = new Map();
     const requests = [];
     const releases = new Map([
-        [version, new Map([['./index.html', 'current document'], ['https://app.test/app.css', 'current styles']])],
+        [version, new Map([['./index.html', document], ['https://app.test/app.css', 'current styles']])],
         ['aidedmind-next', new Map([['./index.html', 'next document'], ['https://app.test/app.css', 'next styles']])]
     ]);
     runInNewContext(source, {
-        URL,
+        URL, Response,
         self: { location: { origin: 'https://app.test' }, addEventListener: (name, callback) => listeners.set(name, callback) },
         caches: {
             open: async (name) => ({ match: async (key) => releases.get(name)?.get(typeof key === 'string' ? key : key.url) }),
             // Global lookup must not accidentally select another installed release.
             match: async () => 'next release from global lookup'
         },
-        fetch: async (request) => { requests.push(request.url); return 'new deployment from network'; }
+        fetch: async (request) => { requests.push(request.url); return network; }
     });
     return {
         requests,
@@ -46,4 +46,29 @@ test('uncached assets still use the network; APIs and mutations bypass the shell
     assert.equal(await sw.fetch('/api/health', 'cors'), undefined);
     assert.equal(await sw.fetch('/api/inbox', 'cors', 'POST'), undefined);
     assert.deepEqual(sw.requests, ['https://app.test/new-image.png']);
+});
+
+
+test('redirected cached HTML is returned as a fresh navigation response without redirect history', async () => {
+    const redirected = new Response('<h1>Current release</h1>', { headers: { 'Content-Type': 'text/html', 'X-Release': 'current' } });
+    Object.defineProperty(redirected, 'redirected', { value: true });
+    const sw = await controller(redirected);
+    const response = await sw.fetch('/?reopen=1');
+    assert.equal(response.redirected, false);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Content-Type'), 'text/html');
+    assert.equal(response.headers.get('X-Release'), 'current');
+    assert.equal(await response.text(), '<h1>Current release</h1>');
+    assert.deepEqual(sw.requests, []);
+});
+
+test('redirected network fallback is also safe when the shell cache is missing', async () => {
+    const redirected = new Response('Fallback document');
+    Object.defineProperty(redirected, 'redirected', { value: true });
+    // null intentionally represents a missing cached entry.
+    const missing = await controller(null, redirected);
+    const response = await missing.fetch('/');
+    assert.equal(response.redirected, false);
+    assert.equal(await response.text(), 'Fallback document');
+    assert.deepEqual(missing.requests, ['https://app.test/']);
 });

@@ -15,6 +15,8 @@ let nextDeploymentDocument = false;
 const server = createServer(async (request, response) => {
     try {
         const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
+        // Match Cloudflare's canonical HTML redirect, absent from the original fixture.
+        if (pathname === '/index.html') { response.writeHead(308, { Location: '/' }).end(); return; }
         const file = resolve(root, pathname === '/' ? 'index.html' : '.' + pathname);
         if (!file.startsWith(root + sep)) throw Error('Invalid path');
         response.setHeader('Content-Type', mime[extname(file)] || 'text/plain');
@@ -397,18 +399,24 @@ try {
     }
     // Separate real service worker context verifies atomic cache includes the font and imprint.
     await check('service worker offline publication assets', async () => {
-        const browser = await chromium.launch();
+        const browser = await webkit.launch();
         const context = await browser.newContext({ serviceWorkers: 'allow' });
         const page = await context.newPage();
         await page.goto(url);
         await page.evaluate(async () => { await navigator.serviceWorker.ready; });
         await page.reload();
         await page.evaluate(async () => {
-            const cache = await caches.open('aidedmind-v31');
+            const cache = await caches.open('aidedmind-v32');
             for (const path of ['/fonts/Newsreader.ttf', '/icons/mark.svg', '/tokens.css', '/shell.css', '/app.css', '/js/app.js']) {
                 if (!(await cache.match(path))) throw Error('Missing cached asset ' + path);
             }
         });
+        assert.equal(await page.evaluate(async () => (await (await caches.open('aidedmind-v32')).match('/index.html')).redirected), true);
+        // Reopen a fresh tab under the installed controller, as on Safari launch.
+        const reopened = await context.newPage();
+        await reopened.goto(url + '/?reopen=1');
+        await reopened.getByRole('heading', { name: 'Library', exact: true }).waitFor();
+        await reopened.close();
         // A newer deployment must not swap the document under cached old assets.
         nextDeploymentDocument = true;
         try {

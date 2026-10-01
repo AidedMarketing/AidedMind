@@ -1,5 +1,5 @@
 // App shell cache. API calls always go to the network.
-const CACHE_NAME = 'aidedmind-v31';
+const CACHE_NAME = 'aidedmind-v32';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -52,6 +52,15 @@ self.addEventListener('fetch', (event) => {
     // Share URLs still render the shell and keep their original query string.
     event.respondWith(caches.open(CACHE_NAME).then(async (cache) => {
         const cached = await cache.match(request.mode === 'navigate' ? './index.html' : request);
-        return cached || fetch(request);
+        const response = cached || await fetch(request);
+        // Cloudflare canonicalizes /index.html to /. A followed redirect keeps
+        // response.redirected=true in Cache Storage; Safari rejects that response
+        // for navigation. Preserve the release body and headers, not its history.
+        if (request.mode === 'navigate' && response.redirected) {
+            return new Response(response.body, {
+                status: response.status, statusText: response.statusText, headers: response.headers
+            });
+        }
+        return response;
     }));
 });
