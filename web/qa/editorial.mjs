@@ -424,12 +424,17 @@ try {
             await page.getByRole('heading', { name: 'Library', exact: true }).waitFor();
             assert.equal(await page.getByRole('heading', { name: 'Next deployment markup' }).count(), 0);
         } finally { nextDeploymentDocument = false; }
-        await context.setOffline(true);
-        await page.reload();
-        await page.getByRole('heading', { name: 'Library', exact: true }).waitFor();
-        await page.evaluate(() => document.fonts.ready);
-        assert.ok(await page.evaluate(() => document.fonts.check('20px Newsreader')));
-        await context.setOffline(false);
+        // Playwright #42775: WebKit's offline emulation breaks even literal
+        // service-worker responses. Disconnect the origin server instead.
+        await new Promise((done) => server.close(done));
+        try {
+            await page.reload();
+            await page.getByRole('heading', { name: 'Library', exact: true }).waitFor();
+            await page.evaluate(() => document.fonts.ready);
+            assert.ok(await page.evaluate(() => document.fonts.check('20px Newsreader')));
+        } finally {
+            await new Promise((done) => server.listen(4173, '127.0.0.1', done));
+        }
         await page.evaluate(async () => {
             localStorage.setItem('repair-preservation', 'keep');
             const db = await import('/js/db.js');
