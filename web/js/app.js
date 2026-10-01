@@ -1,5 +1,5 @@
 import { allNotes, saveNote, saveMany, deleteNote, newId } from './db.js';
-import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, queueInboxItem, removeInboxItem, updateInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser } from './api.js';
+import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, queueInboxItem, removeInboxItem, updateInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser, connectionSetupIssue } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { buildThemes, THEME_DETAIL } from './themes.js';
 import { knownTopics, conceptVocabulary, knownUrlHashes, findDuplicate } from './library.js';
@@ -56,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '30';
+const APP_VERSION = '31';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -1669,7 +1669,7 @@ function settingsView() {
     serverUrl.value = settings.serverUrl;
     const token = h('input', { class: 'field', type: 'password', autocomplete: 'off', autocapitalize: 'off', placeholder: 'Access token', 'aria-label': 'Access token' });
     token.value = settings.token;
-    const status = h('p', { class: 'small muted', style: { margin: '10px 0 0' } });
+    const status = h('p', { class: 'small muted', role: 'status', 'aria-live': 'polite', style: { margin: '10px 0 0' } });
     const fileInput = h('input', { type: 'file', accept: 'application/json,.json', hidden: true });
 
     fileInput.addEventListener('change', async () => {
@@ -1688,8 +1688,9 @@ function settingsView() {
     });
 
     const inboxUrl = `${serverBase()}/api/inbox?shortcut=1`;
+    const setupIssue = connectionSetupIssue(settings);
     const usage = getLastUsage();
-    const spendBox = h('div');
+    const spendBox = h('div', { class: 'usage-container' });
     const fillSpend = (u) => {
         spendBox.replaceChildren();
         if (!u) return;
@@ -1710,7 +1711,7 @@ function settingsView() {
     };
     fillSpend(usage);
     if (settings.token) checkAuth().then((result) => fillSpend(result.usage)).catch(() => {});
-    const accounts = h('div');
+    const accounts = h('div', { class: 'accounts-container' });
 
     render(
         publicationHeader('BACK MATTER', 'More', 'Care for your collection, and make yourself at home.'),
@@ -1772,9 +1773,13 @@ function settingsView() {
         h('div', { class: 'section-label' }, 'Connection'),
         h('form', {
             class: 'card',
+            novalidate: true,
             onsubmit: async (event) => {
                 event.preventDefault();
-                Object.assign(settings, { serverUrl: serverUrl.value.trim(), token: token.value.trim() });
+                const nextSettings = { ...getSettings(), serverUrl: serverUrl.value.trim(), token: token.value.trim() };
+                const issue = connectionSetupIssue(nextSettings);
+                if (issue) { status.className = 'small error'; status.textContent = issue; return; }
+                Object.assign(settings, nextSettings);
                 saveSettings(settings);
                 status.className = 'small muted';
                 status.textContent = 'Checking…';
@@ -1806,7 +1811,9 @@ function settingsView() {
                 h('li', {}, 'Add ', h('b', {}, 'Get Type of Shortcut Input'), ' and an ', h('b', {}, 'If'), ' action: if it is a Safari web page, run the Safari steps below; otherwise run the app steps. Keep Shortcut Input as the input to the JavaScript action.'),
                 h('li', {}, h('b', {}, 'Safari branch: '), 'Add ', h('b', {}, 'Run JavaScript on Web Page'), ' with this script:', copyField(PAGE_SCRIPT, 'Script'), ' Then add Get Contents of URL, Method POST, Request Body File = JavaScript Result.'),
                 h('li', {}, h('b', {}, 'App branch: '), 'Add Get URLs from Shortcut Input. Add Get Contents of URL, Method POST, Request Body JSON with a Text field named ', h('b', {}, 'url'), ' set to the first URL. For a plain text share with no URL, send it as a Text field named ', h('b', {}, 'text'), '.'),
-                h('li', {}, 'For both Get Contents of URL actions use this inbox URL:', copyField(inboxUrl, 'Inbox URL'), ' Add the header ', h('b', {}, 'X-AidedMind-Token'), ' with your token:', settings.token ? copyField(settings.token, 'Token') : h('div', { class: 'small error' }, 'Save your token above first.')),
+                h('li', {}, setupIssue
+                    ? h('p', { class: 'small error' }, setupIssue, ' Connection setup is at the beginning of Capture & Sharing.')
+                    : ['For both Get Contents of URL actions use this inbox URL:', copyField(inboxUrl, 'Inbox URL'), ' Add the header ', h('b', {}, 'X-AidedMind-Token'), ' with your token:', copyField(settings.token, 'Token')]),
                 h('li', {}, 'After each POST, use Show Content with the Content of URL. It now says only “Saved to AidedMind” when the server has stored the share. If the request fails, the Shortcut shows an error instead of a false success.'),
                 h('li', {}, 'Test once from Safari and once from Substack. In Library → Shared links, check that the title appears. A short Safari capture asks you to review its text before a breakdown uses it.')
             ),
@@ -1851,6 +1858,8 @@ function organizeSettings() {
     let name = '';
     children.forEach((element) => {
         if (element.classList.contains('publication-header') || element.matches('input[type="file"]')) return;
+        if (element.classList.contains('accounts-container')) { groups.set('Accounts', [element]); return; }
+        if (element.classList.contains('usage-container')) { groups.set('This month', [element]); return; }
         if (element.classList.contains('section-label')) name = element.textContent;
         if (!groups.has(name)) groups.set(name, []);
         groups.get(name).push(element);
@@ -1875,11 +1884,11 @@ function organizeSettings() {
         h('p', { class: 'small muted' }, 'Your device’s reduced motion setting is always respected. Explore also has a synchronized text list.'));
     const header = children.find((el) => el.classList.contains('publication-header'));
     const fileInput = children.find((el) => el.matches('input[type="file"]'));
-    // The unlabeled account container is kept inside diagnostics for its async update.
+    // Keep the account container in diagnostics before its async content arrives.
     view.replaceChildren(...[
-        header, section('Capture & Sharing', ['Save from the Share button', 'Install']),
+        header, section('Capture & Sharing', ['Connection', 'Save from the Share button', 'Install']),
         section('Data & Backup', ['Your data']), access, appearance,
-        section('Advanced Diagnostics', ['Connection', 'This month', 'Server status', '']),
+        section('Advanced Diagnostics', ['This month', 'Server status', 'Accounts']),
         ...(groups.get('About') || []), fileInput
     ].filter(Boolean));
 }
@@ -1902,10 +1911,21 @@ async function renderAccounts(container) {
         h('div', { class: 'group' },
             data.users.map(row),
             actionRow('Add an account', 'add', async () => {
-                const label = prompt('Who is this account for?');
-                if (label === null) return;
+                const label = h('input', { class: 'field', type: 'text', 'aria-label': 'Account name', placeholder: 'Name', autocomplete: 'off' });
+                const status = h('p', { class: 'small', role: 'status', 'aria-live': 'polite', tabindex: '-1' });
+                const submit = h('button', { type: 'submit', class: 'btn primary block' }, 'Create account');
+                let saving = false;
+                openSheet(h('h3', {}, 'Add an account'), h('form', { class: 'stack', onsubmit: async (event) => {
+                event.preventDefault();
+                if (saving) return;
+                saving = true;
+                submit.disabled = true;
+                status.className = 'small muted';
+                status.textContent = 'Creating account…';
+                status.tabIndex = 0;
+                status.focus({ preventScroll: true });
                 try {
-                    const created = await adminCreateUser({ label: label.trim(), plan: 'free' });
+                    const created = await adminCreateUser({ label: label.value.trim(), plan: 'free' });
                     openSheet(
                         h('h3', {}, `Account for ${created.label || 'new user'}`),
                         h('p', { class: 'muted small' }, `Free plan, ${created.limit} breakdowns a month. Send them this token; it is shown only once.`),
@@ -1913,8 +1933,14 @@ async function renderAccounts(container) {
                         h('div', { class: 'stack' }, h('button', { type: 'button', class: 'btn block', onclick: () => { closeSheet(); renderAccounts(container); } }, 'Done'))
                     );
                 } catch (error) {
-                    toast(error.message);
+                    status.className = 'small error';
+                    status.textContent = error.message;
+                    saving = false;
+                    submit.disabled = false;
+                    status.tabIndex = -1;
+                    label.focus({ preventScroll: true });
                 }
+                } }, h('label', {}, 'Who is this account for?', label), status, submit));
             })
         ),
         h('p', { class: 'group-footer' }, `Breakdowns used in ${data.month}. Paid plans can plug in here later.`)

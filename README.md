@@ -1,7 +1,7 @@
 # AidedMind
 Your personal knowledge publication. Your knowledge, connected quietly.
 
-**v30 — Editorial Knowledge + Knowledge Fabric:** the repaired three-destination shell now keeps document and assets on the same cached release during updates. Feedback clears the header, saved-piece tab changes reveal their headings, and the connected-node imprint follows the lavender token in both editions. Locally bundled Newsreader typography keeps the reading surface quiet. Mobile keeps Library / Explore / More with global Add; desktop expands the same system with a left rail. The underlying v27 capture, automatic linking and stable map neighborhoods remain intact. See [release notes](RELEASE-v30.md) and [design system](DESIGN.md).
+**v31 — Editorial Knowledge + Knowledge Fabric:** connection setup now appears first in Capture & Sharing. Shortcut inbox instructions require a token and a server capable of receiving captures; GitHub Pages remains a frontend host. Account creation uses the accessible app sheet with recoverable errors. The v27 capture, automatic linking and stable map neighborhoods remain intact. See [release notes](RELEASE-v31.md) and [design system](DESIGN.md).
 
 Share a link from your iPhone (an article, a YouTube video, a TikTok), take a photo, or paste any text, and AidedMind gives you:
 

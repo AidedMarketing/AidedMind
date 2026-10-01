@@ -65,9 +65,15 @@ try {
         }, { largeText: Boolean(config.largeText) });
         let inbox = [];
         let inboxDelay = 0;
+        let owner = false;
+        let accountFailure = false;
         await page.route('**/api/**', async (route) => {
             const path = new URL(route.request().url()).pathname;
-            const data = path.endsWith('/inbox') ? { items: inbox } : path.endsWith('/auth-check') ? { usage: { captures: 0, limit: 25 } } : path.endsWith('/health') ? { services: {}, checks: {}, version: 'fixture' } : path.endsWith('/source') ? { sourceType: 'article', url: 'https://example.com/new', title: 'A new entry', text: 'A readable source passage. '.repeat(60) } : path.endsWith('/analyze') ? { analysis: { title: 'A new entry', tldr: 'An idea for later.', summary: [{ heading: 'The idea', body: 'Keep reading.' }], takeaways: [], quotes: [], outline: [], concepts: [], connections: [], tags: [] }, model: 'fixture', depth: 'balanced' } : {};
+            if (path.endsWith('/admin/users')) {
+                await route.fulfill({ status: accountFailure && route.request().method() === 'POST' ? 503 : 200, contentType: 'application/json', body: JSON.stringify(route.request().method() === 'POST' ? (accountFailure ? { error: 'Please try again later.' } : { label: 'Reader', token: 'new-fixture-token', limit: 25 }) : { users: [], month: '2026-10' }) });
+                return;
+            }
+            const data = path.endsWith('/inbox') ? { items: inbox } : path.endsWith('/auth-check') ? { usage: { captures: 0, limit: owner ? null : 25 } } : path.endsWith('/health') ? { services: {}, checks: {}, version: 'fixture' } : path.endsWith('/source') ? { sourceType: 'article', url: 'https://example.com/new', title: 'A new entry', text: 'A readable source passage. '.repeat(60) } : path.endsWith('/analyze') ? { analysis: { title: 'A new entry', tldr: 'An idea for later.', summary: [{ heading: 'The idea', body: 'Keep reading.' }], takeaways: [], quotes: [], outline: [], concepts: [], connections: [], tags: [] }, model: 'fixture', depth: 'balanced' } : {};
             if (path.endsWith('/inbox') && inboxDelay) await new Promise((done) => setTimeout(done, inboxDelay));
             await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
         });
@@ -130,8 +136,12 @@ try {
             assert.ok(Math.abs(geometry.searchLeft - geometry.controlsLeft) < 1, label + ': search drifts right');
             if (geometry.width < 600) assert.ok(Math.abs(geometry.searchWidth - geometry.controlsWidth) < 1, label + ': mobile search is not full width');
         };
-        const screenshot = async (screen) => {
-            await shellGeometry();
+        const screenshot = async (screen, modal = false) => {
+            if (modal) {
+                assert.equal(await page.getByRole('dialog').evaluate((dialog) => dialog.contains(document.activeElement)), true);
+                assert.equal(await page.locator('.tabbar').evaluate((nav) => Boolean(nav.closest('[inert]'))), true);
+                await visibleControls('.sheet input, .sheet button');
+            } else await shellGeometry();
             await page.screenshot({ path: resolve(output, label + '-' + screen + '.png'), fullPage: true });
             // Fixed bars need a viewport capture too: full-page images can disguise clipping.
             await page.screenshot({ path: resolve(output, label + '-' + screen + '-viewport.png') });
@@ -290,6 +300,60 @@ try {
             await page.evaluate(() => window.scrollTo(0, 0));
             await screenshot('more');
         });
+        await check(label + ' capture connection setup', async () => {
+            await goto('settings');
+            const captureSection = page.locator('.settings-section').filter({ has: page.getByRole('heading', { name: 'Capture & Sharing', exact: true }) });
+            await captureSection.locator('summary').click();
+            assert.equal(await captureSection.getByText('This month', { exact: true }).count(), 0);
+            await page.getByRole('textbox', { name: 'Server URL', exact: true }).fill('https://aidedmarketing.github.io');
+            await page.getByRole('button', { name: 'Save & Test', exact: true }).click();
+            await page.getByRole('status').filter({ hasText: 'GitHub Pages hosts the app' }).waitFor();
+            await screenshot('connection-error');
+            await page.getByRole('textbox', { name: 'Server URL', exact: true }).fill('https://capture.example');
+            const connected = page.waitForResponse('**/api/auth-check');
+            await page.getByRole('button', { name: 'Save & Test', exact: true }).click();
+            await connected;
+            await page.getByText('Connected', { exact: true }).waitFor();
+            await captureSection.locator('summary').click();
+            await page.getByRole('button', { name: 'Copy Inbox URL', exact: true }).waitFor();
+            await page.getByText('https://capture.example/api/inbox?shortcut=1', { exact: true }).waitFor();
+            await page.getByLabel('Access token', { exact: true }).fill('');
+            await page.getByRole('button', { name: 'Save & Test', exact: true }).click();
+            await page.getByRole('status').filter({ hasText: 'Add your access token' }).waitFor();
+            await page.evaluate(() => localStorage.setItem('aidedmind.settings', JSON.stringify({ token: '', serverUrl: 'https://capture.example' })));
+            await page.getByRole('link', { name: 'Library', exact: true }).click();
+            await page.getByRole('link', { name: 'More', exact: true }).click();
+            await captureSection.locator('summary').click();
+            assert.equal(await page.getByRole('button', { name: 'Copy Inbox URL', exact: true }).count(), 0);
+            assert.equal(await page.getByRole('button', { name: 'Copy Token', exact: true }).count(), 0);
+            await noOverflow(); await axe('connection setup');
+        });
+        await check(label + ' account sheet recovery and focus', async () => {
+            owner = true;
+            await goto('settings');
+            await page.locator('.settings-section').filter({ has: page.getByRole('heading', { name: 'Capture & Sharing', exact: true }) }).locator('summary').click();
+            const connected = page.waitForResponse('**/api/auth-check');
+            await page.getByRole('button', { name: 'Save & Test', exact: true }).click();
+            await connected;
+            await page.getByText('Connected', { exact: true }).waitFor();
+            await page.locator('.settings-section').filter({ has: page.getByRole('heading', { name: 'Advanced Diagnostics', exact: true }) }).locator('summary').click();
+            await page.getByRole('button', { name: 'Add an account', exact: true }).click();
+            const name = page.getByRole('textbox', { name: 'Account name', exact: true });
+            await name.fill('Reader');
+            accountFailure = true;
+            await page.getByRole('button', { name: 'Create account', exact: true }).click();
+            await page.getByRole('status').filter({ hasText: 'Please try again later.' }).waitFor();
+            assert.equal(await name.inputValue(), 'Reader');
+            await screenshot('account-error', true);
+            await axe('account sheet');
+            accountFailure = false;
+            await page.getByRole('button', { name: 'Create account', exact: true }).click();
+            await page.getByRole('heading', { name: 'Account for Reader', exact: true }).waitFor();
+            await page.keyboard.press('Escape');
+            assert.equal(await page.getByRole('dialog').count(), 0);
+            assert.equal(await page.getByRole('button', { name: 'Add an account', exact: true }).evaluate((button) => button === document.activeElement), true);
+            owner = false;
+        });
         await check(label + ' partial capture diagnostics', async () => {
             await goto('note/d');
             const details = page.locator('.diagnostic-detail');
@@ -340,7 +404,7 @@ try {
         await page.evaluate(async () => { await navigator.serviceWorker.ready; });
         await page.reload();
         await page.evaluate(async () => {
-            const cache = await caches.open('aidedmind-v30');
+            const cache = await caches.open('aidedmind-v31');
             for (const path of ['/fonts/Newsreader.ttf', '/icons/mark.svg', '/tokens.css', '/shell.css', '/app.css', '/js/app.js']) {
                 if (!(await cache.match(path))) throw Error('Missing cached asset ' + path);
             }
