@@ -200,7 +200,9 @@ export const ANALYSIS_SCHEMA = {
                     noteId: { type: 'string' },
                     relation: { type: 'string', enum: ['supports', 'contradicts', 'extends', 'example-of', 'related'] },
                     reason: { type: 'string', description: 'One plain-language sentence explaining why the two notes are meaningfully connected' },
-                    confidence: { type: 'number', minimum: 0, maximum: 1, description: 'How confident you are that this relationship is genuinely useful, from 0 to 1' }
+                    // Claude's raw structured-output schemas don't support
+                    // numeric bounds. normalize() enforces this range locally.
+                    confidence: { type: 'number', description: 'How confident you are that this relationship is genuinely useful, from 0 to 1' }
                 }
             }
         }
