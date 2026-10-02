@@ -40,6 +40,22 @@ async function setup(t, { model } = {}) {
 const only = (core) => core.inboxList()[0];
 const month = () => new Date().toISOString().slice(0, 7);
 
+test('a rejected Claude request keeps the shared item without automatic repeats', async (t) => {
+    const { stub, env, core } = await setup(t, { model: () => ({ status: 400, json: {
+        type: 'error', error: { type: 'invalid_request_error', message: 'Unsupported request option' }
+    } }) });
+    core.inboxAdd({ url: 'https://www.tiktok.com/@writer/video/123', text: 'A short caption.' });
+    await processInbox(core, env);
+    const item = only(core);
+    assert.strictEqual(item.status, 'failed');
+    assert.strictEqual(item.errorKind, 'retry_in_app');
+    assert.strictEqual(item.attempts, 1);
+    assert.match(item.error, /rejected AidedMind's analysis request/);
+    assert.strictEqual(await processInbox(core, env, { now: () => Date.now() + 86400000 }), 0);
+    assert.strictEqual(stub.requests.length, 1);
+    assert.strictEqual(core.usageFor(month()).captures, 0);
+});
+
 test('a shared article is broken down in the background and waits for the app', async (t) => {
     const { stub, env, core } = await setup(t);
     mockFetch(t, { 'https://example.com/habits': html(page(words(30))) });
@@ -370,7 +386,31 @@ test('Shortcut inbox URL returns a plain confirmation without JSON', async () =>
     const response = await call(app, env, 'POST', '/api/inbox?shortcut=1', { token: 'owner-secret', body: { url: 'https://example.com/article' } });
     assert.strictEqual(response.status, 201);
     assert.match(response.headers.get('content-type'), /text\/plain/);
-    assert.match(await response.text(), /Saved link to AidedMind\. No article text was received/);
+    assert.match(await response.text(), /Saved link to AidedMind\. Queued for article processing/);
+});
+
+test('app URL shares acknowledge queued processing without a Safari warning', async () => {
+    const env = fakeEnv();
+    for (const [url, kind] of [
+        ['https://vm.tiktok.com/abc/', 'video'],
+        ['https://www.tiktok.com/@writer/video/123', 'video'],
+        ['https://open.substack.com/pub/writer/p/story', 'article'],
+        ['https://writer.substack.com/p/another-story', 'article']
+    ]) {
+        const response = await call(app, env, 'POST', '/api/inbox?shortcut=1', {
+            token: 'owner-secret', body: { url }
+        });
+        assert.strictEqual(response.status, 201);
+        const message = await response.text();
+        assert.ok(message.includes(`Queued for ${kind} processing`), message);
+        assert.doesNotMatch(message, /Safari|No article text/);
+    }
+    const response = await call(app, env, 'POST', '/api/inbox?shortcut=1', {
+        token: 'owner-secret', body: { url: 'https://writer.substack.com/p/story' }
+    });
+    const message = await response.text();
+    assert.match(message, /Already saved.*existing item keeps its progress.*Check Shared links/);
+    assert.doesNotMatch(message, /Queued|Safari|No article text/);
 });
 
 test('repeated Substack links keep one item and preserve its retry deadline', () => {

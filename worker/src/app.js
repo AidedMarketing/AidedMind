@@ -1,7 +1,7 @@
 // AidedMind API. Static files (web/) are served by Workers Static Assets;
 // only /api/* reaches this code.
 import { analyze, checkModel } from './analyze.js';
-import { fetchSource } from './extract.js';
+import { classifyUrl, fetchSource } from './extract.js';
 import { HttpError, json, readJson, sha256Hex, digestsEqual, randomToken, currentMonth } from './http.js';
 import { summarizeCosts, recordClaude } from './costs.js';
 import { checkServices } from './transcripts.js';
@@ -234,9 +234,14 @@ const routes = [
         if (!item) throw new HttpError(400, 'Nothing to save: send a url or text.');
         if (new URL(request.url).searchParams.get('shortcut') === '1') {
             const words = (item.text.match(/\S+/g) || []).length;
+            const linkMessage = item.reused
+                ? 'Already saved to AidedMind. The existing item keeps its progress. Check Shared links for its status.'
+                : `Saved link to AidedMind. Queued for ${['tiktok', 'youtube'].includes(classifyUrl(item.url)) ? 'video processing' : 'article processing'}. Check Shared links for progress.`;
             const message = item.text
                 ? `Saved to AidedMind — ${words.toLocaleString('en-US')} words received.${body.capture?.review ? ' Check the captured text in Shared links.' : ''}`
-                : `${item.reused ? 'Already saved to AidedMind. The existing item keeps its progress.' : 'Saved link to AidedMind.'} No article text was received.${body.capture?.kind === 'safari' ? ' Safari did not capture readable text; use Add text in Shared links.' : ' If you shared from Safari, check that the Shortcut runs the Safari script and posts its JavaScript Result.'}`;
+                : body.capture?.kind === 'safari'
+                    ? `${linkMessage} No article text was received. Safari did not capture readable text; use Add text in Shared links.`
+                    : linkMessage;
             return new Response(message, { status: 201, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
         }
         return json({ ok: true, id: item.id, message: 'Saved to AidedMind. Check Shared links for progress or to add article text if needed.' }, 201);
