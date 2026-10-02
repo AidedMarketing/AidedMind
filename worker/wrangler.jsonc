@@ -16,6 +16,8 @@
     },
     "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
     "vars": {
+        // Public RSS retrieval verified from the Cloudflare runtime.
+        "AIDEDMIND_SUBSTACK_RSS": "1",
         // Breakdown styles: Auto (picks per source) / Quick / Balanced / Thorough.
         "AIDEDMIND_DEFAULT_DEPTH": "auto",
         "AIDEDMIND_MODEL_QUICK": "claude-haiku-4-5",

@@ -4,6 +4,7 @@
 import { YoutubeTranscript } from 'youtube-transcript';
 import { HttpError } from './http.js';
 import { geminiTranscript, supadataTranscript, youtubeDetails } from './transcripts.js';
+import { substackPostAddress, parseSubstackFeed, sourceFromSubstackFeed } from './substack-rss.js';
 
 const TIMEOUT_MS = 15000;
 const MAX_BYTES = 3 * 1024 * 1024;
@@ -334,7 +335,67 @@ async function substackFallback(rawUrl) {
     }
 }
 
-async function extractArticle(rawUrl, { attempt = 1 } = {}) {
+async function extractArticle(rawUrl, deps = {}) {
+    const { attempt = 1 } = deps;
+    // Use the publisher-provided public feed when enabled; older posts retain
+    // the existing page/API fallback and throttling policy.
+    if (deps.env?.AIDEDMIND_SUBSTACK_RSS === '1') {
+        const address = substackPostAddress(rawUrl);
+        if (address) {
+            const { cacheGet, cachePut } = withDeps(deps);
+            const now = deps.now ? deps.now() : Date.now();
+            const key = `substack-feed-v2:${address.feedUrl}`;
+            const fresh = (entry) => entry && Number.isFinite(entry.fetchedAt)
+                && now >= entry.fetchedAt && now - entry.fetchedAt < 5 * 60 * 1000;
+            const readCache = async (key) => { try { return await cacheGet(key); } catch { return null; } };
+            const index = await readCache(key);
+            let cached = null;
+            let fetchFeed = true;
+            if (fresh(index) && Array.isArray(index.urls)) {
+                if (!index.urls.includes(address.pageUrl)) fetchFeed = false;
+                else {
+                    cached = await readCache(`${key}:${address.pageUrl}`);
+                    fetchFeed = !fresh(cached) || !Array.isArray(cached.posts);
+                }
+            }
+            if (fetchFeed) {
+                try {
+                    const feed = await fetchPage(address.feedUrl, 'application/rss+xml,application/xml,text/xml;q=0.9');
+                    const sameOrigin = new URL(feed.url).origin === new URL(address.feedUrl).origin;
+                    const posts = sameOrigin && /xml/i.test(feed.contentType) ? parseSubstackFeed(feed.body) : null;
+                    cached = posts ? { fetchedAt: now, posts } : null;
+                    // Real feeds can exceed one SQLite row. Cache each post
+                    // separately and keep a small index, retaining duplicate
+                    // entries together so ambiguity checks also apply to cache.
+                    if (cached) {
+                        const groups = new Map();
+                        for (const post of posts) {
+                            const pageUrl = substackPostAddress(post.link)?.pageUrl;
+                            if (!pageUrl || new URL(pageUrl).origin !== new URL(address.pageUrl).origin) continue;
+                            if (!groups.has(pageUrl)) groups.set(pageUrl, []);
+                            groups.get(pageUrl).push(post);
+                        }
+                        try {
+                            for (const [url, group] of groups) {
+                                const entry = { fetchedAt: now, posts: group };
+                                if (new TextEncoder().encode(JSON.stringify(entry)).length <= 350000) {
+                                    await cachePut(`${key}:${url}`, entry);
+                                }
+                            }
+                            await cachePut(key, { fetchedAt: now, urls: [...groups.keys()] });
+                        } catch { console.warn('substack feed cache write failed'); }
+                    }
+                } catch (error) {
+                    // A 429 pauses this attempt, instead of immediately hitting
+                    // two more routes on the same publication.
+                    if (error.upstreamStatus === 429) throw error;
+                    cached = null;
+                }
+            }
+            const source = sourceFromSubstackFeed(cached?.posts, rawUrl);
+            if (source) return source;
+        }
+    }
     const own = substackPageUrl(rawUrl);
     if (own) {
         // On the first app share, try both public routes. Subsequent 429
