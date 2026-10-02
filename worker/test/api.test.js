@@ -242,6 +242,26 @@ test('accounts: owner creates users, free plan quota enforced, failures refunded
     assert.strictEqual((await call(app, env, 'POST', '/api/auth-check', { token })).status, 403);
 });
 
+test('analysis request rejection is distinct from text length and preserves quota', async (t) => {
+    const stub = await anthropicStub(() => ({ status: 400, json: {
+        type: 'error', error: { type: 'invalid_request_error', message: 'Unsupported request option' }
+    } }));
+    t.after(() => stub.close());
+    const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
+    const response = await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: {
+        source: { sourceType: 'tiktok', text: 'A short video caption' }, depth: 'quick'
+    } });
+    const result = await response.json();
+    assert.strictEqual(response.status, 502);
+    assert.strictEqual(result.code, 'analysis_request_rejected');
+    assert.strictEqual(result.providerStatus, 400);
+    assert.strictEqual(result.model, 'claude-haiku-4-5');
+    assert.match(result.error, /rejected AidedMind's analysis request/);
+    assert.doesNotMatch(result.error, /shorter|Unsupported request option/);
+    assert.strictEqual(stub.requests.length, 1);
+    assert.strictEqual((await env.STORE.get('user:owner').usageFor(new Date().toISOString().slice(0, 7))).captures, 0);
+});
+
 test('inbox is per user', async () => {
     const env = fakeEnv();
     const other = await (await call(app, env, 'POST', '/api/admin/users', { token: 'owner-secret', body: { label: 'B' } })).json();

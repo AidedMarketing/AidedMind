@@ -368,7 +368,15 @@ export async function callClaude(env, request, { timeout, what }) {
         }
         if (error instanceof Anthropic.BadRequestError) {
             if (/credit balance/i.test(detail)) throw new HttpError(502, 'The Anthropic account is out of credit. Add credit in the Anthropic Console, then try again.');
-            throw new HttpError(502, 'Claude couldn\'t process this content. Try again, or paste a shorter version of the text.');
+            const requestId = String(error.request_id || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100);
+            console.warn(`claude request rejected: model=${request.model} request_id=${requestId || 'unavailable'}`);
+            const rejected = new HttpError(502,
+                `Claude rejected AidedMind's analysis request (400). The link is saved; repeating the same request may not help.${requestId ? ` Reference: ${requestId}.` : ''}`,
+                { code: 'analysis_request_rejected', providerStatus: 400, model: request.model, ...(requestId ? { requestId } : {}) });
+            // A 400 needs investigation, rather than automatic retries of
+            // the same invalid request or an unsupported suggestion to shorten it.
+            rejected.errorKind = 'retry_in_app';
+            throw rejected;
         }
         if (error instanceof Anthropic.PermissionDeniedError) throw new HttpError(502, 'The Anthropic account isn\'t allowed to use this model. Check its access in the Anthropic Console.');
         if (error instanceof Anthropic.APIError) {
