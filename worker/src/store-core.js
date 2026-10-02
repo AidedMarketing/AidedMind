@@ -247,6 +247,12 @@ export class StoreCore {
         this.sql.exec("UPDATE inbox SET status = 'pending', next_attempt_at = ?, error = ? WHERE id = ?", new Date(atMs).toISOString(), String(error || '').slice(0, 300), id);
     }
 
+    // Return a claimed item to the queue without counting an upstream attempt.
+    inboxDefer(id, atMs, error) {
+        this.sql.exec("UPDATE inbox SET status = 'pending', attempts = MAX(0, attempts - 1), next_attempt_at = ?, error = ? WHERE id = ?",
+            new Date(atMs).toISOString(), String(error || '').slice(0, 300), id);
+    }
+
     inboxFail(id, { error, kind }) {
         this.sql.exec("UPDATE inbox SET status = 'failed', error = ?, error_kind = ? WHERE id = ?", String(error || '').slice(0, 300), kind || 'permanent', id);
     }
