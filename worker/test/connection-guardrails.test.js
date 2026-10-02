@@ -1,6 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalize } from '../src/analyze.js';
+import { suggestConnections } from '../src/connections.js';
+import { fakeEnv, anthropicStub } from './helpers.js';
+
+test('analysis and connection responses enforce confidence bounds locally', async (t) => {
+    const connections = [
+        { noteId: 'a', relation: 'related', reason: 'Strong', confidence: 9 },
+        { noteId: 'b', relation: 'related', reason: 'Weak', confidence: -2 }
+    ];
+    assert.deepEqual(normalize(baseRaw(connections), new Set(['a', 'b'])).connections.map(c => [c.noteId, c.confidence]), [['a', 1]]);
+    const stub = await anthropicStub(() => ({ json: {
+        id: 'm', type: 'message', role: 'assistant', model: 'claude-haiku-4-5',
+        content: [{ type: 'text', text: JSON.stringify({ connections }) }],
+        stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 10 }
+    } }));
+    t.after(() => stub.close());
+    const result = await suggestConnections({ title: 'New note' }, [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }], fakeEnv({ ANTHROPIC_BASE_URL: stub.url }));
+    assert.deepEqual(result.connections.map(c => [c.noteId, c.confidence]), [['a', 1]]);
+});
 
 function baseRaw(connections) {
     return {

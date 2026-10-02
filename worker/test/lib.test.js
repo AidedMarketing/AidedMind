@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import { classifyUrl, youtubeId, decodeEntities, isPrivateAddress, assertPublicUrl, substackApiUrl, substackPageUrl, fetchSource } from '../src/extract.js';
 import { normalize, compactLibrary, analyze, ANALYSIS_SCHEMA, autoDepth, countWords } from '../src/analyze.js';
 import { sqlStore } from './helpers.js';
+import { CONNECTIONS_SCHEMA } from '../src/connections.js';
 
 test('classifies source URLs', () => {
     assert.strictEqual(classifyUrl('https://www.youtube.com/watch?v=abc123def45'), 'youtube');
@@ -45,8 +46,11 @@ test('normalize drops unknown connections and dedupes concepts', () => {
     assert.deepStrictEqual(compactLibrary('nope'), []);
 });
 
-test('schema is strict at every object level', () => {
+test('analysis and connection schemas follow Claude structured-output constraints', () => {
     const walk = (schema) => {
+        for (const key of ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf']) {
+            assert.strictEqual(schema[key], undefined, `Claude does not support ${key} in raw output schemas`);
+        }
         if (schema.type === 'object') {
             assert.strictEqual(schema.additionalProperties, false);
             assert.deepStrictEqual([...schema.required].sort(), Object.keys(schema.properties).sort());
@@ -55,6 +59,7 @@ test('schema is strict at every object level', () => {
         if (schema.type === 'array') walk(schema.items);
     };
     walk(ANALYSIS_SCHEMA);
+    walk(CONNECTIONS_SCHEMA);
 });
 
 test('oversized sources are rejected, not truncated', async () => {

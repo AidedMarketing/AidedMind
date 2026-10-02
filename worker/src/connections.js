@@ -9,7 +9,7 @@ const RELATIONS = ['supports', 'contradicts', 'extends', 'example-of', 'related'
 const MAX_LINKS = 6;
 const MIN_CONFIDENCE = 0.72;
 
-const CONNECTIONS_SCHEMA = {
+export const CONNECTIONS_SCHEMA = {
     type: 'object',
     additionalProperties: false,
     required: ['connections'],
@@ -24,7 +24,9 @@ const CONNECTIONS_SCHEMA = {
                     noteId: { type: 'string' },
                     relation: { type: 'string', enum: RELATIONS },
                     reason: { type: 'string', description: 'One plain-language sentence explaining why the relationship is useful' },
-                    confidence: { type: 'number', minimum: 0, maximum: 1 }
+                    // Enforce numeric bounds when normalizing the response,
+                    // since Claude rejects minimum/maximum in raw schemas.
+                    confidence: { type: 'number', description: 'Confidence from 0 to 1' }
                 }
             }
         }
