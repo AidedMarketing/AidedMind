@@ -292,6 +292,55 @@ test('a direct Substack share queues a throttled fallback and finishes on the sa
     assert.strictEqual(core.usageFor(month()).captures, 1);
 });
 
+test('Substack rate limits pause the publication across shares and runs without spending attempts', async (t) => {
+    const { env, core } = await setup(t);
+    let blocked = true;
+    const api = 'https://writer.substack.com/api/v1/posts/first';
+    const calls = mockFetch(t, {
+        [api]: () => blocked
+            ? new Response('slow down', { status: 429, headers: { 'Retry-After': '600' } })
+            : new Response(JSON.stringify({ title: 'First', body_html: words(30) }), { headers: { 'content-type': 'application/json' } }),
+        'https://writer.substack.com/p/first': html('slow down', 429),
+        'https://writer.substack.com/p/second': html(page(words(30))),
+        'https://other.substack.com/p/story': html(page(words(30)))
+    });
+    const first = core.inboxAdd({ url: 'https://open.substack.com/pub/writer/p/first' });
+    const second = core.inboxAdd({ url: 'https://writer.substack.com/p/second' });
+    const other = core.inboxAdd({ url: 'https://other.substack.com/p/story' });
+    const captured = core.inboxAdd({ url: 'https://writer.substack.com/p/captured', text: 'Readable full article. '.repeat(100) });
+    let now = Date.now();
+    const row = (id) => core.inboxList().find((item) => item.id === id);
+    await processInbox(core, env, { now: () => now });
+    assert.deepStrictEqual(calls, [api, 'https://writer.substack.com/p/first', 'https://other.substack.com/p/story']);
+    assert.deepStrictEqual([row(first.id).attempts, row(second.id).attempts], [1, 0]);
+    assert.strictEqual(row(first.id).nextRetryAt, row(second.id).nextRetryAt);
+    assert.deepStrictEqual([row(other.id).status, row(captured.id).status], ['done', 'done']);
+    assert.strictEqual(core.usageFor(month()).captures, 2);
+
+    // A manual retry and a later app share still honor the stored cooldown.
+    now += 1000;
+    core.inboxUpdate(second.id, {});
+    const later = core.inboxAdd({ url: 'https://open.substack.com/pub/writer/p/later' });
+    await processInbox(core, env, { now: () => now });
+    assert.strictEqual(calls.length, 3);
+    assert.deepStrictEqual([row(second.id).attempts, row(later.id).attempts], [0, 0]);
+    assert.strictEqual(row(later.id).nextRetryAt, row(first.id).nextRetryAt);
+
+    // Recovery text resumes that same item while the publication is paused.
+    core.inboxUpdate(later.id, { text: 'Readable recovery text. '.repeat(100) });
+    await processInbox(core, env, { now: () => now });
+    assert.strictEqual(row(later.id).status, 'done');
+    assert.strictEqual(calls.length, 3);
+
+    now = new Date(row(first.id).nextRetryAt).getTime() + 1;
+    blocked = false;
+    await processInbox(core, env, { now: () => now });
+    assert.deepStrictEqual([row(first.id).status, row(second.id).status], ['done', 'done']);
+    assert.deepStrictEqual([row(first.id).attempts, row(second.id).attempts], [2, 1]);
+    assert.deepStrictEqual(calls.slice(3), [api, 'https://writer.substack.com/p/second']);
+    assert.strictEqual(core.usageFor(month()).captures, 5);
+});
+
 test('failures that will not get better fail at once, with a reason', async (t) => {
     const { stub, env, core } = await setup(t);
     mockFetch(t, { 'https://blocked.example/a': html('Forbidden', 403), 'https://spa.example/a': html('<html><body><div id="app"></div></body></html>') });

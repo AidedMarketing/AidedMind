@@ -27,6 +27,28 @@ const STORED_TEXT_MAX = 400000; // one SQLite row holds the whole finished note
 // Sites that answered with these will answer the same way next time.
 const PERMANENT_UPSTREAM = new Set([401, 403, 404, 410, 451]);
 
+// App and browser shares of one publication use the same upstream service.
+function substackHost(rawUrl) {
+    try {
+        const url = new URL(rawUrl);
+        if (url.hostname === 'open.substack.com') {
+            const publication = url.pathname.match(/^\/pub\/([\w-]+)\//)?.[1];
+            return publication ? `${publication.toLowerCase()}.substack.com` : url.hostname;
+        }
+        return url.hostname === 'substack.com' || url.hostname.endsWith('.substack.com') ? url.hostname : '';
+    } catch { return ''; }
+}
+
+function rememberCooldown(core, item, until, message, nowMs) {
+    const host = substackHost(item.url);
+    if (!host) return;
+    const active = Object.entries(core.metaGet('substack_cooldowns') || {})
+        .filter(([, entry]) => entry.until > nowMs).slice(-99);
+    const cooldowns = Object.fromEntries(active);
+    cooldowns[host] = { until: Math.max(until, cooldowns[host]?.until || 0), message };
+    core.metaSet('substack_cooldowns', cooldowns);
+}
+
 function sourceTypeFor(url) {
     const kind = classifyUrl(url || '');
     return kind === 'invalid' ? 'text' : kind;
@@ -110,14 +132,14 @@ function fail(core, item, error, nowMs) {
         // Four attempts cover about 14 minutes for a Substack app share.
         // After that, keep the link with Add text / Try again instead of
         // making the person watch an hour of automatic retries.
-        const substackShare = /^https?:\/\/(?:open\.)?substack\.com\//i.test(item.url)
-            || /^https?:\/\/[^/]+\.substack\.com\//i.test(item.url);
+        const substackShare = Boolean(substackHost(item.url));
         const maxAttempts = substackShare ? SUBSTACK_RATE_LIMIT_MAX_ATTEMPTS : RATE_LIMIT_MAX_ATTEMPTS;
+        const delay = Math.max(
+            Math.min(PROVIDER_RETRY_MAX_MS, 2 * 60 * 1000 * 2 ** (item.attempts - 1)),
+            error.retryAfterMs || 0
+        );
+        rememberCooldown(core, item, nowMs + delay, message, nowMs);
         if (item.attempts < maxAttempts) {
-            const delay = Math.max(
-                Math.min(PROVIDER_RETRY_MAX_MS, 2 * 60 * 1000 * 2 ** (item.attempts - 1)),
-                error.retryAfterMs || 0
-            );
             return core.inboxRetry(item.id, nowMs + delay, message);
         }
         return core.inboxFail(item.id, { error: message, kind: 'retry_in_app' });
@@ -159,6 +181,14 @@ async function processItem(core, env, item, nowMs) {
     }
     if (capture.review && !item.capture_confirmed && item.text) {
         return core.inboxFail(item.id, { error: `Safari captured ${countWords(item.text)} words. Check the text before breaking it down.`, kind: 'needs_review' });
+    }
+    // Waiting on another link's rate limit is not a fetch attempt and uses
+    // no quota. Supplied article text needs no upstream read, so bypass it.
+    if (!item.text) {
+        const cooldown = (core.metaGet('substack_cooldowns') || {})[substackHost(item.url)];
+        if (cooldown?.until > nowMs) {
+            return core.inboxDefer(item.id, cooldown.until, cooldown.message);
+        }
     }
     const reservation = core.reserveCapture(month, item.quotaLimit);
     if (!reservation.ok) {
