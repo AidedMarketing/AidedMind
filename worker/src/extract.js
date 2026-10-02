@@ -96,7 +96,7 @@ export async function fetchPage(rawUrl, accept = 'text/html,application/xhtml+xm
             headers: { 'User-Agent': USER_AGENT, Accept: accept, 'Accept-Language': 'en;q=0.9,*;q=0.5' }
         });
     } catch (error) {
-        console.warn(`fetch ${url.hostname} failed: ${error.message}`);
+        console.warn(`fetch ${url.hostname}${url.pathname} failed: ${error.message}`);
         const slow = error.name === 'TimeoutError' || error.name === 'AbortError';
         const site = url.hostname.replace(/^www\./, '');
         throw new HttpError(502, slow
@@ -104,7 +104,7 @@ export async function fetchPage(rawUrl, accept = 'text/html,application/xhtml+xm
             : `Couldn't connect to ${site}. The site may be down, or the link may be wrong.`);
     }
     if (!response.ok) {
-        console.warn(`fetch ${url.hostname} responded ${response.status}`);
+        console.warn(`fetch ${url.hostname}${url.pathname} responded ${response.status}`);
         const error = new HttpError(502, describeUpstreamFailure(url.hostname, response.status));
         error.upstreamStatus = response.status;
         if (response.status === 429) error.retryAfterMs = retryAfterMs(response.headers.get('retry-after'));
@@ -337,10 +337,15 @@ async function substackFallback(rawUrl) {
 
 async function extractArticle(rawUrl, deps = {}) {
     const { attempt = 1 } = deps;
+    const rssAddress = substackPostAddress(rawUrl);
+    if (substackPageUrl(rawUrl)) console.info('substack retrieval', JSON.stringify({
+        rssEnabled: deps.env?.AIDEDMIND_SUBSTACK_RSS === '1',
+        rssRouteSupported: Boolean(rssAddress), attempt
+    }));
     // Use the publisher-provided public feed when enabled; older posts retain
     // the existing page/API fallback and throttling policy.
     if (deps.env?.AIDEDMIND_SUBSTACK_RSS === '1') {
-        const address = substackPostAddress(rawUrl);
+        const address = rssAddress;
         if (address) {
             const { cacheGet, cachePut } = withDeps(deps);
             const now = deps.now ? deps.now() : Date.now();
@@ -393,7 +398,11 @@ async function extractArticle(rawUrl, deps = {}) {
                 }
             }
             const source = sourceFromSubstackFeed(cached?.posts, rawUrl);
-            if (source) return source;
+            if (source) {
+                console.info(`substack feed ${new URL(address.feedUrl).hostname} matched (${fetchFeed ? 'fetched' : 'cached'})`);
+                return source;
+            }
+            console.info(`substack feed ${new URL(address.feedUrl).hostname} did not supply a matching article; using page/API fallback`);
         }
     }
     const own = substackPageUrl(rawUrl);
