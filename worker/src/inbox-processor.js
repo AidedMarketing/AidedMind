@@ -86,8 +86,9 @@ async function buildSource(core, env, item, month) {
         url: fetched.url,
         sharedUrl: item.url !== fetched.url ? item.url : '',
         ...page,
-        partial: paywalled,
-        transcriptSource: paywalled ? 'paywall' : ''
+        partial: paywalled || Boolean(fetched.partial),
+        transcriptSource: paywalled ? 'paywall' : fetched.transcriptSource || '',
+        retrieval: fetched.retrieval || ''
     };
 }
 
@@ -104,6 +105,7 @@ function pack(source, result) {
             partial: Boolean(source.partial),
             transcriptSource: source.transcriptSource || '',
             transcriptError: source.transcriptError || '',
+            retrieval: source.retrieval || '',
             text: String(source.text || '').slice(0, STORED_TEXT_MAX),
             captureKind: source.captureKind || 'server', imageCount: source.imageCount || 0,
             wordCount: countWords(source.text)
