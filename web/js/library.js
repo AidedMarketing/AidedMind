@@ -169,3 +169,29 @@ export async function knownUrlHashes(notes, { limit = 3000 } = {}) {
     const hashes = await Promise.all(urls.slice(0, limit).map(urlHash));
     return [...new Set(hashes.filter(Boolean))];
 }
+
+// Updating a source never creates a second piece or discards personal context.
+export function preserveUpdatedNote(fresh, previous) {
+    const connections = new Map();
+    for (const link of [...(previous.connections || []), ...(fresh.connections || [])]) {
+        if (link.noteId && !connections.has(link.noteId)) connections.set(link.noteId, link);
+    }
+    return {
+        ...fresh,
+        id: previous.id,
+        createdAt: previous.createdAt,
+        userNotes: previous.userNotes || '',
+        removedLinks: previous.removedLinks || [],
+        rejectedLinks: previous.rejectedLinks || [],
+        photos: [...(previous.photos || []), ...(fresh.photos || [])],
+        source: {
+            ...fresh.source,
+            sharedUrl: previous.source?.sharedUrl || fresh.source?.sharedUrl || '',
+            author: fresh.source?.author || previous.source?.author || '',
+            siteName: fresh.source?.siteName || previous.source?.siteName || '',
+            thumbnail: fresh.source?.thumbnail || previous.source?.thumbnail || ''
+        },
+        connections: [...connections.values()],
+        ...(previous.topicByUser ? { topic: previous.topic, topicByUser: true } : {})
+    };
+}

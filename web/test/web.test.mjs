@@ -43,7 +43,7 @@ test('note action menus open for every source type and expose the appropriate re
         assert.ok(labels.includes('Export as Markdown'));
         assert.ok(labels.includes('Delete note'));
         assert.strictEqual(labels.includes('Add screenshots'), source?.sourceType === 'article');
-        assert.strictEqual(labels.includes('Paste the full article'), source?.transcriptSource === 'paywall');
+        assert.ok(labels.includes('Import full text'));
     }
 });
 

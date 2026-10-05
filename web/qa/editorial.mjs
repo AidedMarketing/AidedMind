@@ -69,11 +69,24 @@ try {
         let inboxDelay = 0;
         let owner = false;
         let accountFailure = false;
+        let analyzeFailure = false;
+        let analyzeDelay = 0;
+        let analyzedSource = null;
+        let analyzeCount = 0;
         await page.route('**/api/**', async (route) => {
             const path = new URL(route.request().url()).pathname;
             if (path.endsWith('/admin/users')) {
                 await route.fulfill({ status: accountFailure && route.request().method() === 'POST' ? 503 : 200, contentType: 'application/json', body: JSON.stringify(route.request().method() === 'POST' ? (accountFailure ? { error: 'Please try again later.' } : { label: 'Reader', token: 'new-fixture-token', limit: 25 }) : { users: [], month: '2026-10' }) });
                 return;
+            }
+            if (path.endsWith('/analyze')) {
+                analyzedSource = route.request().postDataJSON().source;
+                analyzeCount++;
+                if (analyzeDelay) await new Promise((done) => setTimeout(done, analyzeDelay));
+                if (analyzeFailure) {
+                    await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Analysis is unavailable.' }) });
+                    return;
+                }
             }
             const data = path.endsWith('/inbox') ? { items: inbox } : path.endsWith('/auth-check') ? { usage: { captures: 0, limit: owner ? null : 25 } } : path.endsWith('/health') ? { services: {}, checks: {}, version: 'fixture' } : path.endsWith('/source') ? { sourceType: 'article', url: 'https://example.com/new', title: 'A new entry', text: 'A readable source passage. '.repeat(60) } : path.endsWith('/analyze') ? { analysis: { title: 'A new entry', tldr: 'An idea for later.', summary: [{ heading: 'The idea', body: 'Keep reading.' }], takeaways: [], quotes: [], outline: [], concepts: [], connections: [], tags: [] }, model: 'fixture', depth: 'balanced' } : {};
             if (path.endsWith('/inbox') && inboxDelay) await new Promise((done) => setTimeout(done, inboxDelay));
@@ -392,6 +405,44 @@ try {
             }
             assert.deepEqual(errors, [], label + ' browser errors');
         });
+        await check(label + ' import full text on a complete note', async () => {
+            await page.evaluate(async (note) => (await import('/js/db.js')).saveNote(note), { ...fixture[0], userNotes: 'Keep my thoughts' });
+            await goto('note/a');
+            await page.getByRole('tab', { name: 'Notes', exact: true }).click();
+            await page.getByRole('button', { name: 'Import full text', exact: true }).click();
+            await page.getByRole('button', { name: 'Update breakdown', exact: true }).click();
+            await page.getByText('Paste the full text first.', { exact: true }).waitFor();
+            const fullText = 'A complete source, including the missing sections. '.repeat(200);
+            await page.getByRole('textbox', { name: 'Full text', exact: true }).fill(fullText);
+            await page.keyboard.press('Escape');
+            await page.getByRole('button', { name: 'Import full text', exact: true }).click();
+            assert.equal(await page.getByRole('textbox', { name: 'Full text', exact: true }).inputValue(), fullText);
+            analyzeFailure = true;
+            await page.getByRole('button', { name: 'Update breakdown', exact: true }).click();
+            await page.getByText(/Your pasted text is still here/).waitFor();
+            assert.equal(await page.getByRole('textbox', { name: 'Full text', exact: true }).inputValue(), fullText);
+            const before = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()).find((n) => n.id === 'a'));
+            assert.equal(before.title, 'Sleep and memory');
+            await axe('full text import');
+            await screenshot('full-text-import', true);
+            analyzeFailure = false;
+            analyzeDelay = 300;
+            const count = analyzeCount;
+            await page.getByRole('button', { name: 'Update breakdown', exact: true }).click();
+            assert.equal(await page.getByRole('button', { name: 'Update breakdown', exact: true }).isDisabled(), true);
+            await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
+            const after = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()).find((n) => n.id === 'a'));
+            assert.equal(analyzeCount, count + 1);
+            assert.equal(analyzedSource.text, fullText.trim());
+            assert.equal(analyzedSource.url, before.source.url);
+            assert.equal(after.sourceText, fullText.trim());
+            assert.equal(after.createdAt, before.createdAt);
+            assert.equal(after.userNotes, before.userNotes);
+            assert.equal(after.connections[0].noteId, before.connections[0].noteId);
+            assert.equal(after.source.siteName, before.source.siteName);
+            assert.equal(after.source.wordCount, fullText.trim().split(/\s+/).length);
+            analyzeDelay = 0;
+        });
         } catch (error) {
             failed++; report.push({ name: currentCheck, status: 'failed', error: error.message });
             console.error('FAIL ' + currentCheck + '\n' + error.stack);
@@ -406,12 +457,12 @@ try {
         await page.evaluate(async () => { await navigator.serviceWorker.ready; });
         await page.reload();
         await page.evaluate(async () => {
-            const cache = await caches.open('aidedmind-v32');
+            const cache = await caches.open('aidedmind-v33');
             for (const path of ['/fonts/Newsreader.ttf', '/icons/mark.svg', '/tokens.css', '/shell.css', '/app.css', '/js/app.js']) {
                 if (!(await cache.match(path))) throw Error('Missing cached asset ' + path);
             }
         });
-        assert.equal(await page.evaluate(async () => (await (await caches.open('aidedmind-v32')).match('/index.html')).redirected), true);
+        assert.equal(await page.evaluate(async () => (await (await caches.open('aidedmind-v33')).match('/index.html')).redirected), true);
         // Reopen a fresh tab under the installed controller, as on Safari launch.
         const reopened = await context.newPage();
         await reopened.goto(url + '/?reopen=1');
