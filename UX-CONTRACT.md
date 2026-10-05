@@ -39,3 +39,7 @@ The Share Sheet action saves first. A successful Shortcut response means the ser
 Use short, literal status text in grouped rows. Success feedback can disappear; failure and required action remain on the item. Keep the same operation names in Settings, Shared links, and note menus. Use semantic buttons and links, visible focus, and the existing app sheet and toast primitives.
 
 Connection setup belongs first in Capture & Sharing. Shortcut copy controls require a token and a valid receiving server; GitHub Pages cannot receive captures. Owner account creation uses the shared focus-managed sheet, preserves its name on failure, and announces progress/errors.
+
+## Full-text corrections
+
+Every saved piece offers **Import full text** in its action menu and Notes tab, regardless of automatic completeness detection. The shared sheet replaces captured text and rebuilds the same piece after a successful analysis and local save. Identity, date, personal notes, existing links, rejected links, photos, manually chosen topic and source attribution survive. Failure retains the previous piece and pasted text; closing and reopening retains the draft for this app session. The sheet states that updating uses one breakdown.

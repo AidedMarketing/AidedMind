@@ -2,7 +2,7 @@ import { allNotes, saveNote, saveMany, deleteNote, newId } from './db.js';
 import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, queueInboxItem, removeInboxItem, updateInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser, connectionSetupIssue } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { buildThemes, THEME_DETAIL } from './themes.js';
-import { knownTopics, conceptVocabulary, knownUrlHashes, findDuplicate } from './library.js';
+import { knownTopics, conceptVocabulary, knownUrlHashes, findDuplicate, preserveUpdatedNote } from './library.js';
 import { toMarkdown, fileName } from './markdown.js';
 import { icon } from './icons.js';
 import { createZip } from './zip.js';
@@ -56,7 +56,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '32';
+const APP_VERSION = '33';
 
 let notes = [];
 let draft = { input: '', title: '', photos: [] };
@@ -368,7 +368,7 @@ async function runCapture({ input = '', url: explicitUrl, text: explicitText, ti
         result = await capture({ url: retry.source?.sharedUrl || retry.source?.url, retry }, notes);
     } else if (replace) {
         if (!explicitText?.trim()) throw new Error('Paste the article text first.');
-        result = await capture({ url: replace.source?.url, text: explicitText.trim(), replace }, notes);
+        result = await capture({ url: replace.source?.url, title: replace.source?.title || replace.title, text: explicitText.trim(), replace }, notes);
     } else if (photos.length) {
         result = await capture({ text: input.trim(), title, photos, augment }, notes);
         result.photos = photos.map((photo) => photo.thumb);
@@ -389,16 +389,7 @@ async function finishNote(result, title) {
     let note = buildNote(result, title);
     const previous = result.replaces && notes.find((n) => n.id === result.replaces);
     if (previous) {
-        note = {
-            ...note,
-            id: previous.id,
-            createdAt: previous.createdAt,
-            userNotes: previous.userNotes || '',
-            removedLinks: previous.removedLinks || [],
-            rejectedLinks: previous.rejectedLinks || [],
-            photos: [...(previous.photos || []), ...(note.photos || [])],
-            ...(previous.topicByUser ? { topic: previous.topic, topicByUser: true } : {})
-        };
+        note = preserveUpdatedNote(note, previous);
         note.connections = keepAllowedLinks(note, note.connections);
     }
     note.connections = (note.connections || []).map((connection) => ({
@@ -1013,6 +1004,7 @@ function notePanel(name, note, byId) {
         h('div', { class: 'notes-actions' },
             h('button', { type: 'button', class: 'btn small-btn', onclick: () => openManualLinkSheet(note) }, icon('graph', { size: 16, strokeWidth: 2 }), 'Link this note')
         ),
+        h('button', { type: 'button', class: 'btn small-btn', onclick: () => pasteFullTextSheet(note) }, 'Import full text'),
         note.sourceText ? [h('h2', { class: 'breakdown-heading' }, 'Captured source'), h('details', { class: 'card' }, h('summary', {}, 'Show full text'), h('div', { class: 'source-text' }, note.sourceText))] : null,
         note.source?.transcriptSource && note.source.transcriptSource !== 'paywall' ? h('p', { class: 'group-footer' }, `Transcript from ${TRANSCRIPT_LABELS[note.source.transcriptSource] || note.source.transcriptSource}`) : null,
         note.model ? h('p', { class: 'group-footer' }, `${note.depth ? `${note.autoDepth ? 'Auto → ' : ''}${depthLabel(note.depth)} breakdown` : 'Breakdown'} by ${note.model}`) : null
@@ -1202,7 +1194,7 @@ function noteActions(note, byId) {
                 }),
                 actionRow(note.topic ? `Topic: ${note.topic}` : 'Set topic', 'themes', () => topicSheet(note)),
                 note.source?.partial && href && note.source.transcriptSource !== 'paywall' ? actionRow('Get the full transcript', 'refresh', () => retryTranscript(note)) : null,
-                note.source?.partial ? actionRow(note.source.transcriptSource === 'paywall' ? 'Paste the full article' : 'Paste the full text', 'clipboard', () => pasteFullTextSheet(note)) : null,
+                actionRow('Import full text', 'clipboard', () => pasteFullTextSheet(note)),
                 actionRow(`Re-analyze (${depthLabel(getSettings().depth)})`, 'refresh', () => reanalyze(note)),
                 !note.source?.partial ? actionRow('Give me more detail', 'sparkle', () => reanalyze(note, 'expanded')) : null,
                 type === 'article' ? actionRow('Add screenshots', 'camera', () => addScreenshots(note)) : null
@@ -1267,35 +1259,57 @@ async function retryTranscript(note) {
     }
 }
 
-// A partial note (paywalled article, caption only) redone with text you paste:
-// open the page where you're logged in, copy the text, paste it here.
+// Keep an unfinished import in memory when the sheet closes or a request fails.
+const fullTextDrafts = new Map();
 function pasteFullTextSheet(note) {
-    const field = h('textarea', { class: 'field', rows: '8', placeholder: 'Paste the full text here', 'aria-label': 'Full text' });
-    const submit = h('button', { type: 'submit', class: 'btn primary block' }, 'Break it down');
-    openSheet(
-        h('h3', {}, 'Paste the full text'),
-        h('p', { class: 'small muted' }, note.source?.transcriptSource === 'paywall'
-            ? 'Open the article in Safari while you\'re logged in, choose Select All, Copy, then paste it here. The note keeps its place and anything you wrote.'
-            : 'Paste the full transcript or text. The note keeps its place and anything you wrote.'),
-        h('form', {
-            class: 'stack',
-            onsubmit: async (event) => {
-                event.preventDefault();
-                if (!field.value.trim() || pending) return;
-                closeSheet();
-                toast('Breaking it down…');
-                pending = runCapture({ replace: note, text: field.value });
-                try {
-                    await pending;
-                    toast('Updated with the full text');
-                } catch (error) {
-                    toast(error.message);
-                } finally {
-                    pending = null;
-                    if (location.hash.includes(encodeURIComponent(note.id))) route();
-                }
+    const field = h('textarea', { id: 'full-text-input', class: 'field', rows: '6', placeholder: 'Paste the entire article or transcript here',
+        'aria-describedby': 'full-text-help full-text-error', oninput: () => {
+            fullTextDrafts.set(note.id, field.value);
+            field.removeAttribute('aria-invalid');
+            error.textContent = '';
+        } });
+    field.value = fullTextDrafts.get(note.id) || '';
+    const error = h('p', { id: 'full-text-error', class: 'small error', role: 'status', 'aria-live': 'polite' });
+    const submit = h('button', { type: 'submit', class: 'btn primary block' }, 'Update breakdown');
+    const form = h('form', {
+        class: 'stack', novalidate: true,
+        onsubmit: async (event) => {
+            event.preventDefault();
+            if (pending) { error.textContent = 'Another breakdown is running. Try again when it finishes.'; return; }
+            if (!field.value.trim()) {
+                error.textContent = 'Paste the full text first.';
+                field.setAttribute('aria-invalid', 'true');
+                field.focus();
+                return;
             }
-        }, field, submit, h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel'))
+            fullTextDrafts.set(note.id, field.value);
+            submit.disabled = true;
+            field.disabled = true;
+            form.setAttribute('aria-busy', 'true');
+            error.textContent = 'Updating the breakdown…';
+            pending = runCapture({ replace: note, text: field.value });
+            try {
+                await pending;
+                fullTextDrafts.delete(note.id);
+                if (form.isConnected) closeSheet();
+                toast('Updated with the full text');
+                if (location.hash.includes(encodeURIComponent(note.id))) route();
+            } catch (failure) {
+                error.textContent = `${failure.message} Your pasted text is still here. Try again.`;
+            } finally {
+                pending = null;
+                submit.disabled = false;
+                field.disabled = false;
+                form.removeAttribute('aria-busy');
+                if (form.isConnected) field.focus({ preventScroll: true });
+            }
+        }
+    }, h('label', { for: 'full-text-input' }, 'Full text'), field, error, submit,
+    h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Close'));
+    openSheet(
+        h('h3', {}, 'Import full text'),
+        h('p', { id: 'full-text-help', class: 'small muted' }, 'Paste the complete text to replace the captured source and rebuild this breakdown. Your notes, links and place in the Library stay. This uses one breakdown.'),
+        form
     );
 }
 
