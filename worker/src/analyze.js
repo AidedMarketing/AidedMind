@@ -1,3 +1,4 @@
+import { EVIDENCE_SCHEMA, verifyEvidence } from './link-evidence.js';
 // Sends source text to Claude and returns a structured breakdown plus
 // suggested connections to notes already in the user's library.
 import Anthropic from '@anthropic-ai/sdk';
@@ -88,7 +89,7 @@ async function callGemini(env, source, library, config, vocabulary) {
         throw new HttpError(502, 'Gemini returned an incomplete breakdown.');
     }
     const usage = data.usageMetadata || {};
-    return { analysis: normalize(parsed, new Set(library.map((note) => note.id))), model: data.modelVersion || model,
+    return { analysis: normalize(parsed, new Set(library.map((note) => note.id)), { sourceText: source.text, library }), model: data.modelVersion || model,
         depth: config.depth, auto: config.auto,
         tokens: { input: usage.promptTokenCount || 0, output: (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0) } };
 }
@@ -171,7 +172,7 @@ export const ANALYSIS_SCHEMA = {
         },
         concepts: {
             type: 'array',
-            description: 'Key concepts, people, tools, or ideas. Use short canonical names so they match across notes.',
+            description: 'Substantive concepts the source meaningfully discusses. Include a person or tool only when it is a central subject, never an incidental mention. Use short canonical names so they match across notes.',
             items: {
                 type: 'object',
                 additionalProperties: false,
@@ -195,9 +196,10 @@ export const ANALYSIS_SCHEMA = {
             items: {
                 type: 'object',
                 additionalProperties: false,
-                required: ['noteId', 'relation', 'reason', 'confidence'],
+                required: ['noteId', 'relation', 'reason', 'confidence', 'evidence'],
                 properties: {
                     noteId: { type: 'string' },
+                    evidence: EVIDENCE_SCHEMA,
                     relation: { type: 'string', enum: ['supports', 'contradicts', 'extends', 'example-of', 'related'] },
                     reason: { type: 'string', description: 'One plain-language sentence explaining why the two notes are meaningfully connected' },
                     // Claude's raw structured-output schemas don't support
@@ -214,9 +216,11 @@ You receive one captured source (an article, a video transcript, a short-video c
 
 Produce a faithful breakdown of the source: a TL;DR, a sectioned summary, a hierarchical outline, key concepts, tags, notable quotes, and takeaways. The summary and outline are for skimming, so keep them concise; put the most care into the quotes and takeaways, which the reader values most. Stay grounded in what the source actually says; do not add outside facts. Quotes must be verbatim from the source. If the source is thin (for example only a caption), keep the breakdown proportionally short and say in the TL;DR that only partial content was available.
 
+Extract concepts only when the source develops or explains them. Do not turn incidental people, tools, examples, or buzzwords into concepts.
+
 The topic is what the source is about as a whole: a piece on journaling that mentions using an AI app is about Journaling, not Artificial Intelligence. Keep topics broad enough to be shared by many notes, and reuse a name from known_topics (or a note's topic in the library index) whenever it fits, so notes on the same subject sort together.
 
-For connections, only link to notes from the provided library index, using their exact ids. Link when the two notes share a subject, or when one directly builds on, supports, contradicts or is an example of the other. Sharing a passing mention, a tool or a buzzword (for example both mentioning AI) is not a connection. When the notes have different topics, link only if the relationship is specific and would genuinely help the reader. Score each link's confidence from 0 to 1 and return only genuinely useful links at 0.72 or higher. Return the strongest 3-6 links when that many truly qualify; fewer or none is better than filling the graph with weak associations. The index holds the notes most related to this source, not the whole library. Reuse concept names that already appear in the library index or the known concepts list when they refer to the same idea, so the knowledge graph links up.
+For connections, only link to notes from the provided library index, using their exact ids. A shared broad subject alone is insufficient. Link when a specific substantive idea connects the pieces, or when one directly builds on, supports, contradicts or is an example of the other. Sharing a passing mention, a tool or a buzzword (for example both mentioning AI) is not a connection. When the notes have different topics, link only if the relationship is specific and would genuinely help the reader. For supports, contradicts, extends and example-of, supply short verbatim evidence.source and evidence.target passages from the respective sources. Use related with empty evidence strings if passages are unavailable; never infer support or contradiction from a title or summary alone. Score each link's confidence from 0 to 1 and return only genuinely useful links at 0.72 or higher. Return the strongest 3-6 links when that many truly qualify; fewer or none is better than filling the graph with weak associations. The index holds the notes most related to this source, not the whole library. Reuse concept names that already appear in the library index or the known concepts list when they refer to the same idea, so the knowledge graph links up.
 
 When images are supplied (screenshots, book pages, slides, whiteboards, charts), read them carefully: transcribe their text faithfully into sourceText, and explain what charts or diagrams show. An article may also include its original text: consider both, and place only the newly read image content in sourceText. Quotes must be verbatim from the supplied source. If an image is unreadable, say so rather than guessing.
 
@@ -231,6 +235,7 @@ export function compactLibrary(library) {
             topic: String(note.topic || '').slice(0, 40),
             tldr: String(note.tldr || '').slice(0, 400),
             concepts: (Array.isArray(note.concepts) ? note.concepts : []).slice(0, 15).map((c) => String(c).slice(0, 60)),
+            passages: (Array.isArray(note.passages) ? note.passages : []).slice(0, 3).map((p) => String(p).slice(0, 500)),
             tags: (Array.isArray(note.tags) ? note.tags : []).slice(0, 10).map((t) => String(t).slice(0, 40))
         }))
         .filter((note) => note.id);
@@ -297,7 +302,7 @@ function buildUserContent(source, library, depth = 'balanced', { concepts = [], 
     return content;
 }
 
-export function normalize(raw, libraryIds) {
+export function normalize(raw, libraryIds, { sourceText = '', library = [] } = {}) {
     const asArray = (value) => (Array.isArray(value) ? value : []);
     const clean = (value) => String(value || '').trim();
     const seenConcepts = new Set();
@@ -331,13 +336,14 @@ export function normalize(raw, libraryIds) {
                         noteId: String(c?.noteId || ''),
                         relation: clean(c?.relation) || 'related',
                         reason: clean(c?.reason),
-                        confidence
+                        confidence,
+                        evidence: c?.evidence
                     };
                 })
                 .filter((c) => libraryIds.has(c.noteId) && c.reason && c.confidence >= AUTO_LINK_MIN_CONFIDENCE && !seen.has(c.noteId) && seen.add(c.noteId))
                 .sort((a, b) => b.confidence - a.confidence)
                 .slice(0, AUTO_LINK_MAX)
-                .map((c) => ({ ...c, origin: 'aidedmind' }));
+                .map((c) => ({ ...verifyEvidence(c, sourceText, library.find((n) => n.id === c.noteId)), origin: 'aidedmind' }));
         })()
     };
 }
@@ -432,7 +438,7 @@ export async function analyze(source, rawLibrary, env, depth, vocabulary = {}) {
         }
     }
     return {
-        analysis: normalize(parsed, libraryIds),
+        analysis: normalize(parsed, libraryIds, { sourceText: source.text, library }),
         model: message.model,
         depth: config.depth,
         auto: config.auto,

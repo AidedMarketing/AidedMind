@@ -52,3 +52,14 @@ test('editorial ink, metadata and action palette meets normal-text contrast', as
             }
     }
 });
+
+
+test('browser modules parse as ES modules before release', async () => {
+    const { readdir } = await import('node:fs/promises');
+    const { execFileSync } = await import('node:child_process');
+    const directory = new URL('../js/', import.meta.url);
+    for (const file of await readdir(directory)) {
+        if (!file.endsWith('.js')) continue;
+        execFileSync(process.execPath, ['--input-type=module', '--check'], { input: await readFile(new URL(file, directory), 'utf8'), stdio: ['pipe', 'pipe', 'pipe'] });
+    }
+});

@@ -23,7 +23,8 @@ test('full-text correction preserves identity and personal context without retai
     assert.deepEqual(updated.photos, previous.photos);
     assert.deepEqual(updated.removedLinks, previous.removedLinks);
     assert.deepEqual(updated.rejectedLinks, previous.rejectedLinks);
-    assert.equal(updated.connections.length, 3);
-    assert.equal(updated.connections[0].reason, 'My reason');
+    assert.equal(updated.connections.length, 2);
+    assert.equal(updated.connections.find((link) => link.noteId === 'manual').reason, 'My reason');
+    assert.equal(updated.connections.some((link) => link.noteId === 'existing'), false);
     assert.equal(previous.sourceText, 'short opening');
 });

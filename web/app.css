@@ -1053,3 +1053,7 @@ body[data-panel="notes"] .tab-panel > textarea { min-height: 260px; background: 
 
 /* Inline references remain distinguishable from surrounding ink in both editions. */
 p a:not(.btn), .tip a, .group-footer a { text-decoration: underline; text-underline-offset: .18em; }
+
+.link-retry-status { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; padding: var(--space-3) 0; border-bottom: 1px solid var(--rule); }
+.link-evidence { margin-top: var(--space-2); line-height: 1.6; overflow-wrap: anywhere; }
+.topic-manager-list { max-height: 45vh; overflow: auto; }

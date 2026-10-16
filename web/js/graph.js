@@ -1,3 +1,4 @@
+import { conceptKey, canonicalName, linkBlocked, matchesNote } from './knowledge.js';
 // Canvas force-directed graph, Obsidian style: drag, pan, pinch/wheel zoom,
 // hover highlights neighbours, click opens a note.
 
@@ -12,82 +13,84 @@ const TYPE_COLORS = {
 
 // themes: optional result of buildThemes(); each note node gets its theme
 // id and color so the map can be colored and grouped by topic.
-export function buildGraph(notes, { showConcepts = true, focusId = null, depth = 2, themes = null } = {}) {
+export function buildGraph(notes, { showConcepts = true, focusId = null, depth = 1, themes = null, themeId = null, query = '', maxNotes = 80 } = {}) {
+    const byId = new Map(notes.map((note) => [note.id, note]));
     const nodes = new Map();
-    const links = [];
-    const linkKeys = new Set();
-    const titleIndex = new Map(notes.map((note) => [note.title.toLowerCase(), note.id]));
-
-    const addLink = (source, target, kind) => {
-        if (source === target) return;
-        const key = [source, target].sort().join('|') + kind;
-        if (linkKeys.has(key)) return;
-        linkKeys.add(key);
-        links.push({ source, target, kind });
+    const links = new Map();
+    const neighbors = new Map(notes.map((note) => [note.id, new Map()]));
+    const themeColor = new Map((themes?.themes || []).map((theme) => [theme.id, theme.color]));
+    const addNeighbor = (a, b, weight) => {
+        if (a === b || !byId.has(b) || linkBlocked(byId.get(a), byId.get(b))) return;
+        neighbors.get(a).set(b, Math.max(weight, neighbors.get(a).get(b) || 0));
+        neighbors.get(b).set(a, Math.max(weight, neighbors.get(b).get(a) || 0));
     };
-
-    const themeColor = new Map((themes?.themes || []).map((t) => [t.id, t.color]));
+    const addLink = (a, b, kind, metadata = {}) => {
+        if (a === b || !byId.has(b) || linkBlocked(byId.get(a), byId.get(b))) return;
+        const key = [a, b].sort().join('|');
+        const existing = links.get(key);
+        if (!existing || metadata.origin === 'user') links.set(key, { source: a, target: b, kind, ...metadata });
+        addNeighbor(a, b, metadata.origin === 'user' ? 2 : Number(metadata.confidence) || 0.8);
+    };
+    const titles = new Map(notes.map((note) => [String(note.title || '').toLowerCase(), note.id]));
     notes.forEach((note) => {
         const theme = themes?.byNote.get(note.id) || null;
-        nodes.set(note.id, {
-            id: note.id,
-            label: note.title,
-            type: note.source?.sourceType || 'text',
-            isNote: true,
-            theme,
-            themeColor: theme ? themeColor.get(theme) : null
-        });
-    });
-    notes.forEach((note) => {
-        (note.connections || []).forEach((c) => {
-            if (nodes.has(c.noteId)) addLink(note.id, c.noteId, 'connection');
-        });
-        const wikilinks = (note.userNotes || '').matchAll(/\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g);
-        for (const match of wikilinks) {
-            const target = titleIndex.get(match[1].trim().toLowerCase());
-            if (target) addLink(note.id, target, 'connection');
+        nodes.set(note.id, { id: note.id, label: note.title, type: note.source?.sourceType || 'text', isNote: true,
+            theme, themeColor: theme ? themeColor.get(theme) : null });
+        (note.connections || []).forEach((link) => addLink(note.id, link.noteId, 'connection', link));
+        for (const match of (note.userNotes || '').matchAll(/\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g)) {
+            const target = titles.get(match[1].trim().toLowerCase());
+            if (target) addLink(note.id, target, 'connection', { origin: 'user', relation: 'related', reason: 'Linked in your notes.' });
         }
     });
-
+    const concepts = new Map();
     if (showConcepts) {
-        const conceptNotes = new Map();
-        notes.forEach((note) => {
-            (note.concepts || []).forEach((concept) => {
-                const key = concept.name.trim().toLowerCase();
-                if (!conceptNotes.has(key)) conceptNotes.set(key, { name: concept.name, notes: new Set() });
-                conceptNotes.get(key).notes.add(note.id);
-            });
-        });
-        // A concept only earns a node when it bridges two or more notes,
-        // otherwise the graph drowns in single-use leaves.
-        conceptNotes.forEach((entry, key) => {
-            if (entry.notes.size < 2) return;
-            const id = `concept:${key}`;
-            nodes.set(id, { id, label: entry.name, type: 'concept', isNote: false });
-            entry.notes.forEach((noteId) => addLink(noteId, id, 'concept'));
+        notes.forEach((note) => (note.concepts || []).forEach((concept) => {
+            const key = conceptKey(concept);
+            if (!key) return;
+            if (!concepts.has(key)) concepts.set(key, { name: canonicalName(typeof concept === 'string' ? concept : concept.name), notes: new Set() });
+            concepts.get(key).notes.add(note.id);
+        }));
+        concepts.forEach((entry, key) => {
+            // Match theme clustering's common-concept guard, with a degree cap.
+            if (entry.notes.size < 2 || (notes.length >= 3 && entry.notes.size === notes.length) ||
+                (notes.length >= 12 && entry.notes.size > notes.length * 0.5) || entry.notes.size > 12) {
+                concepts.delete(key); return;
+            }
+            const ids = [...entry.notes];
+            ids.forEach((id, i) => ids.slice(i + 1).forEach((other) => addNeighbor(id, other, 0.4)));
         });
     }
-
-    if (focusId && nodes.has(focusId)) {
-        const keep = new Set([focusId]);
+    let keep = new Set(notes.filter((note) => (!themeId || themes?.byNote.get(note.id) === themeId) && matchesNote(note, query)).map((note) => note.id));
+    let reachable = keep.size;
+    if (themeId && !focusId && keep.size > maxNotes) keep = new Set([...keep].slice(0, maxNotes));
+    if (focusId && byId.has(focusId)) {
+        keep = new Set([focusId]);
         let frontier = [focusId];
-        for (let level = 0; level < depth; level++) {
-            const next = [];
-            links.forEach((link) => {
-                frontier.forEach((id) => {
-                    const other = link.source === id ? link.target : link.target === id ? link.source : null;
-                    if (other && !keep.has(other)) {
-                        keep.add(other);
-                        next.push(other);
-                    }
-                });
-            });
-            frontier = next;
+        const eligible = new Set([focusId]);
+        for (let level = 0; level < Math.min(3, Math.max(1, depth)); level++) {
+            const candidates = new Map();
+            frontier.forEach((id) => neighbors.get(id).forEach((weight, other) => {
+                if (linkBlocked(byId.get(focusId), byId.get(other))) return;
+                eligible.add(other);
+                if (!keep.has(other)) candidates.set(other, Math.max(weight, candidates.get(other) || 0));
+            }));
+            frontier = [...candidates].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+                .slice(0, Math.max(0, (level === 0 ? Math.min(maxNotes, depth === 1 ? 16 : maxNotes) : maxNotes) - keep.size)).map(([id]) => id);
+            frontier.forEach((id) => keep.add(id));
         }
-        [...nodes.keys()].forEach((id) => { if (!keep.has(id)) nodes.delete(id); });
-        return { nodes: [...nodes.values()], links: links.filter((l) => keep.has(l.source) && keep.has(l.target)) };
+        reachable = eligible.size;
+        if (query) keep = new Set([...keep].filter((id) => matchesNote(byId.get(id), query)));
     }
-    return { nodes: [...nodes.values()], links };
+    [...nodes.keys()].forEach((id) => { if (!keep.has(id)) nodes.delete(id); });
+    const visibleLinks = [...links.values()].filter((link) => keep.has(link.source) && keep.has(link.target));
+    concepts.forEach((entry, key) => {
+        const ids = [...entry.notes].filter((id) => keep.has(id));
+        if (ids.length < 2) return;
+        const id = `concept:${key}`;
+        nodes.set(id, { id, label: entry.name, type: 'concept', isNote: false });
+        ids.forEach((noteId) => visibleLinks.push({ source: noteId, target: id, kind: 'concept', reason: `Both discuss ${entry.name}.` }));
+    });
+    return { nodes: [...nodes.values()], links: visibleLinks, totalNotes: reachable, shownNotes: keep.size };
 }
 
 export class GraphView {
@@ -95,7 +98,7 @@ export class GraphView {
     // each theme; 'source' colors them by where they came from.
     // areas: draw theme areas and names, and pull themes into their own
     // regions (off for the small map on a note).
-    constructor(canvas, { onOpen, focusId = null, colorBy = 'source', themes = [], areas = true } = {}) {
+    constructor(canvas, { onOpen, focusId = null, colorBy = 'source', themes = [], areas = true, layout = null, onLayout = null } = {}) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
         this.hullCanvas = document.createElement('canvas');
@@ -104,6 +107,8 @@ export class GraphView {
         this.colorBy = colorBy;
         this.themes = themes;
         this.areas = areas;
+        this.layout = layout || { anchors: {}, positions: {} };
+        this.onLayout = onLayout;
         this.reducedMotion = document.documentElement.dataset.reducedMotion === 'true' || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
         this.nodes = [];
         this.links = [];
@@ -123,7 +128,7 @@ export class GraphView {
     setData({ nodes, links }) {
         const previous = new Map(this.nodes.map((n) => [n.id, n]));
         this.nodes = nodes.map((node) => {
-            const old = previous.get(node.id);
+            const old = previous.get(node.id) || this.layout.positions?.[node.id];
             return {
                 ...node,
                 layoutGroup: node.isNote ? (node.theme || '__unsorted__') : null,
@@ -168,7 +173,7 @@ export class GraphView {
         });
 
         this.nodes.forEach((node, index) => {
-            if (previous.has(node.id)) return;
+            if (previous.has(node.id) || this.layout.positions?.[node.id]) return;
             const anchor = node.layoutGroup && this.clusterAnchors.get(node.layoutGroup);
             if (anchor) {
                 const count = groupCounts.get(node.layoutGroup) || 1;
@@ -208,6 +213,7 @@ export class GraphView {
                 this.fitSoon = false;
             }
             this.draw();
+            this.saveLayout();
         } else {
             this.reheat(1);
         }
@@ -234,34 +240,21 @@ export class GraphView {
         if ((counts.get('__unsorted__') || 0) > 0) themeOrder.push('__unsorted__');
         if (!themeOrder.length) return new Map();
 
-        // When Explore was opened from a saved piece, its own neighborhood
-        // becomes the centre of the focused map instead of whichever theme is
-        // largest globally.
-        const focusGroup = this.byId.get(this.focusId)?.layoutGroup;
-        const focusIndex = focusGroup ? themeOrder.indexOf(focusGroup) : -1;
-        if (focusIndex > 0) themeOrder.unshift(themeOrder.splice(focusIndex, 1)[0]);
-
-        // Largest/primary theme occupies the visual centre. Remaining themes
-        // sit on compact rings around it, so the map has recognizable places
-        // instead of a single cloud that keeps expanding.
         const anchors = new Map();
-        anchors.set(themeOrder[0], { x: 0, y: 0 });
-        if (themeOrder.length === 1) return anchors;
-
-        const portrait = this.height > this.width * 1.15;
-        const base = 150 + Math.min(70, Math.sqrt(this.nodes.length) * 8);
-        const peripheral = themeOrder.slice(1);
-        peripheral.forEach((id, index) => {
-            const ring = Math.floor(index / 6) + 1;
-            const slot = index % 6;
-            const slots = Math.min(6, peripheral.length - (ring - 1) * 6);
-            const angle = -Math.PI / 2 + (slot * Math.PI * 2) / Math.max(1, slots);
-            const radius = base * ring;
-            anchors.set(id, {
-                x: Math.cos(angle) * radius * (portrait ? 0.82 : 1),
-                y: Math.sin(angle) * radius * (portrait ? 1.08 : 0.92)
-            });
+        const stored = this.layout.anchors || {};
+        themeOrder.sort().forEach((id) => {
+            if (stored[id]) { anchors.set(id, stored[id]); return; }
+            // Append new neighborhoods to free slots; old homes never move.
+            const used = new Set(Object.values(stored).map((a) => a.slot));
+            let slot = 0;
+            while (used.has(slot)) slot++;
+            const ring = slot ? Math.ceil(slot / 6) : 0;
+            const angle = -Math.PI / 2 + ((slot - 1) % 6) * Math.PI / 3;
+            const anchor = { slot, x: ring ? Math.cos(angle) * 230 * ring : 0, y: ring ? Math.sin(angle) * 210 * ring : 0 };
+            stored[id] = anchor;
+            anchors.set(id, anchor);
         });
+        this.layout.anchors = stored;
         return anchors;
     }
 
@@ -349,6 +342,7 @@ export class GraphView {
     }
 
     tick() {
+        if (this.destroyed) return;
         if (!this.canvas.isConnected) {
             this.destroy();
             return;
@@ -370,7 +364,14 @@ export class GraphView {
             requestAnimationFrame(() => this.tick());
         } else {
             this.running = false;
+            this.saveLayout();
         }
+    }
+
+    saveLayout() {
+        this.layout.positions ||= {};
+        this.nodes.forEach((node) => { this.layout.positions[node.id] = { x: node.x, y: node.y }; });
+        this.onLayout?.(this.layout);
     }
 
     step() {
@@ -774,6 +775,8 @@ export class GraphView {
     }
 
     destroy() {
+        this.saveLayout();
+        this.destroyed = true;
         this.running = false;
         this.resizeObserver.disconnect();
     }

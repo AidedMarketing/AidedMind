@@ -1,4 +1,6 @@
-// Map themes: groups notes into topics, entirely on the device (no AI cost).
+import { conceptKey, canonicalName, topicIdentity } from './knowledge.js';
+// Named topics have stable membership, including single-piece topics.
+// Legacy notes without topics use local community detection until classified.
 //
 // 1. Similarity: each note's main topic (what it's about, from Claude or
 //    set by you) counts most. Notes are also related when Claude linked them,
@@ -8,7 +10,7 @@
 //    mentions AI stays with journaling. Rare tags and concepts count more
 //    than common ones; ones on every note, or on most of a larger library,
 //    are ignored.
-// 2. Clustering: Louvain community detection finds groups of notes that are
+// 2. Legacy clustering: Louvain community detection finds groups of notes that are
 //    more connected to each other than to the rest. Nodes are visited in a
 //    fixed order, so the same library always gives the same themes.
 // 3. Labels: a theme is named after the topic most of its notes share,
@@ -37,11 +39,11 @@ function keyOf(value) {
 }
 
 function conceptNames(note) {
-    return [...new Set((note.concepts || []).map((c) => keyOf(typeof c === 'string' ? c : c?.name)).filter(Boolean))];
+    return [...new Set((note.concepts || []).map((c) => conceptKey(c)).filter(Boolean))];
 }
 
 export function topicOf(note) {
-    return keyOf(note?.topic);
+    return topicIdentity(note);
 }
 
 function tagNames(note) {
@@ -228,7 +230,7 @@ function labelFor(members, allNotes) {
     members.forEach((note) => {
         const key = topicOf(note);
         if (!key) return;
-        const entry = topicCounts.get(key) || { name: String(note.topic).trim(), count: 0 };
+        const entry = topicCounts.get(key) || { name: canonicalName(note.topic), count: 0 };
         entry.count++;
         topicCounts.set(key, entry);
     });
@@ -268,27 +270,26 @@ function labelFor(members, allNotes) {
 export function buildThemes(notes, { detail = 'balanced' } = {}) {
     const list = (Array.isArray(notes) ? notes : []).filter((n) => n && n.id);
     const empty = { themes: [], byNote: new Map() };
-    if (list.length < MIN_THEME_SIZE) return empty;
+    if (!list.length) return empty;
     const resolution = (THEME_DETAIL[detail] || THEME_DETAIL.balanced).resolution;
-    const adj = similarityGraph(list);
+    const adj = similarityGraph(list.filter((note) => !topicOf(note)));
     const community = louvain(adj, { resolution });
 
     const groups = new Map();
     list.forEach((note) => {
-        if (!adj.get(note.id).size) return; // no links at all: unsorted
-        const c = community.get(note.id);
+        if (!topicOf(note) && !adj.get(note.id).size) return; // no links at all: unsorted
+        const c = topicOf(note) ? `topic:${topicOf(note)}` : `community:${community.get(note.id)}`;
         if (!groups.has(c)) groups.set(c, []);
         groups.get(c).push(note);
     });
 
     const byId = new Map(list.map((n) => [n.id, n]));
     const themes = [...groups.values()]
-        .filter((members) => members.length >= MIN_THEME_SIZE)
+        .filter((members) => members.length >= MIN_THEME_SIZE || members.some((n) => topicOf(n)))
         .map((members) => ({ members, ...labelFor(members, list) }))
         .sort((a, b) => b.members.length - a.members.length || a.label.localeCompare(b.label));
 
     const usedIds = new Set();
-    const usedColors = new Set();
     const result = themes.map(({ members, label, keys, tags }) => {
         // The id (and so the color) follows only the top name, which rarely
         // changes as notes are added; the second word in the label may.
@@ -298,11 +299,8 @@ export function buildThemes(notes, { detail = 'balanced' } = {}) {
         usedIds.add(id);
         // Color follows the name, so it survives new notes; clashes move to
         // the next free color while there are free colors left.
-        let color = hashString(id) % THEME_COLORS;
-        if (usedColors.size < THEME_COLORS) {
-            while (usedColors.has(color)) color = (color + 1) % THEME_COLORS;
-        }
-        usedColors.add(color);
+        const color = hashString(id) % THEME_COLORS;
+        // Colors belong to identities; adding another topic never recolors this one.
         return {
             id,
             label,

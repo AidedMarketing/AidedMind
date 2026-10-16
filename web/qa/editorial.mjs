@@ -33,6 +33,13 @@ const fixture = [
     { id: 'c', title: 'A thoughtful campaign', topic: 'Marketing', tags: ['marketing'], tldr: 'Make your message clear.', source: { sourceType: 'text' }, connections: [], createdAt: '2026-09-28T12:00:00Z' },
     { id: 'd', title: 'A market worth understanding', topic: 'Marketing', tags: ['marketing'], tldr: 'Observe before deciding.', source: { sourceType: 'article', partial: true, transcriptSource: 'paywall', transcriptError: 'Technical capture fixture', url: 'https://example.com/partial' }, connections: [], createdAt: '2026-09-27T12:00:00Z' }
 ];
+const launchBrowser = async (engine) => {
+    if (engine === 'chromium' && process.env.AIDEDMIND_QA_SERVERLESS_CHROMIUM) {
+        const { default: binary } = await import('@sparticuz/chromium');
+        return chromium.launch({ executablePath: await binary.executablePath(), args: binary.args });
+    }
+    return ({ chromium, webkit }[engine]).launch();
+};
 const configurations = [
     { engine: 'chromium', width: 320, height: 740, colorScheme: 'light' },
     { engine: 'chromium', width: 390, height: 844, colorScheme: 'dark', reducedMotion: 'reduce' },
@@ -43,6 +50,7 @@ const configurations = [
     { engine: 'webkit', width: 390, height: 844, colorScheme: 'light' },
     { engine: 'webkit', width: 1280, height: 900, colorScheme: 'dark' }
 ];
+const selectedConfigurations = configurations.filter((config) => (!process.env.AIDEDMIND_QA_ENGINES || process.env.AIDEDMIND_QA_ENGINES.split(',').includes(config.engine)) && (!process.env.AIDEDMIND_QA_WIDTHS || process.env.AIDEDMIND_QA_WIDTHS.split(',').includes(String(config.width))));
 let passed = 0;
 let failed = 0;
 let currentCheck = '';
@@ -52,9 +60,9 @@ async function check(name, operation) {
     await operation(); passed++; report.push({ name, status: 'passed' }); console.log('PASS ' + name);
 }
 try {
-    for (const config of configurations) {
+    for (const config of selectedConfigurations) {
         const label = config.engine + '-' + config.width + '-' + config.colorScheme;
-        const browser = await ({ chromium, webkit }[config.engine]).launch();
+        const browser = await launchBrowser(config.engine);
         const context = await browser.newContext({ viewport: { width: config.width, height: config.height }, colorScheme: config.colorScheme, reducedMotion: config.reducedMotion || 'no-preference', serviceWorkers: 'block', acceptDownloads: true });
         const page = await context.newPage();
         const errors = [];
@@ -92,6 +100,15 @@ try {
             if (path.endsWith('/inbox') && inboxDelay) await new Promise((done) => setTimeout(done, inboxDelay));
             await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
         });
+        const waitForSavedNote = async (id, predicate) => {
+            const deadline = Date.now() + 15000;
+            while (Date.now() < deadline) {
+                const note = await page.evaluate(async (id) => (await (await import('/js/db.js')).allNotes()).find((note) => note.id === id), id);
+                if (predicate(note)) return note;
+                await page.waitForTimeout(100);
+            }
+            throw Error('Saved note did not reach the expected state: ' + id);
+        };
         let visit = 0;
         const goto = async (hash) => { await page.goto(url + '/?qa=' + (++visit) + '#/' + hash); await page.locator('main h1').waitFor(); await page.evaluate(() => document.fonts.ready); };
         const noOverflow = async () => assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), label + ': horizontal overflow');
@@ -257,6 +274,7 @@ try {
             await page.getByRole('button', { name: 'Close Map list' }).click();
             const theme = page.locator('.graph-legend button').first();
             await theme.click();
+            await screenshot('topic-neighborhood');
             await page.getByRole('button', { name: 'Show Map as a list' }).click();
             assert.ok(await page.locator('.graph-access-item').count() < 4);
             await page.getByRole('button', { name: 'Close Map list' }).click();
@@ -279,6 +297,34 @@ try {
             await page.waitForURL((address) => address.hash === '#/graph');
             await page.locator('.focus-pill').waitFor({ state: 'detached' });
             assert.equal(await page.locator('.focus-pill').count(), 0);
+        });
+        await check(label + ' topic overview, matched search and merge undo', async () => {
+            await goto('graph');
+            await page.getByRole('heading', { name: 'Where would you like to explore?' }).waitFor();
+            assert.equal(await page.locator('.map-topic').count(), 2);
+            await page.getByRole('searchbox', { name: 'Find in your Map' }).fill('observe');
+            await page.getByRole('button', { name: 'Show Map as a list' }).click();
+            assert.equal(await page.locator('.graph-access-item').count(), 1);
+            await page.getByRole('button', { name: 'Close Map list' }).click();
+            await page.getByRole('searchbox', { name: 'Find in your Map' }).fill('no-match');
+            assert.match(await page.locator('.map-count').innerText(), /0 pieces shown/);
+            await page.getByRole('button', { name: 'Fit All' }).click();
+            await screenshot('topic-overview');
+            await goto('settings');
+            await page.locator('.settings-section').filter({ has: page.getByRole('heading', { name: 'Appearance', exact: true }) }).locator('summary').click();
+            await page.getByRole('button', { name: 'Manage topics', exact: true }).click();
+            await page.getByRole('dialog').getByRole('button', { name: /Learning.*2 pieces/ }).click();
+            await page.getByRole('dialog').getByRole('button', { name: /Marketing/ }).click();
+            await page.getByRole('button', { name: 'Merge topics', exact: true }).click();
+            await page.getByRole('button', { name: 'Undo last merge', exact: true }).waitFor();
+            let saved = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()));
+            assert.equal(new Set(saved.map((note) => note.topicId)).size, 1);
+            await page.getByRole('button', { name: 'Undo last merge', exact: true }).click();
+            await page.waitForFunction(() => ![...document.querySelectorAll('button')].some((button) => button.textContent === 'Undo last merge'));
+            saved = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()));
+            assert.equal(new Set(saved.map((note) => note.topicId)).size, 2);
+            await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+            await noOverflow();
         });
         await check(label + ' More, backup, ZIP and appearance', async () => {
             await goto('settings');
@@ -406,7 +452,7 @@ try {
             assert.deepEqual(errors, [], label + ' browser errors');
         });
         await check(label + ' import full text on a complete note', async () => {
-            await page.evaluate(async (note) => (await import('/js/db.js')).saveNote(note), { ...fixture[0], userNotes: 'Keep my thoughts' });
+            await page.evaluate(async (note) => (await import('/js/db.js')).saveNote(note), { ...fixture[0], userNotes: 'Keep my thoughts', connections: [...fixture[0].connections, { noteId: 'c', origin: 'user', reason: 'Linked by you.' }] });
             await goto('note/a');
             await page.getByRole('tab', { name: 'Notes', exact: true }).click();
             await page.getByRole('button', { name: 'Import full text', exact: true }).click();
@@ -438,10 +484,52 @@ try {
             assert.equal(after.sourceText, fullText.trim());
             assert.equal(after.createdAt, before.createdAt);
             assert.equal(after.userNotes, before.userNotes);
-            assert.equal(after.connections[0].noteId, before.connections[0].noteId);
+            assert.equal(after.connections.find((link) => link.noteId === 'c').origin, 'user');
+            assert.equal(after.connections.some((link) => link.noteId === 'b'), false);
             assert.equal(after.source.siteName, before.source.siteName);
             assert.equal(after.source.wordCount, fullText.trim().split(/\s+/).length);
             analyzeDelay = 0;
+        });
+        await check(label + ' re-analysis preserves manual links and source attribution', async () => {
+            const before = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()).find((note) => note.id === 'a'));
+            await goto('note/a');
+            await page.getByRole('button', { name: 'more', exact: true }).click();
+            await page.getByRole('button', { name: /^Re-analyze/ }).click();
+            await page.getByText('Updated', { exact: true }).waitFor();
+            const after = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()).find((note) => note.id === 'a'));
+            assert.equal(after.connections.find((link) => link.noteId === 'c').origin, 'user');
+            assert.equal(after.source.url, before.source.url);
+            assert.equal(after.source.siteName, before.source.siteName);
+            assert.equal(after.userNotes, before.userNotes);
+        });
+        await check(label + ' independent connection failure, reload and retry preserve rejection', async () => {
+            let connectionFailure = true;
+            let connectionRequests = 0;
+            await page.route('**/api/connections', async (route) => { connectionRequests++; return route.fulfill({ status: connectionFailure ? 503 : 200,
+                contentType: 'application/json', body: JSON.stringify(connectionFailure ? { error: 'Linking unavailable' } : { connections: [
+                    { noteId: 'b', origin: 'aidedmind', relation: 'related', reason: 'Rejected suggestion', confidence: .9 },
+                    { noteId: 'd', origin: 'aidedmind', relation: 'related', reason: 'Useful relationship', confidence: .9 }
+                ] }) }); });
+            await page.evaluate(async () => {
+                const db = await import('/js/db.js');
+                const note = (await db.allNotes()).find((item) => item.id === 'a');
+                await db.saveNote({ ...note, removedLinks: ['b'], linking: { status: 'pending', attempts: 3 } });
+            });
+            await goto('note/a');
+            await page.getByRole('tab', { name: 'Links', exact: true }).click();
+            const count = analyzeCount;
+            await page.getByRole('button', { name: 'Retry connections', exact: true }).click();
+            await waitForSavedNote('a', (note) => note.linking?.attempts === 1);
+            connectionFailure = false;
+            await goto('note/a');
+            await page.getByRole('tab', { name: 'Links', exact: true }).click();
+            if (await page.getByRole('button', { name: 'Retry connections', exact: true }).count()) await page.getByRole('button', { name: 'Retry connections', exact: true }).click();
+            await waitForSavedNote('a', (note) => note.linking?.status === 'complete');
+            const after = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()).find((note) => note.id === 'a'));
+            assert.equal(after.connections.some((link) => link.noteId === 'b'), false);
+            assert.equal(after.connections.find((link) => link.noteId === 'c').origin, 'user');
+            assert.equal(after.connections.some((link) => link.noteId === 'd'), true, JSON.stringify({ links: after.connections, removed: after.removedLinks, rejected: after.rejectedLinks, state: after.linking, connectionRequests }));
+            assert.equal(analyzeCount, count);
         });
         } catch (error) {
             failed++; report.push({ name: currentCheck, status: 'failed', error: error.message });
@@ -450,19 +538,19 @@ try {
     }
     // Separate real service worker context verifies atomic cache includes the font and imprint.
     await check('service worker offline publication assets', async () => {
-        const browser = await webkit.launch();
+        const browser = await launchBrowser(selectedConfigurations.some((config) => config.engine === 'webkit') ? 'webkit' : 'chromium');
         const context = await browser.newContext({ serviceWorkers: 'allow' });
         const page = await context.newPage();
         await page.goto(url);
         await page.evaluate(async () => { await navigator.serviceWorker.ready; });
         await page.reload();
         await page.evaluate(async () => {
-            const cache = await caches.open('aidedmind-v33');
-            for (const path of ['/fonts/Newsreader.ttf', '/icons/mark.svg', '/tokens.css', '/shell.css', '/app.css', '/js/app.js']) {
+            const cache = await caches.open('aidedmind-v34');
+            for (const path of ['/fonts/Newsreader.ttf', '/icons/mark.svg', '/tokens.css', '/shell.css', '/app.css', '/js/app.js', '/js/knowledge.js']) {
                 if (!(await cache.match(path))) throw Error('Missing cached asset ' + path);
             }
         });
-        assert.equal(await page.evaluate(async () => (await (await caches.open('aidedmind-v33')).match('/index.html')).redirected), true);
+        assert.equal(await page.evaluate(async () => (await (await caches.open('aidedmind-v34')).match('/index.html')).redirected), true);
         // Reopen a fresh tab under the installed controller, as on Safari launch.
         const reopened = await context.newPage();
         await reopened.goto(url + '/?reopen=1');

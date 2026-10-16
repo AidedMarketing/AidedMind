@@ -75,15 +75,25 @@ export function splitInput(raw) {
     return { url: urlMatch ? urlMatch[0] : '', text: input };
 }
 
-function libraryIndex(notes) {
+function libraryIndex(notes, source = {}) {
     return notes.map((note) => ({
         id: note.id,
         title: note.title,
         topic: note.topic || '',
         tldr: note.tldr,
         concepts: (note.concepts || []).map((c) => c.name),
+        passages: evidencePassages(note.sourceText, source.text || ''),
         tags: note.tags || []
     }));
+}
+
+// Pick original source passages, never AI summaries, for relationship evidence.
+export function evidencePassages(text = '', query = '') {
+    const words = new Set(String(query).toLowerCase().match(/\b[a-z]{5,}\b/g) || []);
+    const chunks = String(text).match(/[^\n.!?]+[.!?]?/g) || [];
+    return chunks.map((chunk, index) => ({ text: chunk.trim().slice(0, 500), index,
+        score: [...new Set(chunk.toLowerCase().match(/\b[a-z]{5,}\b/g) || [])].filter((word) => words.has(word)).length }))
+        .filter((p) => p.text.length >= 20).sort((a, b) => b.score - a.score || a.index - b.index).slice(0, 3).map((p) => p.text);
 }
 
 export class DuplicateError extends Error {
@@ -158,7 +168,7 @@ export async function capture({ url, text, title, depth, photos, retry, replace,
     // concept names, so the cost per breakdown stays flat as the library grows.
     const others = replaces ? notes.filter((n) => n.id !== replaces.id) : notes;
     const related = relatedNotes(others, source);
-    const body = { source, library: libraryIndex(related), depth: depth || getSettings().depth, topics: knownTopics(others) };
+    const body = { source, library: libraryIndex(related, source), depth: depth || getSettings().depth, topics: knownTopics(others) };
     if (related.length < others.length) body.concepts = conceptVocabulary(others);
     const result = await request('POST', '/analyze', body);
     setLastUsage(result.usage);
@@ -220,12 +230,13 @@ export async function suggestConnections(analysis, source, notes) {
     const result = await request('POST', '/connections', {
         note: {
             title: analysis.title,
+            sourceText: source.text || '',
             topic: analysis.topic || '',
             tldr: analysis.tldr,
             concepts: (analysis.concepts || []).map((c) => c.name),
             tags: analysis.tags || []
         },
-        library: libraryIndex(related)
+        library: libraryIndex(related, source)
     });
     return result.connections || [];
 }
