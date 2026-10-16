@@ -43,11 +43,12 @@ export function plainServerError(status) {
     return 'The AidedMind server couldn\'t do that. Try again in a minute.';
 }
 
-async function request(method, path, body) {
+async function request(method, path, body, { signal } = {}) {
     let response;
     try {
         response = await fetch(endpoint(path), {
             method,
+            signal,
             headers: { 'Content-Type': 'application/json', 'X-AidedMind-Token': getSettings().token },
             body: body === undefined ? undefined : JSON.stringify(body)
         });
@@ -227,18 +228,23 @@ export async function putPreferences(prefs) {
 export async function suggestConnections(analysis, source, notes) {
     if (!notes.length) return [];
     const related = relatedNotes(notes, { title: analysis.title, text: `${analysis.tldr} ${(analysis.concepts || []).map((c) => c.name).join(' ')} ${source.text || ''}` });
-    const result = await request('POST', '/connections', {
-        note: {
-            title: analysis.title,
-            sourceText: source.text || '',
-            topic: analysis.topic || '',
-            tldr: analysis.tldr,
-            concepts: (analysis.concepts || []).map((c) => c.name),
-            tags: analysis.tags || []
-        },
-        library: libraryIndex(related, source)
-    });
-    return result.connections || [];
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90000);
+    try {
+        const result = await request('POST', '/connections', {
+            note: {
+                title: analysis.title,
+                sourceText: source.text || '',
+                topic: analysis.topic || '',
+                tldr: analysis.tldr,
+                concepts: (analysis.concepts || []).map((c) => c.name),
+                tags: analysis.tags || []
+            },
+            library: libraryIndex(related, source)
+        }, { signal: controller.signal });
+        if (!Array.isArray(result.connections)) throw new Error('The connection check did not finish. Try again.');
+        return result.connections;
+    } finally { clearTimeout(timer); }
 }
 
 export async function fetchInbox() {

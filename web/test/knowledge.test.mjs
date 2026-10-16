@@ -112,3 +112,80 @@ test('candidate retrieval recognizes canonical topics and acronym aliases', () =
         ...Array.from({ length: 30 }, (_, i) => piece(`other${i}`, 'Woodworking', { title: 'Another piece', createdAt: '2026-10-16' }))];
     assert.equal(relatedNotes(notes, { text: 'AI' }, { limit: 1 })[0].id, 'relevant');
 });
+
+test('rename retains topic identity and aliases for future captures', async () => {
+    const { renameTopic } = await import('../js/knowledge.js');
+    const original = [normalizeKnowledge(piece('a', 'Learning')), normalizeKnowledge(piece('b', 'Learning'))];
+    const renamed = JSON.parse(JSON.stringify(renameTopic(original, original[0].topicId, 'Memory and practice')));
+    assert.equal(renamed[0].topicId, original[0].topicId);
+    assert.equal(renamed[0].topicByUser, true);
+    for (const name of ['Learning', 'Memory and practice']) {
+        const incoming = normalizeKnowledge(piece('new', name), renamed);
+        assert.equal(incoming.topic, 'Memory and practice');
+        assert.equal(incoming.topicId, original[0].topicId);
+    }
+    assert.equal(normalizeKnowledge(renamed[0], renamed).topic, 'Memory and practice');
+});
+test('split moves selected pieces without making the broad topic an alias', async () => {
+    const { splitTopic } = await import('../js/knowledge.js');
+    const original = ['a', 'b', 'c'].map((id) => normalizeKnowledge(piece(id, 'Marketing')));
+    const split = splitTopic(original, 'marketing', ['b', 'c'], 'Brand strategy');
+    assert.equal(split[0], original[0]);
+    assert.equal(split[1].topicId, 'brand-strategy');
+    assert.deepEqual(split[1].topicAliases, ['Brand strategy']);
+    assert.equal(normalizeKnowledge(piece('new', 'Marketing'), split).topic, 'Marketing');
+    assert.equal(normalizeKnowledge(split[1], split).topic, 'Brand strategy');
+});
+test('topic edits reject ambiguous names, empty selections and stale pieces', async () => {
+    const { renameTopic, splitTopic } = await import('../js/knowledge.js');
+    const original = [normalizeKnowledge(piece('a', 'Learning')), normalizeKnowledge(piece('b', 'Learning')), normalizeKnowledge(piece('c', 'AI'))];
+    assert.throws(() => renameTopic(original, 'learning', 'AI'), /already belongs/);
+    assert.throws(() => renameTopic(original, 'learning', '  '), /between 1 and 40/);
+    assert.throws(() => splitTopic(original, 'learning', [], 'Memory'), /Select at least one/);
+    assert.throws(() => splitTopic(original, 'learning', ['a', 'b'], 'Memory'), /Select at least one/);
+    assert.throws(() => splitTopic(original, 'learning', ['c'], 'Memory'), /Select at least one/);
+    assert.throws(() => splitTopic(original, 'learning', ['a'], 'Learning'), /already belongs/);
+    assert.throws(() => renameTopic(original, 'gone', 'Memory'), /has changed/);
+});
+test('topic Undo preserves intervening content, links and separate topic choices', async () => {
+    const { renameTopic, undoTopicChange } = await import('../js/knowledge.js');
+    const before = ['a', 'b'].map((id) => normalizeKnowledge(piece(id, 'Learning')));
+    const after = renameTopic(before, 'learning', 'Memory');
+    const current = [{ ...after[0], userNotes: 'New thought', connections: [{ noteId: 'b', origin: 'user' }] },
+        { ...after[1], topic: 'Other', topicId: 'other', topicAliases: [] }, normalizeKnowledge(piece('new', 'Memory'), after)];
+    const undone = undoTopicChange(current, { before, after });
+    assert.equal(undone[0].topic, 'Learning');
+    assert.equal(undone[0].userNotes, 'New thought');
+    assert.equal(undone[0].connections[0].origin, 'user');
+    assert.equal(undone[1].topic, 'Other');
+    assert.equal(undone[2].topic, 'Learning');
+});
+test('Undo removes merged aliases from later captures so future pieces stay separate', async () => {
+    const { undoTopicChange } = await import('../js/knowledge.js');
+    const before = [normalizeKnowledge(piece('a', 'Habits')), normalizeKnowledge(piece('b', 'Habit formation'))];
+    const after = mergeTopics(before, 'habits', 'habit-formation');
+    const later = normalizeKnowledge(piece('new', 'Habits'), after);
+    const undone = undoTopicChange([...after, later], { before, after });
+    assert.equal(undone[2].topic, 'Habit formation');
+    assert.deepEqual(undone[2].topicAliases, []);
+    assert.equal(normalizeKnowledge(piece('next', 'Habits'), undone).topic, 'Habits');
+});
+test('paused connection reviews retain their queue and retry metadata', async () => {
+    const { connectionReview } = await import('../js/knowledge.js');
+    const linking = { status: 'pending', attempts: 0, paused: true, reviewId: 'r', reviewStartedAt: '2026-10-16' };
+    assert.equal(retryDue({ linking }, 999999), false);
+    const failed = failedLinking(linking, 0);
+    assert.equal(failed.reviewId, 'r');
+    assert.equal(failed.paused, true);
+    const notes = [piece('a', '', { linking }), piece('b', '', { linking: { ...linking, status: 'complete' } }),
+        piece('c', '', { linking: { ...linking, attempts: 3 } })];
+    const review = connectionReview(notes, 'a');
+    assert.deepEqual([review.total, review.complete, review.running, review.queued, review.failed, review.paused], [3, 1, 1, 0, 1, true]);
+});
+test('review totals survive backup and exclude an older review', async () => {
+    const { connectionReview } = await import('../js/knowledge.js');
+    const notes = [piece('a', '', { linking: { reviewId: 'old', reviewStartedAt: '2026-10-15', status: 'complete' } }),
+        piece('b', '', { linking: { reviewId: 'new', reviewStartedAt: '2026-10-16', status: 'pending', attempts: 3 } })];
+    const review = connectionReview(JSON.parse(JSON.stringify(notes)));
+    assert.equal(review.id, 'new'); assert.equal(review.total, 1); assert.equal(review.failed, 1);
+});
