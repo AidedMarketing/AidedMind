@@ -646,6 +646,9 @@ try {
             await dialog.getByText(/Paused[.]/).waitFor();
             releaseRequest();
             await dialog.getByText(new RegExp(`1 of ${total} complete.*${total - 1} queued`)).waitFor();
+            // The queued toast can be mid-fade on faster CI browsers. Inspect
+            // the persistent review panel after that transient message settles.
+            await page.waitForFunction(() => getComputedStyle(document.getElementById('toast')).opacity === '0');
             await axe('paused review'); await screenshot('connection-review', true);
             await goto('settings');
             await appearance().locator('summary').click();
