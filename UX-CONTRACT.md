@@ -42,4 +42,23 @@ Connection setup belongs first in Capture & Sharing. Shortcut copy controls requ
 
 ## Full-text corrections
 
-Every saved piece offers **Import full text** in its action menu and Notes tab, regardless of automatic completeness detection. The shared sheet replaces captured text and rebuilds the same piece after a successful analysis and local save. Identity, date, personal notes, existing links, rejected links, photos, manually chosen topic and source attribution survive. Failure retains the previous piece and pasted text; closing and reopening retains the draft for this app session. The sheet states that updating uses one breakdown.
+Every saved piece offers **Import full text** in its action menu and Notes tab, regardless of automatic completeness detection. The shared sheet replaces captured text and rebuilds the same piece after a successful analysis and local save. Identity, date, personal notes, manual links, rejected links, photos, manually chosen topic and source attribution survive. Automatic outgoing links are refreshed from the successful analysis; old automatic explanations are replaced. When source text changes, obsolete automatic backlinks are invalidated and independently queued for review. Failure retains the previous piece and pasted text; closing and reopening retains the draft for this app session. The sheet states that updating uses one breakdown.
+
+## Knowledge processing and exploration, v34
+
+| Capability | Canonical owner | Source of truth | Allowed variants | Verification |
+| --- | --- | --- | --- | --- |
+| Form | `h`, shared fields and `openSheet` in `web/js/app.js` | This contract | Capture, topic merge, full-text update | Browser success, failure, keyboard |
+| Scrollbar | `web/app.css` and geometry in `web/shell.css` | `DESIGN.md` | Document, sheet list, topic overview | Browser overflow and geometry |
+| Toast | `toast` in `web/js/app.js` | This contract | Saved acknowledgement, retry feedback | Browser status |
+| CRUD | `finishNote`, `mergeTopics`, `preserveUpdatedNote`, IndexedDB transactions | This contract and `web/js/knowledge.js` | Source update, topic merge and Undo | Unit and browser persistence |
+
+Existing notes receive deterministic knowledge metadata on load without another model call. Topic IDs and aliases travel in JSON backups. Built-in aliases cover narrowly equivalent acronyms; related concepts are not automatically merged. Explicit topic merges keep the chosen identity, record former labels as aliases, and protect the selection from re-analysis. Undo changes only topic metadata and never overwrites intervening source or personal-note edits.
+
+All source replacement paths preserve manual links and rejection memory, refresh automatic outgoing links, and atomically save affected records. Relationship labels stronger than related require literal source passages on both sides; this verifies attribution, while semantic judgment still comes from the model. Missing or invalid evidence downgrades a claim to related.
+
+Background captures always save even when linking fails. Persistent linking status retries independently with backoff, at most three attempts before the user retries. Source-version checks and a final rejection check prevent outdated responses from overriding a new source or recreating rejected pairs. A bulk review requires an app-owned confirmation explaining request count and model usage; existing links remain until each successful review.
+
+Explore defaults to a collapsed topic overview, including singleton topics. Focus starts with one note-distance step and at most 16 pieces, expands to 48 and then 80, and reports omitted pieces. Concepts shared across the whole library, more than half of a library of at least 12 pieces, or more than 12 pieces never become visual hubs. Rejected pairs are excluded from a focused note's indirect neighborhood too. Source colors do not affect membership or coordinates. Map and list share the same query and visible-note dataset, including concepts and topic aliases. URL state retains focus, topic, expansion, query, and overview choice. Persistent display anchors do not move when topic rankings change. Reduced motion settles offscreen; text exploration remains available.
+
+Background connection results and personal-note autosave patch the latest record within an IndexedDB transaction. Neither operation replaces unrelated fields from an earlier snapshot. Rejection memory is saved on both sides of a removed automatic link so either side can reject an in-flight suggestion.

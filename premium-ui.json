@@ -1,0 +1,8 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["web/js"],
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": ["Form", "Scrollbar", "Toast", "CRUD"],
+  "commands": {"unit": "npm test", "build": "npm run check", "browser": "node web/qa/editorial.mjs"},
+  "evidence": {"crudFullFlow": "web/qa/editorial.mjs", "failurePaths": "web/qa/editorial.mjs"}
+}

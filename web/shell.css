@@ -141,3 +141,19 @@ body[data-screen="note"][data-panel="breakdown"] .navbar.scrolled { border-color
     .tabbar a.active { outline: 1px solid Highlight; }
     .float-button { border-color: ButtonText; }
 }
+
+/* Topic overview and contextual expansion share Explore's reserved toolbar. */
+.graph-context { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-2); }
+.map-context-button { border: 0; background: transparent; color: var(--accent); font: 500 .8125rem/1.2 var(--ui-sans); min-height: 44px; padding: var(--space-2) 0; cursor: pointer; text-align: left; }
+.map-context-button:hover { text-decoration: underline; }
+.map-count { text-align: right; font-variant-numeric: tabular-nums; }
+.map-overview { position: absolute; inset: 0; overflow: auto; padding: var(--space-6) var(--space-4); }
+.map-overview[hidden] { display: none; }
+.map-overview-intro { max-width: 60ch; margin: 0 auto var(--space-6); }
+.map-overview-intro h2 { font: 500 1.6rem/1.2 var(--display-serif); margin: 0 0 var(--space-2); }
+.map-topic-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--space-4); max-width: 1040px; margin: 0 auto; }
+.map-topic { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; text-align: left; border: 0; border-top: 1px solid var(--rule); padding: var(--space-4) 0; background: transparent; color: var(--ink); cursor: pointer; }
+.map-topic:hover { border-color: var(--accent); }
+.map-topic-label { font: 500 1.35rem/1.3 var(--display-serif); overflow-wrap: anywhere; }
+.map-topic-preview { font: .8125rem/1.6 var(--ui-sans); color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@media (min-width: 960px) { .map-overview { padding: var(--space-8); } }

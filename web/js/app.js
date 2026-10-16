@@ -1,4 +1,5 @@
-import { allNotes, saveNote, saveMany, deleteNote, newId } from './db.js';
+import { normalizeKnowledge, topicIdentity, mergeTopics, mergeConnections, linkBlocked, sourceVersion, retryDue, failedLinking, matchesNote, conceptKey } from './knowledge.js';
+import { allNotes, saveNote, saveMany, updateNote, deleteNote, newId } from './db.js';
 import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, queueInboxItem, removeInboxItem, updateInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser, connectionSetupIssue } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { buildThemes, THEME_DETAIL } from './themes.js';
@@ -56,9 +57,10 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '33';
+const APP_VERSION = '34';
 
 let notes = [];
+let activeMap = null;
 let draft = { input: '', title: '', photos: [] };
 let pending = null;
 let inboxRunning = false;
@@ -386,7 +388,7 @@ async function runCapture({ input = '', url: explicitUrl, text: explicitText, ti
 // Builds the note from a finished breakdown, saves it, and lets a redone
 // partial note keep its place and everything you added to it.
 async function finishNote(result, title) {
-    let note = buildNote(result, title);
+    let note = normalizeKnowledge(buildNote(result, title), notes);
     const previous = result.replaces && notes.find((n) => n.id === result.replaces);
     if (previous) {
         note = preserveUpdatedNote(note, previous);
@@ -399,9 +401,18 @@ async function finishNote(result, title) {
         origin: connection.origin === 'user' ? 'user' : 'aidedmind',
         createdAt: connection.createdAt || new Date().toISOString()
     }));
-    await saveNote(note);
+    note = normalizeKnowledge(note, notes);
+    note.linking = result.linking || { status: 'complete', attempts: 0 };
+    const changed = [note];
+    if (previous && sourceVersion(previous) !== note.sourceVersion) {
+        notes.filter((other) => other.id !== note.id && (other.connections || []).some((link) => link.noteId === note.id && link.origin !== 'user')).forEach((other) => {
+            changed.push({ ...other, connections: other.connections.filter((link) => link.noteId !== note.id || link.origin === 'user'), linking: { status: 'pending', attempts: 0 } });
+        });
+    }
+    await saveMany(changed);
     notes = await allNotes();
     syncPreferences();
+    scheduleLinkRetry();
     return note;
 }
 
@@ -720,6 +731,7 @@ function libraryView(params) {
             return;
         }
         sortButton.lastChild.textContent = LIBRARY_SORTS[sort].label;
+        sortButton.setAttribute('aria-label', `Sort notes: ${LIBRARY_SORTS[sort].label}`);
         list.replaceChildren(...groupNotes(matches, sort, { themes, byNote }).flatMap(([label, items]) => [
             h('div', { class: 'section-label' }, label),
             h('div', { class: 'group' }, items.map(noteRow))
@@ -865,7 +877,7 @@ function noteView(id) {
         connectionCount(note) ? h('a', {
             class: 'connection-summary',
             href: `#/graph?focus=${encodeURIComponent(note.id)}`,
-            'aria-label': `Explore ${connectionCount(note)} connections in Map`
+            'aria-label': `${connectionCount(note)} connection${connectionCount(note) === 1 ? '' : 's'} · Explore in Map`
         }, icon('graph', { size: 18, strokeWidth: 2 }), h('span', {}, `${connectionCount(note)} connection${connectionCount(note) === 1 ? '' : 's'}`), h('span', { class: 'connection-summary-arrow', 'aria-hidden': 'true' }, '→')) : null,
         h('div', { class: 'sticky-tabs' }, segmented),
         panel
@@ -937,7 +949,8 @@ function notePanel(name, note, byId) {
                         h('span', { class: 'relation' }, String(connection.relation || 'related').replace('-', ' '))
                     ),
                     h('div', { class: 'title' }, other.title),
-                    h('div', { class: 'reason' }, connection.reason || (automatic ? 'AidedMind connected these ideas.' : 'Linked by you.'))
+                    h('div', { class: 'reason' }, connection.reason || (automatic ? 'AidedMind connected these ideas.' : 'Linked by you.')),
+                    connection.evidence ? h('div', { class: 'link-evidence small muted' }, `“${connection.evidence.source}” · “${connection.evidence.target}”`) : null
                 ),
                 h('button', {
                     type: 'button',
@@ -957,6 +970,17 @@ function notePanel(name, note, byId) {
                 ),
                 h('button', { type: 'button', class: 'btn small-btn', onclick: () => openManualLinkSheet(note) }, icon('add', { size: 16, strokeWidth: 2 }), 'Add a link')
             ),
+            note.linking?.status === 'pending' ? h('div', { class: 'link-retry-status', role: 'status' },
+                h('p', { class: 'small muted' }, 'This piece is saved. Its connections still need to be checked.'),
+                h('button', { type: 'button', class: 'btn small-btn', disabled: linkRetryRunning, onclick: async (event) => {
+                    event.currentTarget.disabled = true;
+                    try {
+                        await updateNote(note.id, (current) => ({ ...current, linking: { status: 'pending', attempts: 0 } }));
+                        notes = await allNotes();
+                        await retryPendingLinks();
+                        route();
+                    } catch (error) { toast(error.message); event.currentTarget.disabled = false; }
+                } }, 'Retry connections')) : null,
             allLinks.length
                 ? h('div', { class: 'group connection-group' }, allLinks.map(linkCard).filter(Boolean))
                 : h('div', { class: 'card muted' }, notes.length > 1 ? 'No strong connections yet. AidedMind will keep building the graph as you save more.' : 'Connections appear as your Library grows.'),
@@ -986,7 +1010,7 @@ function notePanel(name, note, byId) {
             const value = userNotes.value;
             note.userNotes = value;
             try {
-                await saveNote(note);
+                await updateNote(note.id, (current) => ({ ...current, userNotes: value }));
                 if (value === userNotes.value) { saveState.textContent = 'Saved'; saveState.classList.remove('error'); }
             } catch {
                 saveState.textContent = 'Error — your text is still here. Edit to retry.';
@@ -1014,12 +1038,6 @@ function notePanel(name, note, byId) {
 // ---------- Corrections: links and topics ----------
 
 // Links you removed stay removed, even after a re-analysis.
-function linkBlocked(a, b) {
-    const blocked = (note, otherId) =>
-        (note?.removedLinks || []).includes(otherId) ||
-        (note?.rejectedLinks || []).some((entry) => entry?.noteId === otherId);
-    return blocked(a, b?.id) || blocked(b, a?.id);
-}
 
 function keepAllowedLinks(note, connections) {
     return (connections || []).filter((c) => !linkBlocked(note, notes.find((n) => n.id === c.noteId)));
@@ -1046,11 +1064,11 @@ async function removeLink(note, other, { blockAutomatic = true } = {}) {
         n.connections = (n.connections || []).filter((c) => c.noteId !== partner.id);
     });
     if (blockAutomatic) {
-        note.removedLinks = [...new Set([...(note.removedLinks || []), other.id])];
-        note.rejectedLinks = [
-            ...(note.rejectedLinks || []).filter((entry) => entry?.noteId !== other.id),
-            { noteId: other.id, rejectedAt: new Date().toISOString() }
-        ];
+        [note, other].forEach((item) => {
+            const partner = item.id === note.id ? other : note;
+            item.removedLinks = [...new Set([...(item.removedLinks || []), partner.id])];
+            item.rejectedLinks = [...(item.rejectedLinks || []).filter((entry) => entry?.noteId !== partner.id), { noteId: partner.id, rejectedAt: new Date().toISOString() }];
+        });
     }
     await saveMany([note, other]);
     notes = await allNotes();
@@ -1127,12 +1145,15 @@ function topicSheet(note) {
         const topic = value.trim().replace(/[.#]/g, '').slice(0, 40);
         if (!topic) return;
         note.topic = topic;
+        delete note.topicId;
+        note.topicAliases = [];
+        Object.assign(note, normalizeKnowledge(note, notes));
         note.topicByUser = true;
         await saveNote(note);
         notes = await allNotes();
         syncPreferences();
         closeSheet();
-        toast(`Topic set to ${topic}`);
+        toast(`Topic set to ${note.topic}`);
         route();
     };
     openSheet(
@@ -1146,6 +1167,66 @@ function topicSheet(note) {
             h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel')
         )
     );
+}
+
+function reviewLibraryConnectionsSheet() {
+    const count = notes.length;
+    const status = h('p', { class: 'small error', role: 'alert' });
+    const submit = h('button', { type: 'button', class: 'btn primary block', onclick: async () => {
+        submit.disabled = true;
+        try {
+            await saveMany(notes.map((note) => ({ ...note, linking: { status: 'pending', attempts: 0 } })));
+            notes = await allNotes(); closeSheet(); scheduleLinkRetry(); toast('Connection review queued');
+        } catch (error) { status.textContent = error.message; submit.disabled = false; }
+    } }, 'Review connections');
+    openSheet(h('h3', {}, 'Review library connections?'), h('p', { class: 'small muted' },
+        `Check ${count} saved pieces against your current library, using up to ${count} connection requests. This uses model tokens, without repeating the breakdowns. Keep AidedMind open while it works. Your own links and rejections stay.`), status,
+        h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel'), submit);
+}
+
+let lastTopicMerge = null;
+function manageTopicsSheet() {
+    const topics = new Map();
+    notes.forEach((note) => {
+        const id = topicIdentity(note);
+        if (!id) return;
+        const entry = topics.get(id) || { id, name: note.topic, count: 0 };
+        entry.count++; topics.set(id, entry);
+    });
+    const entries = [...topics.values()].sort((a, b) => a.name.localeCompare(b.name));
+    openSheet(h('h3', {}, 'Manage topics'), h('p', { class: 'small muted' }, 'Combine duplicate topics under one name. Their former names are remembered for future captures.'),
+        h('div', { class: 'group topic-manager-list' }, entries.map((from) => h('button', { type: 'button', class: 'group-row', disabled: entries.length < 2, onclick: () => {
+            openSheet(h('h3', {}, `Merge ${from.name}`), h('p', { class: 'small muted' }, `Choose the topic to keep. All ${from.count} pieces will move there. Your saved content and connections stay.`),
+                h('div', { class: 'group topic-manager-list' }, entries.filter((to) => to.id !== from.id).map((to) => h('button', { type: 'button', class: 'group-row', onclick: () => {
+                    const error = h('p', { class: 'small error', role: 'alert' });
+                    const submit = h('button', { type: 'button', class: 'btn primary block', onclick: async () => {
+                        submit.disabled = true;
+                        try {
+                            const updated = mergeTopics(notes, from.id, to.id);
+                            const changes = updated.filter((note, i) => note !== notes[i]);
+                            const before = notes.filter((note) => changes.some((changed) => changed.id === note.id));
+                            await saveMany(changes);
+                            lastTopicMerge = { before, target: to.id };
+                            notes = await allNotes(); syncPreferences(); route(); manageTopicsSheet(); toast('Topics merged');
+                        } catch (failure) { error.textContent = failure.message; submit.disabled = false; }
+                    } }, 'Merge topics');
+                    openSheet(h('h3', {}, `Merge into ${to.name}?`), h('p', { class: 'small muted' }, `${from.name} will become an alias of ${to.name}. You can undo this merge from Manage topics during this session.`), error,
+                        h('button', { type: 'button', class: 'btn block', onclick: manageTopicsSheet }, 'Cancel'), submit);
+                } }, h('span', { class: 'row-label' }, to.name), h('span', { class: 'row-value muted' }, String(to.count))))),
+                h('button', { type: 'button', class: 'btn block', onclick: manageTopicsSheet }, 'Back'));
+        } }, h('span', { class: 'row-label' }, from.name), h('span', { class: 'row-value muted' }, `${from.count} pieces`)))),
+        lastTopicMerge ? h('button', { type: 'button', class: 'btn block', onclick: async (event) => {
+            event.currentTarget.disabled = true;
+            try {
+                const undo = notes.flatMap((note) => {
+                    const previous = lastTopicMerge.before.find((old) => old.id === note.id);
+                    return previous && topicIdentity(note) === lastTopicMerge.target ? [{ ...note, topic: previous.topic,
+                        topicId: previous.topicId, topicAliases: previous.topicAliases || [], topicByUser: previous.topicByUser }] : [];
+                });
+                await saveMany(undo); lastTopicMerge = null; notes = await allNotes(); syncPreferences(); route(); manageTopicsSheet(); toast('Topic merge undone');
+            } catch (error) { toast(error.message); event.currentTarget.disabled = false; }
+        } }, 'Undo last merge') : null,
+        h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Close'));
 }
 
 // Fills in topics for notes saved before topics existed (or whose breakdown
@@ -1165,7 +1246,7 @@ async function backfillTopics({ manual = false } = {}) {
         for (let i = 0; i < missing.length; i += 150) {
             const batch = missing.slice(i, i + 150);
             const assignments = await assignTopics(batch, knownTopics(notes));
-            const changed = batch.filter((n) => assignments[n.id]).map((n) => ({ ...n, topic: assignments[n.id] }));
+            const changed = batch.filter((n) => assignments[n.id]).map((n) => normalizeKnowledge({ ...n, topic: assignments[n.id], topicId: undefined }, notes));
             if (changed.length) await saveMany(changed);
             updated += changed.length;
             notes = await allNotes();
@@ -1200,21 +1281,27 @@ function noteActions(note, byId) {
                 type === 'article' ? actionRow('Add screenshots', 'camera', () => addScreenshots(note)) : null
             ),
             h('div', { class: 'group' },
-                actionRow('Delete note', 'trash', async () => {
-                    if (!confirm(`Delete "${note.title}"?`)) return;
-                    closeSheet();
-                    await deleteNote(note.id);
-                    const touched = notes.filter((n) => n.id !== note.id && (n.connections || []).some((c) => c.noteId === note.id));
-                    touched.forEach((n) => { n.connections = n.connections.filter((c) => c.noteId !== note.id); });
-                    if (touched.length) await saveMany(touched);
-                    notes = await allNotes();
-                    toast('Deleted');
-                    location.hash = '#/library';
-                }, 'danger')
+                actionRow('Delete note', 'trash', () => deleteNoteSheet(note), 'danger')
             ),
             h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel')
         )
     );
+}
+
+function deleteNoteSheet(note) {
+    const status = h('p', { class: 'small error', role: 'alert' });
+    const submit = h('button', { type: 'button', class: 'btn danger block', onclick: async () => {
+        submit.disabled = true;
+        try {
+            const current = await allNotes();
+            await deleteNote(note.id);
+            const touched = current.filter((item) => item.id !== note.id && (item.connections || []).some((link) => link.noteId === note.id));
+            if (touched.length) await saveMany(touched.map((item) => ({ ...item, connections: item.connections.filter((link) => link.noteId !== note.id) })));
+            notes = await allNotes(); closeSheet(); toast('Deleted'); location.hash = '#/library';
+        } catch (error) { status.textContent = error.message; submit.disabled = false; }
+    } }, 'Delete note');
+    openSheet(h('h3', {}, `Delete “${note.title}”?`), h('p', { class: 'small muted' }, 'This removes the saved piece and its connections from this device.'), status,
+        h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel'), submit);
 }
 
 function addScreenshots(note) {
@@ -1318,12 +1405,7 @@ async function reanalyze(note, depth) {
     toast(`Re-analyzing (${depthLabel(depth || getSettings().depth)})…`);
     try {
         const result = await capture({ text: note.sourceText, title: note.source?.title || note.title, depth }, notes.filter((n) => n.id !== note.id));
-        const fresh = buildNote(result, note.title);
-        ['tldr', 'summary', 'outline', 'concepts', 'tags', 'quotes', 'takeaways', 'connections', 'model', 'depth', 'autoDepth'].forEach((key) => { note[key] = fresh[key]; });
-        if (!note.topicByUser) note.topic = fresh.topic;
-        note.connections = keepAllowedLinks(note, note.connections);
-        await saveNote(note);
-        notes = await allNotes();
+        await finishNote({ ...result, source: { ...note.source, text: note.sourceText }, replaces: note.id }, note.title);
         toast('Updated');
         if (location.hash.includes(encodeURIComponent(note.id))) route();
     } catch (error) {
@@ -1369,20 +1451,23 @@ function openNode(node) {
 
 // ---------- Map ----------
 
-function previewNode(node) {
+function previewNode(node, focusId = null) {
     if (node.isNote) {
         const note = notes.find((n) => n.id === node.id);
         if (!note) return;
         const type = note.source?.sourceType || 'text';
+        const focus = notes.find((piece) => piece.id === focusId);
+        const connection = focus && ((focus.connections || []).find((link) => link.noteId === note.id) || (note.connections || []).find((link) => link.noteId === focusId));
         openSheet(
             h('div', { class: 'source-line' }, sourceTile(type, 14), h('span', {}, `${SOURCE_LABELS[type]} · ${relativeDate(note.createdAt)}`)),
             h('h3', { style: { 'margin-top': '8px' } }, note.title),
             h('p', { class: 'muted' }, note.tldr),
-            h('div', { class: 'stack' }, h('a', { class: 'btn primary block', href: `#/note/${encodeURIComponent(note.id)}` }, 'Open note'))
+            connection ? h('p', { class: 'small muted' }, connection.reason) : null,
+            h('div', { class: 'stack' }, h('a', { class: 'btn primary block', href: `#/note/${encodeURIComponent(note.id)}` }, 'Open note'), h('a', { class: 'btn block', href: `#/graph?focus=${encodeURIComponent(note.id)}` }, 'Explore connections'))
         );
         return;
     }
-    const related = notes.filter((n) => (n.concepts || []).some((c) => c.name.toLowerCase() === node.label.toLowerCase()));
+    const related = notes.filter((n) => (n.concepts || []).some((c) => conceptKey(c) === conceptKey(node.label)));
     openSheet(
         h('div', { class: 'source-line' }, sourceTile('concept', 14), h('span', {}, `Concept · ${related.length} notes`)),
         h('h3', { style: { 'margin-top': '8px' } }, node.label),
@@ -1406,157 +1491,131 @@ function themeSheet(theme) {
 function graphView(params = new URLSearchParams()) {
     setNav({ title: 'Explore', right: navButton('', () => { location.hash = '#/capture'; }, 'add') });
     document.body.dataset.screen = 'graph';
-    const settings = getSettings();
-    const requestedFocus = params.get('focus') || '';
-    const focusId = notes.some((note) => note.id === requestedFocus) ? requestedFocus : null;
     if (!notes.length) {
-        setNav({ title: 'Explore', right: navButton('', () => { location.hash = '#/capture'; }, 'add') });
-        render(
-            publicationHeader('VISUAL INDEX', 'Explore', 'Your knowledge fabric, organized into stable neighborhoods.'),
-            h('div', { class: 'empty' }, fabricMark(72), h('strong', {}, 'Your knowledge fabric will take shape as your Library grows.'))
-        );
+        render(publicationHeader('VISUAL INDEX', 'Explore', 'Choose a topic, then follow an idea.'),
+            h('div', { class: 'empty' }, fabricMark(72), h('strong', {}, 'Your map will take shape as your Library grows.')));
         return;
     }
+    const settings = getSettings();
     const themes = currentThemes();
-    const byTheme = settings.mapColor === 'theme';
-    const graphData = buildGraph(notes, { showConcepts: settings.showConcepts, focusId, depth: 2, themes });
-    const graphNoteIds = new Set(graphData.nodes.filter((node) => node.isNote).map((node) => node.id));
-    const canvas = h('canvas', {
-        'aria-label': focusId ? 'Knowledge map around this saved piece. Use the list button for an accessible list of the same notes.' : 'Knowledge map of your Library. Use the list button for an accessible list of the same notes.'
-    });
-    const search = h('input', { type: 'search', placeholder: 'Find in your Map', 'aria-label': 'Find in your Map', enterkeyhint: 'search' });
-    const colorButton = h('button', {
-        type: 'button',
-        class: `float-button glass${byTheme ? ' on' : ''}`,
-        'aria-label': byTheme ? 'Color by source' : 'Color by theme',
-        'aria-pressed': String(byTheme)
-    }, icon('themes', { size: 20, strokeWidth: 2 }));
-    const conceptsButton = h('button', { type: 'button', class: `float-button glass${settings.showConcepts ? ' on' : ''}`, 'aria-label': 'Toggle shared ideas', 'aria-pressed': String(settings.showConcepts) }, icon('concept', { size: 20, strokeWidth: 2 }));
-    const listButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Show Map as a list', 'aria-pressed': 'false' }, icon('library', { size: 20, strokeWidth: 2 }));
-    const fitButton = h('button', { type: 'button', class: 'float-button glass fit-all', 'aria-label': 'Fit All' }, icon('fit', { size: 20, strokeWidth: 2 }), h('span', {}, 'Fit All'));
-    const types = [...new Set(notes.map((n) => n.source?.sourceType || 'text'))];
-    const unsorted = notes.length - themes.byNote.size;
-
-    let graph = null;
-    let activeTheme = null;
+    const focusId = notes.some((note) => note.id === params.get('focus')) ? params.get('focus') : null;
+    let activeTheme = themes.themes.some((theme) => theme.id === params.get('theme')) ? params.get('theme') : null;
+    let depth = Math.min(3, Math.max(1, Number(params.get('depth')) || 1));
+    let showPieces = params.get('view') === 'pieces';
+    let graphData;
+    let graph;
+    let layout;
+    try { layout = JSON.parse(localStorage.getItem('aidedmind.map-layout.v2') || 'null'); } catch { /* disposable display state */ }
+    if (!layout || typeof layout !== 'object' || !layout.anchors || !layout.positions) layout = { anchors: {}, positions: {} };
+    for (const entries of [layout.anchors, layout.positions]) {
+        for (const [id, point] of Object.entries(entries)) if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) delete entries[id];
+    }
+    const saveLayout = (value) => {
+        try { localStorage.setItem('aidedmind.map-layout.v2', JSON.stringify(value)); } catch { /* knowledge still saves in IndexedDB */ }
+    };
+    const canvas = h('canvas', { 'aria-label': 'Knowledge map. Use Show Map as a list for the same pieces.' });
+    const search = h('input', { type: 'search', placeholder: 'Find a topic or idea', 'aria-label': 'Find in your Map', enterkeyhint: 'search' });
+    search.value = params.get('q') || '';
+    const colorButton = h('button', { type: 'button', class: `float-button glass${settings.mapColor === 'theme' ? ' on' : ''}`, 'aria-label': settings.mapColor === 'theme' ? 'Color by source' : 'Color by theme', 'aria-pressed': String(settings.mapColor === 'theme') }, icon('themes', { size: 20 }));
+    const conceptsButton = h('button', { type: 'button', class: `float-button glass${settings.showConcepts ? ' on' : ''}`, 'aria-label': 'Toggle shared ideas', 'aria-pressed': String(settings.showConcepts) }, icon('concept', { size: 20 }));
+    const listButton = h('button', { type: 'button', class: 'float-button glass', 'aria-label': 'Show Map as a list', 'aria-pressed': 'false' }, icon('library', { size: 20 }));
+    const fitButton = h('button', { type: 'button', class: 'float-button glass fit-all', 'aria-label': 'Fit All' }, icon('fit', { size: 20 }), h('span', {}, 'Fit All'));
+    const modeButton = h('button', { type: 'button', class: 'map-context-button' });
+    const status = h('span', { class: 'small muted map-count', role: 'status', 'aria-live': 'polite' });
+    const overview = h('section', { class: 'map-overview', 'aria-label': 'Topic overview' });
     const legend = h('div', { class: 'graph-legend' });
     const accessibleList = h('section', { class: 'graph-access-list glass', hidden: true, 'aria-label': 'Map items' });
-    const paintAccessibleList = () => {
-        const q = search.value.trim().toLowerCase();
-        const matches = notes
-            .filter((note) => graphNoteIds.has(note.id))
-            .filter((note) => !activeTheme || themes.byNote.get(note.id) === activeTheme)
-            .filter((note) => !q || [note.title, note.topic, note.tldr, ...(note.tags || [])].join(' ').toLowerCase().includes(q))
-            .sort((a, b) => a.title.localeCompare(b.title));
-        accessibleList.replaceChildren(
-            h('div', { class: 'graph-access-head' },
-                h('div', {}, h('strong', {}, activeTheme ? 'Theme notes' : focusId ? 'Connected notes' : 'Map notes'), h('span', { class: 'small muted' }, `${matches.length} shown`)),
-                h('button', { type: 'button', class: 'graph-list-close', 'aria-label': 'Close Map list', onclick: () => {
-                    accessibleList.hidden = true;
-                    listButton.setAttribute('aria-pressed', 'false');
-                    listButton.focus();
-                } }, icon('close', { size: 18, strokeWidth: 2 }))
-            ),
-            matches.length
-                ? h('div', { class: 'graph-access-items' }, matches.map((note) => h('a', { class: 'graph-access-item', href: `#/note/${encodeURIComponent(note.id)}` },
-                    h('span', { class: 'graph-access-title' }, note.title),
-                    h('span', { class: 'graph-access-meta' }, `${note.topic || SOURCE_LABELS[note.source?.sourceType || 'text']} · ${connectionCount(note)} connection${connectionCount(note) === 1 ? '' : 's'}`)
-                )))
-                : h('div', { class: 'group-body small muted' }, 'No notes match that search.')
-        );
+    const inOverview = () => !showPieces && !focusId && !activeTheme && !search.value.trim();
+    const syncUrl = () => {
+        const next = new URLSearchParams();
+        if (focusId) next.set('focus', focusId);
+        if (activeTheme) next.set('theme', activeTheme);
+        if (focusId && depth > 1) next.set('depth', depth);
+        if (showPieces) next.set('view', 'pieces');
+        if (search.value.trim()) next.set('q', search.value.trim());
+        history.replaceState(null, '', `${location.pathname}${location.search}#/graph${next.size ? '?' + next : ''}`);
+    };
+    const paintList = () => {
+        const ids = new Set(graphData.nodes.filter((node) => node.isNote).map((node) => node.id));
+        const matches = notes.filter((note) => ids.has(note.id)).sort((a, b) => a.title.localeCompare(b.title));
+        accessibleList.replaceChildren(...[
+            h('div', { class: 'graph-access-head' }, h('div', {}, h('strong', {}, activeTheme ? 'Topic pieces' : focusId ? 'Connected pieces' : 'Map pieces'), h('span', { class: 'small muted' }, `${matches.length} shown`)),
+                h('button', { type: 'button', class: 'graph-list-close', 'aria-label': 'Close Map list', onclick: () => { accessibleList.hidden = true; listButton.setAttribute('aria-pressed', 'false'); listButton.focus(); } }, icon('close', { size: 18 }))),
+            matches.length ? h('div', { class: 'graph-access-items' }, matches.map((note) => h('a', { class: 'graph-access-item', href: `#/note/${encodeURIComponent(note.id)}` },
+                h('span', { class: 'graph-access-title' }, note.title), h('span', { class: 'graph-access-meta' }, `${note.topic || 'Unsorted'} · ${connectionCount(note)} connections`))))
+                : h('p', { class: 'group-body small muted' }, 'No pieces match. Try another topic or idea.')].filter(Boolean));
+    };
+    const selectTheme = (id) => {
+        if (activeTheme === id) { themeSheet(themes.themes.find((theme) => theme.id === id)); return; }
+        activeTheme = id; search.value = ''; refresh(); graph.fitTheme(id);
+    };
+    const paintOverview = () => {
+        const entries = [...themes.themes];
+        const unsorted = notes.filter((note) => !themes.byNote.has(note.id));
+        overview.replaceChildren();
+        append(overview, [h('div', { class: 'map-overview-intro' }, h('h2', {}, 'Where would you like to explore?'), h('p', { class: 'small muted' }, 'Start with a topic. Open a piece to follow its connections.')),
+            h('div', { class: 'map-topic-grid' }, entries.map((theme) => h('button', { type: 'button', class: 'map-topic', onclick: () => selectTheme(theme.id) },
+                h('span', { class: 'map-topic-label' }, topicMark(theme.label, theme.color)), h('span', { class: 'small muted' }, `${theme.noteIds.length} saved ${theme.noteIds.length === 1 ? 'piece' : 'pieces'}`),
+                h('span', { class: 'map-topic-preview' }, theme.noteIds.slice(0, 2).map((id) => notes.find((note) => note.id === id)?.title).join(' · ')))),
+                unsorted.length ? h('button', { type: 'button', class: 'map-topic', onclick: () => { showPieces = true; refresh(); } }, h('span', { class: 'map-topic-label' }, 'Still finding a home'), h('span', { class: 'small muted' }, `${unsorted.length} saved pieces`)) : null)]);
     };
     const paintLegend = () => {
         legend.replaceChildren();
         if (focusId) {
             const focus = notes.find((note) => note.id === focusId);
-            if (focus) legend.append(h('a', { class: 'legend-item glass focus-pill', href: '#/graph' }, `Focused · ${focus.title}`, h('span', { class: 'count' }, 'All Map')));
-        }
-        if (themes.themes.length) {
-            // Themes are spatial neighborhoods regardless of how note dots are
-            // colored. Tap once to zoom into a neighborhood; tap again for its list.
-            themes.themes.forEach((theme) => legend.append(h('button', {
-                type: 'button',
-                class: `legend-item glass${activeTheme === theme.id ? ' active' : ''}`,
-                style: { '--dot': `var(--theme-${theme.color})` },
-                onclick: () => {
-                    if (activeTheme === theme.id) {
-                        themeSheet(theme);
-                        return;
-                    }
-                    activeTheme = theme.id;
-                    search.value = '';
-                    graph.highlightTheme(theme.id);
-                    graph.fitTheme(theme.id);
-                    paintLegend();
-                    paintAccessibleList();
-                }
-            }, topicMark(theme.label, theme.color), h('span', { class: 'count' }, String(theme.noteIds.length)))));
-            if (unsorted) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': 'var(--theme-none)' } }, h('i'), 'Unsorted', h('span', { class: 'count' }, String(unsorted))));
-            if (!byTheme) {
-                types.forEach((type) => legend.append(h('span', { class: 'legend-item glass source-key', style: { '--dot': `var(--node-${type})` } }, h('i'), SOURCE_LABELS[type])));
-            }
-        } else {
-            types.forEach((type) => legend.append(h('span', { class: 'legend-item glass', style: { '--dot': `var(--node-${type})` } }, h('i'), SOURCE_LABELS[type])));
-            if (notes.length >= 3) legend.append(h('span', { class: 'legend-item glass' }, 'Themes appear as your notes start to connect'));
-        }
-        if (settings.showConcepts) legend.append(h('span', { class: 'legend-item glass', style: { '--dot': byTheme && themes.themes.length ? 'var(--theme-none)' : 'var(--node-concept)' } }, h('i', { class: 'diamond' }), 'Shared idea'));
+            legend.append(h('a', { class: 'legend-item glass focus-pill', href: '#/graph' }, `Focused · ${focus.title}`, h('span', { class: 'count' }, 'All Map')));
+        } else if (activeTheme) legend.append(h('button', { type: 'button', class: 'legend-item glass', onclick: () => { activeTheme = null; showPieces = false; search.value = ''; refresh(); } }, 'All topics'));
+        const visibleThemes = focusId ? themes.themes.filter((theme) => graphData.nodes.some((node) => node.theme === theme.id)) : themes.themes;
+        visibleThemes.forEach((theme) => legend.append(h('button', { type: 'button', class: `legend-item glass${activeTheme === theme.id ? ' active' : ''}`, 'aria-pressed': String(activeTheme === theme.id), onclick: () => selectTheme(theme.id) }, topicMark(theme.label, theme.color), h('span', { class: 'count' }, String(theme.noteIds.length)))));
     };
-
-    closeSheet();
-    view.classList.add('full');
-    view.replaceChildren(h('div', { class: 'graph-page' },
-        h('div', { class: 'graph-toolbar' },
-            publicationHeader('VISUAL INDEX', 'Explore', 'Your knowledge fabric, organized into stable neighborhoods.'),
-            h('div', { class: 'graph-top', role: 'group', 'aria-label': 'Map controls' },
-                h('label', { class: 'search' }, icon('search', { size: 18, strokeWidth: 2.2 }), search),
-                h('div', { class: 'graph-actions' }, listButton, colorButton, conceptsButton, fitButton)
-            )
-        ),
-        h('div', { class: 'graph-canvas' }, canvas, accessibleList),
-        legend
-    ));
-
-    graph = new GraphView(canvas, { focusId, onOpen: previewNode, colorBy: settings.mapColor, themes: themes.themes });
-    graph.setData(graphData);
-    paintLegend();
-    paintAccessibleList();
+    const refresh = () => {
+        graphData = buildGraph(notes, { themes, showConcepts: settings.showConcepts, focusId, depth, themeId: activeTheme, query: search.value, maxNotes: focusId ? depth === 1 ? 16 : depth === 2 ? 48 : 80 : 80 });
+        const summary = inOverview();
+        overview.hidden = !summary;
+        canvas.style.visibility = summary ? 'hidden' : 'visible';
+        canvas.setAttribute('aria-hidden', String(summary));
+        graph.saveLayout();
+        graph.setData(summary ? { nodes: [], links: [] } : graphData);
+        paintLegend(); paintList();
+        modeButton.textContent = focusId ? depth < 3 ? 'Expand connections' : 'Direct connections' : activeTheme ? 'Open topic in Library' : summary ? 'Show all pieces' : 'Topic overview';
+        status.textContent = summary ? `${themes.themes.length} topics · ${notes.length} pieces` : `${graphData.shownNotes} pieces shown${graphData.totalNotes > graphData.shownNotes ? ` · ${graphData.totalNotes - graphData.shownNotes} more available` : ''}`;
+        syncUrl();
+    };
+    modeButton.addEventListener('click', () => {
+        if (activeTheme && !focusId) { location.hash = `#/library?theme=${encodeURIComponent(activeTheme)}`; return; }
+        if (focusId) depth = depth < 3 ? depth + 1 : 1;
+        else { showPieces = inOverview(); activeTheme = null; search.value = ''; }
+        refresh(); graph.fit();
+    });
+    search.addEventListener('input', () => { activeTheme = null; refresh(); graph.fit(); });
     listButton.addEventListener('click', () => {
         accessibleList.hidden = !accessibleList.hidden;
         listButton.setAttribute('aria-pressed', String(!accessibleList.hidden));
-        if (!accessibleList.hidden) {
-            paintAccessibleList();
-            accessibleList.querySelector('a, button')?.focus();
-        }
-    });
-    search.addEventListener('input', () => {
-        if (activeTheme) {
-            activeTheme = null;
-            paintLegend();
-        }
-        graph.setHighlight(search.value);
-        paintAccessibleList();
-    });
-    canvas.addEventListener('click', (event) => {
-        const rect = canvas.getBoundingClientRect();
-        if (activeTheme && !graph.nodeAt(event.clientX - rect.left, event.clientY - rect.top)) {
-            activeTheme = null;
-            graph.highlightTheme(null);
-            graph.fit();
-            paintLegend();
-        }
+        if (!accessibleList.hidden) { paintList(); accessibleList.querySelector('button')?.focus(); }
     });
     fitButton.addEventListener('click', () => {
         if (focusId) { location.hash = '#/graph'; return; }
-        activeTheme = null; search.value = ''; graph.highlightTheme(null); graph.fit(); paintLegend(); paintAccessibleList();
+        activeTheme = null; search.value = ''; showPieces = false; refresh(); graph.fit();
     });
     colorButton.addEventListener('click', () => {
-        saveSettings({ ...getSettings(), mapColor: byTheme ? 'source' : 'theme' });
-        graphView(params);
+        settings.mapColor = settings.mapColor === 'theme' ? 'source' : 'theme';
+        saveSettings({ ...getSettings(), mapColor: settings.mapColor }); graph.colorBy = settings.mapColor; graph.draw();
+        colorButton.setAttribute('aria-label', settings.mapColor === 'theme' ? 'Color by source' : 'Color by theme');
+        colorButton.setAttribute('aria-pressed', String(settings.mapColor === 'theme'));
+        colorButton.classList.toggle('on', settings.mapColor === 'theme');
     });
     conceptsButton.addEventListener('click', () => {
-        saveSettings({ ...getSettings(), showConcepts: !settings.showConcepts });
-        graphView(params);
+        settings.showConcepts = !settings.showConcepts; saveSettings({ ...getSettings(), showConcepts: settings.showConcepts });
+        conceptsButton.setAttribute('aria-pressed', String(settings.showConcepts)); conceptsButton.classList.toggle('on', settings.showConcepts); refresh();
     });
+    view.classList.add('full');
+    view.replaceChildren(h('div', { class: 'graph-page' },
+        h('div', { class: 'graph-toolbar' }, publicationHeader('VISUAL INDEX', 'Explore', 'Choose a topic, then follow an idea.'),
+            h('div', { class: 'graph-top', role: 'group', 'aria-label': 'Map controls' }, h('div', { class: 'search' }, icon('search', { size: 18 }), search),
+                h('div', { class: 'graph-actions' }, listButton, colorButton, conceptsButton, fitButton)), h('div', { class: 'graph-context' }, modeButton, status)),
+        h('div', { class: 'graph-canvas' }, canvas, overview, accessibleList), legend));
+    graph = activeMap = new GraphView(canvas, { focusId, onOpen: (node) => previewNode(node, focusId), colorBy: settings.mapColor, themes: themes.themes, layout, onLayout: saveLayout });
+    paintOverview(); refresh();
 }
 
 // ---------- Settings ----------
@@ -1692,7 +1751,7 @@ function settingsView() {
         try {
             const data = JSON.parse(await file.text());
             const incoming = (Array.isArray(data) ? data : data.notes || []).filter((n) => n && n.id && n.title && n.createdAt);
-            await saveMany(incoming);
+            await saveMany(incoming.map((note) => normalizeKnowledge(note, [...notes, ...incoming])));
             notes = await allNotes();
             toast(`Restored ${incoming.length} notes`);
         } catch (error) {
@@ -1748,19 +1807,16 @@ function settingsView() {
             const paintDetail = () => {
                 const current = currentThemes();
                 const count = current.themes.length;
-                detailText.textContent = `${THEME_DETAIL[getSettings().themeDetail]?.detail || ''} ${count
-                    ? `Your library has ${count} theme${count === 1 ? '' : 's'}${notes.length - current.byNote.size ? `; ${notes.length - current.byNote.size} note${notes.length - current.byNote.size === 1 ? '' : 's'} not in a theme yet` : ''}.`
-                    : 'Themes appear once a few notes share tags, ideas or links.'}`;
+                detailText.textContent = `${count
+                    ? `Your library has ${count} topic${count === 1 ? '' : 's'}${notes.length - current.byNote.size ? `; ${notes.length - current.byNote.size} note${notes.length - current.byNote.size === 1 ? '' : 's'} awaiting a topic` : ''}.`
+                    : 'Save a piece to begin organizing your topics.'}`;
             };
             paintDetail();
             return h('div', { class: 'card' },
                 h('div', { class: 'small muted', style: { margin: '0 2px 6px' } }, 'Color notes by'),
                 segmentedControl('Color notes by', [['theme', 'Theme'], ['source', 'Source']], settings.mapColor, (value) => saveSettings({ ...getSettings(), mapColor: value })),
-                h('div', { class: 'small muted', style: { margin: '14px 2px 6px' } }, 'Theme detail'),
-                segmentedControl('Theme detail', Object.entries(THEME_DETAIL).map(([key, info]) => [key, info.label]), settings.themeDetail, (value) => {
-                    saveSettings({ ...getSettings(), themeDetail: value });
-                    paintDetail();
-                }),
+                h('button', { type: 'button', class: 'btn block', onclick: manageTopicsSheet }, 'Manage topics'),
+                notes.length > 1 ? h('button', { type: 'button', class: 'btn block', onclick: reviewLibraryConnectionsSheet }, 'Review library connections') : null,
                 detailText,
                 (() => {
                     // Notes saved before topics existed can be sorted in one go.
@@ -1780,7 +1836,7 @@ function settingsView() {
                 })(),
                 h('div', { class: 'small muted', style: { margin: '14px 2px 6px' } }, 'Shared ideas'),
                 segmentedControl('Shared ideas', [['show', 'Show'], ['hide', 'Hide']], settings.showConcepts ? 'show' : 'hide', (value) => saveSettings({ ...getSettings(), showConcepts: value === 'show' })),
-                h('p', { class: 'small muted', style: { margin: '8px 2px 0' } }, `Map neighborhoods always follow themes, even when dots are colored by source. Shared ideas are the diamonds linking notes that mention the same concept.${themes.themes.length ? ' Tap a theme under the map to zoom into its neighborhood; tap it again to see its notes.' : ''}`)
+                h('p', { class: 'small muted', style: { margin: '8px 2px 0' } }, `Each topic has a stable home. Shared ideas show specific concepts discussed by several pieces; overly common concepts stay out of the map.${themes.themes.length ? ' Tap a theme under the map to zoom into its neighborhood; tap it again to see its notes.' : ''}`)
             );
         })(),
 
@@ -2078,15 +2134,64 @@ async function importFinished(item) {
     if (previous && !previous.source?.partial) return 'duplicate';
     const others = notes.filter((n) => n.id !== previous?.id);
     let connections = [];
+    let linking = { status: 'complete', attempts: 0 };
     if (others.length) {
         try {
             connections = await suggestConnections(analysis, source, others);
         } catch {
-            connections = []; // the note is still worth adding without links
+            connections = [];
+            linking = failedLinking(); // capture succeeds; linking retries independently
         }
     }
-    await finishNote({ source, analysis: { ...analysis, connections }, model, depth, auto, replaces: previous?.id || null });
+    await finishNote({ source, analysis: { ...analysis, connections }, model, depth, auto, linking, replaces: previous?.id || null });
     return 'saved';
+}
+
+let linkRetryTimer;
+let linkRetryRunning = false;
+function scheduleLinkRetry() {
+    clearTimeout(linkRetryTimer);
+    const pendingNotes = notes.filter((note) => note.linking?.status === 'pending' && (note.linking.attempts || 0) < 3);
+    if (!pendingNotes.length || !getSettings().token) return;
+    const due = Math.min(...pendingNotes.map((note) => note.linking.nextAttemptAt || 0));
+    linkRetryTimer = setTimeout(() => retryPendingLinks(), Math.max(1000, due - Date.now()));
+}
+async function retryPendingLinks() {
+    if (linkRetryRunning || pending || inboxRunning || ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName) || !getSettings().token || navigator.onLine === false) {
+        if (notes.some((note) => note.linking?.status === 'pending')) {
+            clearTimeout(linkRetryTimer); linkRetryTimer = setTimeout(() => retryPendingLinks(), pending || inboxRunning ? 1000 : 30000);
+        }
+        return;
+    }
+    linkRetryRunning = true;
+    try {
+        for (const note of notes.filter((n) => retryDue(n)).slice(0, 3)) {
+            const version = sourceVersion(note);
+            let links;
+            try {
+                links = await suggestConnections(note, { text: note.sourceText || '' }, notes.filter((n) => n.id !== note.id));
+            } catch {
+                const current = (await allNotes()).find((n) => n.id === note.id);
+                if (current) await updateNote(note.id, (latest) => sourceVersion(latest) === version && latest.linking?.status === 'pending' ? { ...latest, linking: failedLinking(latest.linking) } : null);
+                continue;
+            }
+            const currentNotes = await allNotes();
+            const current = currentNotes.find((n) => n.id === note.id);
+            if (!current || sourceVersion(current) !== version || current.linking?.status !== 'pending') continue;
+            await updateNote(note.id, (latest) => {
+                if (sourceVersion(latest) !== version || latest.linking?.status !== 'pending') return null;
+                const allowed = links.filter((link) => !linkBlocked(latest, currentNotes.find((n) => n.id === link.noteId)));
+                return { ...latest, connections: mergeConnections(allowed, latest.connections), linking: { status: 'complete', attempts: 0 } };
+            });
+        }
+        notes = await allNotes();
+        if (location.hash.startsWith('#/note/') && noteTab.get(decodeURIComponent(location.hash.slice(7))) === 'Links') route();
+    } catch (error) {
+        console.warn('Could not save refreshed connections', error);
+    } finally {
+        linkRetryRunning = false;
+        scheduleLinkRetry();
+    }
 }
 
 function scheduleInboxPoll() {
@@ -2094,7 +2199,7 @@ function scheduleInboxPoll() {
     // Only links still being worked on; ones that failed here wait for you.
     if (!inbox.pending.some((item) => inboxAction(item) === 'wait' && !inbox.errors.has(item.id))) return;
     inboxPollTimer = setTimeout(() => {
-        if (document.visibilityState === 'visible') drainInbox();
+        if (document.visibilityState === 'visible') { drainInbox(); scheduleLinkRetry(); }
         else scheduleInboxPoll();
     }, 20000);
 }
@@ -2319,6 +2424,7 @@ function showUpdateBanner() {
 }
 
 function route() {
+    activeMap?.destroy(); activeMap = null;
     const [path, query = ''] = (location.hash.slice(1) || '/').split('?');
     const params = new URLSearchParams(query);
     const parts = path.split('/').filter(Boolean);
@@ -2352,6 +2458,12 @@ async function start() {
     document.querySelectorAll('[data-icon]').forEach((slot) => slot.replaceWith(icon(slot.dataset.icon, { size: 26, strokeWidth: 1.8 })));
     const shared = consumeShare();
     notes = await allNotes();
+    const normalized = notes.map((note) => normalizeKnowledge(note, notes));
+    const changed = normalized.filter((note, index) => JSON.stringify(note) !== JSON.stringify(notes[index]));
+    if (changed.length) {
+        try { await saveMany(changed); notes = await allNotes(); }
+        catch { notes = normalized; toast('Map organization could not be saved. Your existing pieces are still available.'); }
+    }
     window.addEventListener('hashchange', route);
     route();
     if (shared) startCapture(shared);
@@ -2359,11 +2471,13 @@ async function start() {
         toast('Connect your server in Settings to start');
     }
     syncPreferences();
+    scheduleLinkRetry();
+    window.addEventListener('online', () => { scheduleLinkRetry(); });
     drainInbox().then(() => {
         if (getLastUsage()?.limit === null) backfillTopics();
     });
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') drainInbox();
+        if (document.visibilityState === 'visible') { drainInbox(); scheduleLinkRetry(); }
     });
     if ('serviceWorker' in navigator) {
         watchForUpdates();

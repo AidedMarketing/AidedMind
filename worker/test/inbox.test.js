@@ -541,8 +541,8 @@ test('connections are suggested from the library, and only to known notes', asyn
     });
     const data = await res.json();
     assert.deepStrictEqual(data.connections, [
-        { noteId: 'n1', relation: 'supports', reason: 'Same subject.', confidence: 0.8, origin: 'aidedmind' },
-        { noteId: 'n2', relation: 'related', reason: 'y', confidence: 0.8, origin: 'aidedmind' }
+        { noteId: 'n1', relation: 'related', reason: 'Same subject.', evidence: null, confidence: 0.8, origin: 'aidedmind' },
+        { noteId: 'n2', relation: 'related', reason: 'y', evidence: null, confidence: 0.8, origin: 'aidedmind' }
     ]);
     assert.strictEqual(stub.requests[0].body.model, 'claude-haiku-4-5');
     const empty = await call(app, env, 'POST', '/api/connections', { token: 'owner-secret', body: { note: { title: 'New' }, library: [] } });

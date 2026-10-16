@@ -1,0 +1,490 @@
+{
+  "passed": 121,
+  "failed": 0,
+  "checks": [
+    {
+      "name": "chromium-320-light empty Library",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light Library, search and filters",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light Breakdown and source-verified quote",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light tab keyboard behavior",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light Notes autosave and ownership",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light Notes save failure is announced",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light Links, manual creation and sheet focus",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light Not related remembers rejected edge",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light full Map, theme zoom, Fit All and text equivalent",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light focused Map and Fit All",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light topic overview, matched search and merge undo",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light More, backup, ZIP and appearance",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light capture connection setup",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light account sheet recovery and focus",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light partial capture diagnostics",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light Add and capture",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light recovery, search error and resize",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light import full text on a complete note",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light re-analysis preserves manual links and source attribution",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-320-light independent connection failure, reload and retry preserve rejection",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark empty Library",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark Library, search and filters",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark Breakdown and source-verified quote",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark tab keyboard behavior",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark Notes autosave and ownership",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark Notes save failure is announced",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark Links, manual creation and sheet focus",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark Not related remembers rejected edge",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark full Map, theme zoom, Fit All and text equivalent",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark focused Map and Fit All",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark topic overview, matched search and merge undo",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark More, backup, ZIP and appearance",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark capture connection setup",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark account sheet recovery and focus",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark partial capture diagnostics",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark Add and capture",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark recovery, search error and resize",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark import full text on a complete note",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark re-analysis preserves manual links and source attribution",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-390-dark independent connection failure, reload and retry preserve rejection",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark empty Library",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark Library, search and filters",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark Breakdown and source-verified quote",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark tab keyboard behavior",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark Notes autosave and ownership",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark Notes save failure is announced",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark Links, manual creation and sheet focus",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark Not related remembers rejected edge",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark full Map, theme zoom, Fit All and text equivalent",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark focused Map and Fit All",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark topic overview, matched search and merge undo",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark More, backup, ZIP and appearance",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark capture connection setup",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark account sheet recovery and focus",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark partial capture diagnostics",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark Add and capture",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark recovery, search error and resize",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark import full text on a complete note",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark re-analysis preserves manual links and source attribution",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-768-dark independent connection failure, reload and retry preserve rejection",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light empty Library",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light Library, search and filters",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light Breakdown and source-verified quote",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light tab keyboard behavior",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light Notes autosave and ownership",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light Notes save failure is announced",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light Links, manual creation and sheet focus",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light Not related remembers rejected edge",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light full Map, theme zoom, Fit All and text equivalent",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light focused Map and Fit All",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light topic overview, matched search and merge undo",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light More, backup, ZIP and appearance",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light capture connection setup",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light account sheet recovery and focus",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light partial capture diagnostics",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light Add and capture",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light recovery, search error and resize",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light import full text on a complete note",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light re-analysis preserves manual links and source attribution",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-959-light independent connection failure, reload and retry preserve rejection",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark empty Library",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark Library, search and filters",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark Breakdown and source-verified quote",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark tab keyboard behavior",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark Notes autosave and ownership",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark Notes save failure is announced",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark Links, manual creation and sheet focus",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark Not related remembers rejected edge",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark full Map, theme zoom, Fit All and text equivalent",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark focused Map and Fit All",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark topic overview, matched search and merge undo",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark More, backup, ZIP and appearance",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark capture connection setup",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark account sheet recovery and focus",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark partial capture diagnostics",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark Add and capture",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark recovery, search error and resize",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark import full text on a complete note",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark re-analysis preserves manual links and source attribution",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-960-dark independent connection failure, reload and retry preserve rejection",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light empty Library",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light Library, search and filters",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light Breakdown and source-verified quote",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light tab keyboard behavior",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light Notes autosave and ownership",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light Notes save failure is announced",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light Links, manual creation and sheet focus",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light Not related remembers rejected edge",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light full Map, theme zoom, Fit All and text equivalent",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light focused Map and Fit All",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light topic overview, matched search and merge undo",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light More, backup, ZIP and appearance",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light capture connection setup",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light account sheet recovery and focus",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light partial capture diagnostics",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light Add and capture",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light recovery, search error and resize",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light import full text on a complete note",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light re-analysis preserves manual links and source attribution",
+      "status": "passed"
+    },
+    {
+      "name": "chromium-1280-light independent connection failure, reload and retry preserve rejection",
+      "status": "passed"
+    },
+    {
+      "name": "service worker offline publication assets",
+      "status": "passed"
+    }
+  ]
+}

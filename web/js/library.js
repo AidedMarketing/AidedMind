@@ -1,3 +1,4 @@
+import { canonicalName, conceptKey, topicIdentity, mergeConnections } from './knowledge.js';
 // Library helpers that keep breakdowns cheap, all computed on the device:
 // - relatedNotes: only the notes likely to connect to a new source are sent
 //   to Claude, so the cost of a breakdown stays flat as the library grows.
@@ -16,13 +17,14 @@ export function terms(text) {
     return String(text || '')
         .toLowerCase()
         .split(/[^\p{L}\p{N}]+/u)
+        .flatMap((word) => canonicalName(word).toLowerCase().split(/[^\p{L}\p{N}]+/u))
         .filter((word) => word.length > 2 && !STOPWORDS.has(word) && !/^\d+$/.test(word));
 }
 
 function noteFields(note) {
     const concepts = (note.concepts || []).map((c) => (typeof c === 'string' ? c : c?.name)).filter(Boolean);
     return {
-        strong: new Set([...terms(concepts.join(' ')), ...terms((note.tags || []).join(' '))]),
+        strong: new Set([...terms(concepts.join(' ')), ...terms((note.tags || []).join(' ')), ...terms([note.topic, ...(note.topicAliases || [])].join(' '))]),
         title: new Set(terms(note.title)),
         tldr: new Set(terms(note.tldr)),
         phrases: concepts.map((name) => name.toLowerCase().trim()).filter((name) => name.includes(' ') && name.length > 4)
@@ -82,7 +84,7 @@ export function conceptVocabulary(notes, { limit = VOCABULARY_LIMIT } = {}) {
     (Array.isArray(notes) ? notes : []).forEach((note) => {
         const names = new Set((note.concepts || []).map((c) => String((typeof c === 'string' ? c : c?.name) || '').trim()).filter(Boolean));
         names.forEach((name) => {
-            const key = name.toLowerCase();
+            const key = conceptKey(name);
             const entry = counts.get(key) || { name, count: 0 };
             entry.count++;
             counts.set(key, entry);
@@ -95,9 +97,9 @@ export function conceptVocabulary(notes, { limit = VOCABULARY_LIMIT } = {}) {
 export function knownTopics(notes, { limit = 100 } = {}) {
     const counts = new Map();
     (Array.isArray(notes) ? notes : []).forEach((note) => {
-        const name = String(note.topic || '').trim();
+        const name = canonicalName(note.topic);
         if (!name) return;
-        const key = name.toLowerCase();
+        const key = conceptKey(name);
         const entry = counts.get(key) || { name, count: 0 };
         entry.count++;
         counts.set(key, entry);
@@ -172,10 +174,7 @@ export async function knownUrlHashes(notes, { limit = 3000 } = {}) {
 
 // Updating a source never creates a second piece or discards personal context.
 export function preserveUpdatedNote(fresh, previous) {
-    const connections = new Map();
-    for (const link of [...(previous.connections || []), ...(fresh.connections || [])]) {
-        if (link.noteId && !connections.has(link.noteId)) connections.set(link.noteId, link);
-    }
+    const connections = mergeConnections(fresh.connections, previous.connections);
     return {
         ...fresh,
         id: previous.id,
@@ -191,7 +190,7 @@ export function preserveUpdatedNote(fresh, previous) {
             siteName: fresh.source?.siteName || previous.source?.siteName || '',
             thumbnail: fresh.source?.thumbnail || previous.source?.thumbnail || ''
         },
-        connections: [...connections.values()],
-        ...(previous.topicByUser ? { topic: previous.topic, topicByUser: true } : {})
+        connections,
+        ...(previous.topicByUser ? { topic: previous.topic, topicId: topicIdentity(previous), topicAliases: previous.topicAliases || [], topicByUser: true } : {})
     };
 }

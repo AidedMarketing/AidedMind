@@ -54,3 +54,25 @@ export function deleteNote(id) {
 export function newId() {
     return crypto.randomUUID ? crypto.randomUUID() : `n-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
+
+// Patch one record inside a transaction so a background connection result
+// cannot overwrite a personal note saved while the model request was running.
+export async function updateNote(id, update) {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readwrite');
+        const store = tx.objectStore(STORE);
+        const request = store.get(id);
+        let updated;
+        let failure;
+        request.onsuccess = () => {
+            if (!request.result) return;
+            try {
+                updated = update(request.result);
+                if (updated) store.put({ ...updated, id, updatedAt: new Date().toISOString() });
+            } catch (error) { failure = error; tx.abort(); }
+        };
+        tx.oncomplete = () => resolve(updated);
+        tx.onerror = tx.onabort = () => reject(failure || tx.error || new Error('Could not save this piece.'));
+    });
+}
