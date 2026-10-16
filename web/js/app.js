@@ -1,5 +1,5 @@
 import { normalizeKnowledge, topicIdentity, mergeTopics, mergeConnections, linkBlocked, sourceVersion, retryDue, failedLinking, matchesNote, conceptKey } from './knowledge.js';
-import { allNotes, saveNote, saveMany, deleteNote, newId } from './db.js';
+import { allNotes, saveNote, saveMany, updateNote, deleteNote, newId } from './db.js';
 import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, queueInboxItem, removeInboxItem, updateInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser, connectionSetupIssue } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { buildThemes, THEME_DETAIL } from './themes.js';
@@ -975,7 +975,7 @@ function notePanel(name, note, byId) {
                 h('button', { type: 'button', class: 'btn small-btn', disabled: linkRetryRunning, onclick: async (event) => {
                     event.currentTarget.disabled = true;
                     try {
-                        await saveNote({ ...note, linking: { status: 'pending', attempts: 0 } });
+                        await updateNote(note.id, (current) => ({ ...current, linking: { status: 'pending', attempts: 0 } }));
                         notes = await allNotes();
                         await retryPendingLinks();
                         route();
@@ -1010,7 +1010,7 @@ function notePanel(name, note, byId) {
             const value = userNotes.value;
             note.userNotes = value;
             try {
-                await saveNote(note);
+                await updateNote(note.id, (current) => ({ ...current, userNotes: value }));
                 if (value === userNotes.value) { saveState.textContent = 'Saved'; saveState.classList.remove('error'); }
             } catch {
                 saveState.textContent = 'Error — your text is still here. Edit to retry.';
@@ -1064,11 +1064,11 @@ async function removeLink(note, other, { blockAutomatic = true } = {}) {
         n.connections = (n.connections || []).filter((c) => c.noteId !== partner.id);
     });
     if (blockAutomatic) {
-        note.removedLinks = [...new Set([...(note.removedLinks || []), other.id])];
-        note.rejectedLinks = [
-            ...(note.rejectedLinks || []).filter((entry) => entry?.noteId !== other.id),
-            { noteId: other.id, rejectedAt: new Date().toISOString() }
-        ];
+        [note, other].forEach((item) => {
+            const partner = item.id === note.id ? other : note;
+            item.removedLinks = [...new Set([...(item.removedLinks || []), partner.id])];
+            item.rejectedLinks = [...(item.rejectedLinks || []).filter((entry) => entry?.noteId !== partner.id), { noteId: partner.id, rejectedAt: new Date().toISOString() }];
+        });
     }
     await saveMany([note, other]);
     notes = await allNotes();
@@ -2172,14 +2172,17 @@ async function retryPendingLinks() {
                 links = await suggestConnections(note, { text: note.sourceText || '' }, notes.filter((n) => n.id !== note.id));
             } catch {
                 const current = (await allNotes()).find((n) => n.id === note.id);
-                if (current && sourceVersion(current) === version && current.linking?.status === 'pending') await saveNote({ ...current, linking: failedLinking(current.linking) });
+                if (current) await updateNote(note.id, (latest) => sourceVersion(latest) === version && latest.linking?.status === 'pending' ? { ...latest, linking: failedLinking(latest.linking) } : null);
                 continue;
             }
             const currentNotes = await allNotes();
             const current = currentNotes.find((n) => n.id === note.id);
             if (!current || sourceVersion(current) !== version || current.linking?.status !== 'pending') continue;
-            const allowed = links.filter((link) => !linkBlocked(current, currentNotes.find((n) => n.id === link.noteId)));
-            await saveNote({ ...current, connections: mergeConnections(allowed, current.connections), linking: { status: 'complete', attempts: 0 } });
+            await updateNote(note.id, (latest) => {
+                if (sourceVersion(latest) !== version || latest.linking?.status !== 'pending') return null;
+                const allowed = links.filter((link) => !linkBlocked(latest, currentNotes.find((n) => n.id === link.noteId)));
+                return { ...latest, connections: mergeConnections(allowed, latest.connections), linking: { status: 'complete', attempts: 0 } };
+            });
         }
         notes = await allNotes();
         if (location.hash.startsWith('#/note/') && noteTab.get(decodeURIComponent(location.hash.slice(7))) === 'Links') route();

@@ -541,6 +541,17 @@ try {
             assert.equal(after.connections.find((link) => link.noteId === 'c').origin, 'user');
             assert.equal(after.connections.some((link) => link.noteId === 'd'), true, JSON.stringify({ links: after.connections, removed: after.removedLinks, rejected: after.rejectedLinks, state: after.linking, connectionRequests }));
             assert.equal(analyzeCount, count);
+            const concurrent = await page.evaluate(async () => {
+                const db = await import('/js/db.js');
+                await Promise.all([
+                    db.updateNote('a', (current) => ({ ...current, userNotes: 'A thought saved while links update' })),
+                    db.updateNote('a', (current) => ({ ...current, linking: { ...current.linking, reviewed: true } }))
+                ]);
+                return (await db.allNotes()).find((note) => note.id === 'a');
+            });
+            assert.equal(concurrent.userNotes, 'A thought saved while links update');
+            assert.equal(concurrent.linking.reviewed, true);
+            assert.equal(concurrent.connections.some((link) => link.noteId === 'd'), true);
         });
         } catch (error) {
             failed++; report.push({ name: currentCheck, status: 'failed', error: error.message });
