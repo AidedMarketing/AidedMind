@@ -9,6 +9,7 @@ import { resolve, extname, sep } from 'node:path';
 
 const root = resolve('web');
 const output = resolve('qa-results');
+const releaseCache = (await readFile(resolve(root, 'service-worker.js'), 'utf8')).match(/const CACHE_NAME = '([^']+)'/)[1];
 await mkdir(output, { recursive: true });
 const mime = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 let nextDeploymentDocument = false;
@@ -96,7 +97,7 @@ try {
                     return;
                 }
             }
-            const data = path.endsWith('/inbox') ? { items: inbox } : path.endsWith('/auth-check') ? { usage: { captures: 0, limit: owner ? null : 25 } } : path.endsWith('/health') ? { services: {}, checks: {}, version: 'fixture' } : path.endsWith('/source') ? { sourceType: 'article', url: 'https://example.com/new', title: 'A new entry', text: 'A readable source passage. '.repeat(60) } : path.endsWith('/analyze') ? { analysis: { title: 'A new entry', tldr: 'An idea for later.', summary: [{ heading: 'The idea', body: 'Keep reading.' }], takeaways: [], quotes: [], outline: [], concepts: [], connections: [], tags: [] }, model: 'fixture', depth: 'balanced' } : {};
+            const data = path.endsWith('/connections') ? { connections: [] } : path.endsWith('/inbox') ? { items: inbox } : path.endsWith('/auth-check') ? { usage: { captures: 0, limit: owner ? null : 25 } } : path.endsWith('/health') ? { services: {}, checks: {}, version: 'fixture' } : path.endsWith('/source') ? { sourceType: 'article', url: 'https://example.com/new', title: 'A new entry', text: 'A readable source passage. '.repeat(60) } : path.endsWith('/analyze') ? { analysis: { title: 'A new entry', tldr: 'An idea for later.', summary: [{ heading: 'The idea', body: 'Keep reading.' }], takeaways: [], quotes: [], outline: [], concepts: [], connections: [], tags: [] }, model: 'fixture', depth: 'balanced' } : {};
             if (path.endsWith('/inbox') && inboxDelay) await new Promise((done) => setTimeout(done, inboxDelay));
             await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
         });
@@ -172,7 +173,7 @@ try {
             if (modal) {
                 assert.equal(await page.getByRole('dialog').evaluate((dialog) => dialog.contains(document.activeElement)), true);
                 assert.equal(await page.locator('.tabbar').evaluate((nav) => Boolean(nav.closest('[inert]'))), true);
-                await visibleControls('.sheet input, .sheet button');
+                await visibleControls('.sheet input:not([type="checkbox"]):visible, .sheet button:visible');
             } else await shellGeometry();
             await page.screenshot({ path: resolve(output, label + '-' + screen + '.png'), fullPage: true });
             // Fixed bars need a viewport capture too: full-page images can disguise clipping.
@@ -318,6 +319,7 @@ try {
             await page.locator('.settings-section').filter({ has: page.getByRole('heading', { name: 'Appearance', exact: true }) }).locator('summary').click();
             await page.getByRole('button', { name: 'Manage topics', exact: true }).click();
             await page.getByRole('dialog').getByRole('button', { name: /Learning.*2 pieces/ }).click();
+            await page.getByRole('button', { name: 'Merge with another topic', exact: true }).click();
             await page.getByRole('dialog').getByRole('button', { name: /Marketing/ }).click();
             await page.evaluate(() => {
                 window.qaMergeTransaction = IDBDatabase.prototype.transaction;
@@ -336,6 +338,63 @@ try {
             assert.equal(new Set(saved.map((note) => note.topicId)).size, 2);
             await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
             await noOverflow();
+        });
+        await check(label + ' topic rename, split, validation and content-safe Undo', async () => {
+            const original = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()));
+            const openManager = async () => {
+                await goto('settings');
+                await page.locator('.settings-section').filter({ has: page.getByRole('heading', { name: 'Appearance', exact: true }) }).locator('summary').click();
+                await page.getByRole('button', { name: 'Manage topics', exact: true }).click();
+                await page.getByRole('dialog').getByRole('button', { name: /Learning.*2 pieces/ }).click();
+            };
+            await openManager();
+            await page.getByRole('button', { name: 'Rename topic', exact: true }).click();
+            await page.getByRole('textbox', { name: 'Topic name', exact: true }).fill('Marketing');
+            await page.getByRole('button', { name: 'Rename topic', exact: true }).click();
+            await page.getByRole('alert').filter({ hasText: 'already belongs' }).waitFor();
+            await page.getByRole('textbox', { name: 'Topic name', exact: true }).fill('Memory and practice');
+            await page.evaluate(() => {
+                window.qaTopicTransaction = IDBDatabase.prototype.transaction;
+                IDBDatabase.prototype.transaction = function(...args) { if (args[1] === 'readwrite') throw Error('Could not save topic changes'); return window.qaTopicTransaction.apply(this, args); };
+            });
+            await page.getByRole('button', { name: 'Rename topic', exact: true }).click();
+            await page.getByRole('alert').filter({ hasText: 'Could not save topic changes' }).waitFor();
+            assert.equal(await page.getByRole('textbox', { name: 'Topic name', exact: true }).inputValue(), 'Memory and practice');
+            await page.evaluate(() => { IDBDatabase.prototype.transaction = window.qaTopicTransaction; });
+            await page.getByRole('button', { name: 'Rename topic', exact: true }).click();
+            await page.getByRole('button', { name: 'Undo last rename', exact: true }).waitFor();
+            let saved = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()));
+            assert.equal(saved.find((note) => note.id === 'a').topicId, original.find((note) => note.id === 'a').topicId);
+            assert.equal(saved.find((note) => note.id === 'b').topic, 'Memory and practice');
+            await page.evaluate(async () => { await (await import('/js/db.js')).updateNote('a', (note) => ({ ...note, userNotes: 'Saved during a topic edit' })); });
+            await page.getByRole('button', { name: 'Undo last rename', exact: true }).click();
+            await page.getByRole('dialog').getByRole('button', { name: /Learning.*2 pieces/ }).waitFor();
+            saved = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()));
+            assert.equal(saved.find((note) => note.id === 'a').userNotes, 'Saved during a topic edit');
+            await page.getByRole('dialog').getByRole('button', { name: /Learning.*2 pieces/ }).click();
+            await page.getByRole('button', { name: 'Split topic', exact: true }).click();
+            await page.getByRole('textbox', { name: 'New topic name', exact: true }).fill('Sleep research');
+            await page.getByRole('button', { name: 'Move selected pieces', exact: true }).click();
+            await page.getByRole('alert').filter({ hasText: 'Select at least one' }).waitFor();
+            await page.getByRole('checkbox', { name: 'Sleep and memory', exact: true }).check();
+            await page.getByRole('checkbox', { name: 'Practice over time', exact: true }).check();
+            await page.getByRole('button', { name: 'Move selected pieces', exact: true }).click();
+            await page.getByRole('alert').filter({ hasText: 'leave at least one' }).waitFor();
+            await page.getByRole('checkbox', { name: 'Practice over time', exact: true }).uncheck();
+            await axe('split topic'); await noOverflow(); await screenshot('split-topic', true);
+            await page.getByRole('button', { name: 'Move selected pieces', exact: true }).click();
+            await page.getByRole('button', { name: 'Undo last split', exact: true }).waitFor();
+            saved = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()));
+            assert.equal(saved.find((note) => note.id === 'a').topicId, 'sleep-research');
+            assert.equal(saved.find((note) => note.id === 'b').topic, 'Learning');
+            assert.deepEqual(saved.find((note) => note.id === 'a').topicAliases, ['Sleep research']);
+            await page.getByRole('button', { name: 'Undo last split', exact: true }).click();
+            await page.getByRole('dialog').getByRole('button', { name: /Learning.*2 pieces/ }).waitFor();
+            await page.getByRole('button', { name: 'Close', exact: true }).click();
+            await page.evaluate(async (original) => {
+                const db = await import('/js/db.js');
+                await db.updateNote('a', (note) => ({ ...note, userNotes: original.find((old) => old.id === 'a').userNotes }));
+            }, original);
         });
         await check(label + ' More, backup, ZIP and appearance', async () => {
             await goto('settings');
@@ -461,6 +520,7 @@ try {
                 await shellGeometry();
             }
             assert.deepEqual(errors, [], label + ' browser errors');
+            await page.setViewportSize({ width: config.width, height: config.height });
         });
         await check(label + ' import full text on a complete note', async () => {
             await page.evaluate(async (note) => (await import('/js/db.js')).saveNote(note), { ...fixture[0], userNotes: 'Keep my thoughts', connections: [...fixture[0].connections, { noteId: 'c', origin: 'user', reason: 'Linked by you.' }] });
@@ -553,6 +613,73 @@ try {
             assert.equal(concurrent.linking.reviewed, true);
             assert.equal(concurrent.connections.some((link) => link.noteId === 'd'), true);
         });
+        await check(label + ' connection review progress, tab lock, persisted pause and retry', async () => {
+            let requests = 0, releaseRequest, fail = false;
+            const total = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()).length);
+            await page.route('**/api/connections', async (route) => {
+                requests++;
+                if (requests === 1) await new Promise((done) => { releaseRequest = done; });
+                await route.fulfill({ status: fail ? 503 : 200, contentType: 'application/json', body: JSON.stringify(fail ? { error: 'Unavailable' } : { connections: [] }) });
+            });
+            // Clear earlier individual retry history, without touching saved links.
+            await page.evaluate(async () => { await (await import('/js/db.js')).updateMany((notes) => notes.map((note) => ({ ...note, linking: { status: 'complete', attempts: 0 } }))); });
+            await goto('settings');
+            const appearance = () => page.locator('.settings-section').filter({ has: page.getByRole('heading', { name: 'Appearance', exact: true }) });
+            await appearance().locator('summary').click();
+            await page.getByRole('button', { name: 'Review library connections', exact: true }).click();
+            await page.getByRole('button', { name: 'Review connections', exact: true }).click();
+            const dialog = page.getByRole('dialog');
+            await dialog.getByText(/1 checking/).waitFor();
+            const other = await context.newPage();
+            try {
+                await other.route('**/api/**', (route) => {
+                    const path = new URL(route.request().url()).pathname;
+                    if (path.endsWith('/connections')) requests++;
+                    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(path.endsWith('/inbox') ? { items: [] } : path.endsWith('/auth-check') ? { usage: { captures: 0, limit: 25 } } : { connections: [] }) });
+                });
+                await other.goto(url + '/#/settings');
+                await other.locator('main h1').waitFor();
+                await other.waitForTimeout(1400);
+                assert.equal(requests, 1, 'Another tab duplicated connection requests');
+            } finally { await other.close(); }
+            await dialog.getByRole('button', { name: 'Pause review', exact: true }).click();
+            await dialog.getByText(/Paused[.]/).waitFor();
+            releaseRequest();
+            await dialog.getByText(new RegExp(`1 of ${total} complete.*${total - 1} queued`)).waitFor();
+            // The queued toast can be mid-fade on faster CI browsers. Inspect
+            // the persistent review panel after that transient message settles.
+            await page.waitForFunction(() => getComputedStyle(document.getElementById('toast')).opacity === '0');
+            await axe('paused review'); await screenshot('connection-review', true);
+            await goto('settings');
+            await appearance().locator('summary').click();
+            await page.getByRole('button', { name: 'Review library connections', exact: true }).click();
+            await page.getByRole('dialog').getByText(/Paused[.]/).waitFor();
+            await page.waitForTimeout(1200);
+            assert.equal(requests, 1, 'Paused review resumed after reload');
+            await page.getByRole('dialog').getByRole('button', { name: 'Resume review', exact: true }).click();
+            await page.getByRole('dialog').getByText(`${total} of ${total} complete`, { exact: false }).waitFor();
+            assert.equal(requests, total);
+            let saved = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()));
+            assert.equal(saved.find((note) => note.id === 'a').connections.find((link) => link.noteId === 'c').origin, 'user');
+            // An exhausted item remains visible and retries independently of summaries.
+            await page.evaluate(async () => { await (await import('/js/db.js')).updateNote('a', (note) => ({ ...note, linking: { ...note.linking, status: 'pending', attempts: 3, paused: false } })); });
+            await goto('settings'); await appearance().locator('summary').click();
+            await page.getByRole('button', { name: 'Review library connections', exact: true }).click();
+            await page.getByRole('dialog').getByText(new RegExp(`${total - 1} of ${total} complete.*1 failed`)).waitFor();
+            const breakdowns = analyzeCount;
+            fail = true;
+            await page.getByRole('dialog').getByRole('button', { name: 'Retry failed', exact: true }).click();
+            await waitForSavedNote('a', (note) => note.linking?.attempts === 1);
+            fail = false;
+            await page.evaluate(async () => { await (await import('/js/db.js')).updateNote('a', (note) => ({ ...note, linking: { ...note.linking, attempts: 3 } })); });
+            await goto('settings'); await appearance().locator('summary').click();
+            await page.getByRole('button', { name: 'Review library connections', exact: true }).click();
+            await page.getByRole('dialog').getByRole('button', { name: 'Retry failed', exact: true }).click();
+            await page.getByRole('dialog').getByText(`${total} of ${total} complete`, { exact: false }).waitFor();
+            assert.equal(analyzeCount, breakdowns);
+            assert.equal(requests, total + 2);
+            await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+        });
         } catch (error) {
             failed++; report.push({ name: currentCheck, status: 'failed', error: error.message });
             console.error('FAIL ' + currentCheck + '\n' + error.stack);
@@ -566,13 +693,13 @@ try {
         await page.goto(url);
         await page.evaluate(async () => { await navigator.serviceWorker.ready; });
         await page.reload();
-        await page.evaluate(async () => {
-            const cache = await caches.open('aidedmind-v34');
+        await page.evaluate(async (cacheName) => {
+            const cache = await caches.open(cacheName);
             for (const path of ['/fonts/Newsreader.ttf', '/icons/mark.svg', '/tokens.css', '/shell.css', '/app.css', '/js/app.js', '/js/knowledge.js']) {
                 if (!(await cache.match(path))) throw Error('Missing cached asset ' + path);
             }
-        });
-        assert.equal(await page.evaluate(async () => (await (await caches.open('aidedmind-v34')).match('/index.html')).redirected), true);
+        }, releaseCache);
+        assert.equal(await page.evaluate(async (cacheName) => (await (await caches.open(cacheName)).match('/index.html')).redirected, releaseCache), true);
         // Reopen a fresh tab under the installed controller, as on Safari launch.
         const reopened = await context.newPage();
         await reopened.goto(url + '/?reopen=1');

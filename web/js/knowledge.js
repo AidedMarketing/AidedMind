@@ -33,7 +33,7 @@ export function sourceVersion(note) {
 export function normalizeKnowledge(note, library = []) {
     const key = termId(note.topic);
     // Explicit merged aliases take precedence over the built-in vocabulary.
-    const owner = library.find((n) => n.id !== note.id && (n.topicAliases || []).some((alias) => termId(alias) === key));
+    const owner = note.topicByUser && note.topicId ? null : library.find((n) => n.id !== note.id && (n.topicAliases || []).some((alias) => termId(alias) === key));
     const topic = owner?.topic || canonicalName(note.topic);
     const seen = new Set();
     const concepts = (note.concepts || []).map((concept) => {
@@ -54,6 +54,58 @@ export function mergeTopics(notes, fromId, toId) {
     return notes.map((note) => [fromId, toId].includes(topicIdentity(note))
         ? { ...note, topic: target.topic, topicId: toId, topicAliases: aliases, topicByUser: true } : note);
 }
+export function topicName(value) {
+    const name = canonicalName(value);
+    if (!termId(name) || name.length > 40) throw new Error('Use a topic name between 1 and 40 characters.');
+    return name;
+}
+function availableTopicName(notes, value, exceptId) {
+    const name = topicName(value), key = termId(name);
+    if (notes.some((note) => topicIdentity(note) !== exceptId &&
+        [topicIdentity(note), termId(note.topic), ...(note.topicAliases || []).map(termId)].includes(key))) {
+        throw new Error('That name already belongs to a topic. Choose another name, or merge the topics.');
+    }
+    return name;
+}
+export function renameTopic(notes, id, value) {
+    const name = availableTopicName(notes, value, id);
+    const members = notes.filter((note) => topicIdentity(note) === id);
+    if (!members.length) throw new Error('This topic has changed. Reopen Manage topics and try again.');
+    const aliases = [...new Set(members.flatMap((note) => [note.topic, ...(note.topicAliases || []), name]).filter(Boolean))];
+    return notes.map((note) => topicIdentity(note) === id
+        ? { ...note, topic: name, topicId: id, topicAliases: aliases, topicByUser: true } : note);
+}
+export function splitTopic(notes, id, selectedIds, value) {
+    const name = availableTopicName(notes, value);
+    const selected = new Set(selectedIds);
+    const members = notes.filter((note) => topicIdentity(note) === id);
+    if (!selected.size || selected.size >= members.length || [...selected].some((key) => !members.some((note) => note.id === key))) {
+        throw new Error('Select at least one piece and leave at least one in the original topic.');
+    }
+    return notes.map((note) => selected.has(note.id)
+        ? { ...note, topic: name, topicId: termId(name), topicAliases: [name], topicByUser: true } : note);
+}
+export const topicMetadata = (note) => ({ topic: note.topic, topicId: note.topicId,
+    topicAliases: note.topicAliases || [], topicByUser: note.topicByUser });
+export function undoTopicChange(notes, change) {
+    return notes.map((note) => {
+        const after = change.after.find((saved) => saved.id === note.id);
+        const before = change.before.find((saved) => saved.id === note.id);
+        if (before && after && JSON.stringify(topicMetadata(note)) === JSON.stringify(topicMetadata(after))) {
+            return { ...note, ...topicMetadata(before) };
+        }
+        // Captures made after a rename/merge share that topic's vocabulary.
+        // Restore its name/aliases too, so an undone merge cannot silently
+        // re-merge future captures. A split's new topic may keep later pieces.
+        if (!before) {
+            const inherited = change.after.find((saved) => topicIdentity(saved) === topicIdentity(note) &&
+                saved.topic === note.topic && JSON.stringify(saved.topicAliases || []) === JSON.stringify(note.topicAliases || []));
+            const previous = inherited && change.before.find((saved) => topicIdentity(saved) === topicIdentity(inherited));
+            if (previous) return { ...note, topic: previous.topic, topicId: previous.topicId, topicAliases: previous.topicAliases || [] };
+        }
+        return note;
+    });
+}
 export function linkBlocked(a, b) {
     const blocked = (note, id) => (note?.removedLinks || []).includes(id) ||
         (note?.rejectedLinks || []).some((entry) => (typeof entry === 'string' ? entry : entry?.noteId) === id);
@@ -72,9 +124,20 @@ export function matchesNote(note, query) {
 }
 
 export function retryDue(note, now = Date.now()) {
-    return note.linking?.status === 'pending' && (note.linking.attempts || 0) < 3 && (note.linking.nextAttemptAt || 0) <= now;
+    return note.linking?.status === 'pending' && !note.linking.paused && (note.linking.attempts || 0) < 3 && (note.linking.nextAttemptAt || 0) <= now;
 }
 export function failedLinking(previous = {}, now = Date.now()) {
     const attempts = (previous.attempts || 0) + 1;
-    return { status: 'pending', attempts, nextAttemptAt: now + Math.min(600000, 30000 * 4 ** (attempts - 1)) };
+    return { ...previous, status: 'pending', attempts, nextAttemptAt: now + Math.min(600000, 30000 * 4 ** (attempts - 1)) };
+}
+export function connectionReview(notes, activeId = null) {
+    const latest = notes.filter((note) => note.linking?.reviewId)
+        .sort((a, b) => (b.linking.reviewStartedAt || '').localeCompare(a.linking.reviewStartedAt || ''))[0]?.linking.reviewId;
+    const members = notes.filter((note) => latest ? note.linking?.reviewId === latest : note.linking?.status === 'pending');
+    const waiting = members.filter((note) => note.linking?.status === 'pending');
+    const failed = waiting.filter((note) => (note.linking.attempts || 0) >= 3);
+    const running = waiting.filter((note) => note.id === activeId && (note.linking.attempts || 0) < 3).length;
+    return { id: latest, total: members.length, complete: members.length - waiting.length,
+        failed: failed.length, running, queued: waiting.length - failed.length - running,
+        paused: waiting.some((note) => note.linking.paused), pending: waiting.length, members };
 }

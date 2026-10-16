@@ -1,5 +1,5 @@
-import { normalizeKnowledge, topicIdentity, mergeTopics, mergeConnections, linkBlocked, sourceVersion, retryDue, failedLinking, matchesNote, conceptKey } from './knowledge.js';
-import { allNotes, saveNote, saveMany, updateNote, deleteNote, newId } from './db.js';
+import { normalizeKnowledge, topicIdentity, mergeTopics, renameTopic, splitTopic, undoTopicChange, connectionReview, mergeConnections, linkBlocked, sourceVersion, retryDue, failedLinking, matchesNote, conceptKey } from './knowledge.js';
+import { allNotes, saveNote, saveMany, updateMany, updateNote, deleteNote, newId } from './db.js';
 import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, queueInboxItem, removeInboxItem, updateInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser, connectionSetupIssue } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { buildThemes, THEME_DETAIL } from './themes.js';
@@ -57,7 +57,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '34';
+const APP_VERSION = '35';
 
 let notes = [];
 let activeMap = null;
@@ -975,7 +975,7 @@ function notePanel(name, note, byId) {
                 h('button', { type: 'button', class: 'btn small-btn', disabled: linkRetryRunning, onclick: async (event) => {
                     event.currentTarget.disabled = true;
                     try {
-                        await updateNote(note.id, (current) => ({ ...current, linking: { status: 'pending', attempts: 0 } }));
+                        await updateNote(note.id, (current) => ({ ...current, linking: { ...current.linking, status: 'pending', attempts: 0, nextAttemptAt: 0, paused: false } }));
                         notes = await allNotes();
                         await retryPendingLinks();
                         route();
@@ -1169,22 +1169,123 @@ function topicSheet(note) {
     );
 }
 
-function reviewLibraryConnectionsSheet() {
+function refreshConnectionReview() {
+    document.querySelectorAll('[data-connection-review]').forEach((panel) => panel.refresh());
+}
+function connectionReviewPanel({ inSheet = false } = {}) {
+    const heading = h('h4', { class: 'editorial-label', hidden: inSheet });
+    const summary = h('p', { class: 'small', role: 'status', 'aria-live': 'polite', tabindex: '-1' });
+    const progress = h('progress', { 'aria-label': 'Connection review progress' });
+    const help = h('p', { class: 'small muted' });
+    const error = h('p', { class: 'small error', role: 'alert' });
+    let changing = false;
+    const act = async (button, transform) => {
+        if (changing) return;
+        const restoreFocus = document.activeElement === button;
+        changing = true; button.disabled = true; error.textContent = '';
+        try {
+            await updateMany(transform);
+            notes = await allNotes(); refreshConnectionReview(); scheduleLinkRetry();
+        } catch (failure) { error.textContent = failure.message; }
+        finally {
+            changing = false; panel.refresh();
+            if (restoreFocus && panel.isConnected) (button.hidden ? (pause.hidden ? summary : pause) : button).focus({ preventScroll: true });
+        }
+    };
+    const pause = h('button', { type: 'button', class: 'btn block', onclick: (event) => {
+        const review = connectionReview(notes, activeLinkId);
+        const ids = new Set(review.members.map((note) => note.id));
+        act(event.currentTarget, (current) => current.map((note) => ids.has(note.id) && note.linking?.status === 'pending'
+            ? { ...note, linking: { ...note.linking, paused: !review.paused } } : note));
+    } });
+    const retry = h('button', { type: 'button', class: 'btn block', onclick: (event) => {
+        const ids = new Set(connectionReview(notes).members.map((note) => note.id));
+        act(event.currentTarget, (current) => current.map((note) => ids.has(note.id) && note.linking?.status === 'pending' && note.linking.attempts >= 3
+            ? { ...note, linking: { ...note.linking, attempts: 0, nextAttemptAt: 0 } } : note));
+    } }, 'Retry failed');
+    const panel = h('div', { class: 'connection-review', 'data-connection-review': '' }, heading, summary, progress, help, error, pause, retry);
+    panel.refresh = () => {
+        const focused = document.activeElement;
+        const review = connectionReview(notes, activeLinkId);
+        panel.hidden = !review.total;
+        heading.textContent = review.id ? 'Library connection review' : 'Pending connection checks';
+        summary.textContent = `${review.complete} of ${review.total} complete · ${review.running} checking · ${review.queued} queued · ${review.failed} failed`;
+        progress.max = Math.max(1, review.total); progress.value = review.complete;
+        help.textContent = !review.pending ? 'Review complete. Your current connections are saved.'
+            : review.paused ? 'Paused. A check already in progress may finish. Resume when you are ready.'
+            : !getSettings().token ? 'Connect your server in Capture & Sharing to continue.'
+            : navigator.onLine === false ? 'Waiting for a connection. Reviews resume when you are online.'
+            : review.failed === review.pending ? 'Some checks could not finish after three attempts. Retry failed to try those pieces again.'
+            : 'Keep AidedMind open. Checks wait while you capture or type; temporary failures retry automatically.';
+        pause.hidden = !review.pending; pause.disabled = changing;
+        pause.textContent = review.paused ? 'Resume review' : 'Pause review';
+        retry.hidden = !review.failed; retry.disabled = changing;
+        if ((focused === pause || focused === retry) && focused.hidden) summary.focus({ preventScroll: true });
+    };
+    panel.refresh(); return panel;
+}
+function reviewLibraryConnectionsSheet({ start = false } = {}) {
+    const review = connectionReview(notes, activeLinkId);
+    if (!start && review.total) {
+        openSheet(h('h3', {}, 'Connection review'), connectionReviewPanel({ inSheet: true }),
+            !review.pending ? h('button', { type: 'button', class: 'btn block', onclick: () => reviewLibraryConnectionsSheet({ start: true }) }, 'Review again') : null,
+            h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Close'));
+        return;
+    }
     const count = notes.length;
     const status = h('p', { class: 'small error', role: 'alert' });
     const submit = h('button', { type: 'button', class: 'btn primary block', onclick: async () => {
         submit.disabled = true;
         try {
-            await saveMany(notes.map((note) => ({ ...note, linking: { status: 'pending', attempts: 0 } })));
-            notes = await allNotes(); closeSheet(); scheduleLinkRetry(); toast('Connection review queued');
+            const reviewId = newId(), reviewStartedAt = new Date().toISOString();
+            await updateMany((current) => current.map((note) => ({ ...note, linking: { status: 'pending', attempts: 0, reviewId, reviewStartedAt } })));
+            notes = await allNotes(); refreshConnectionReview(); scheduleLinkRetry(); reviewLibraryConnectionsSheet(); toast('Connection review queued');
         } catch (error) { status.textContent = error.message; submit.disabled = false; }
     } }, 'Review connections');
     openSheet(h('h3', {}, 'Review library connections?'), h('p', { class: 'small muted' },
-        `Check ${count} saved pieces against your current library, using up to ${count} connection requests. This uses model tokens, without repeating the breakdowns. Keep AidedMind open while it works. Your own links and rejections stay.`), status,
+        `Check ${count} saved pieces against your current library, using up to ${count} initial connection requests. Temporary failures may retry, up to three attempts per piece. This uses model tokens, without repeating the breakdowns. Keep AidedMind open while it works. Your own links and rejections stay.`), status,
         h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel'), submit);
 }
 
-let lastTopicMerge = null;
+let lastTopicChange = null;
+async function saveTopicChange(transform, label) {
+    const change = await updateMany(transform);
+    if (!change.after.length) throw new Error('No pieces changed. Reopen Manage topics and try again.');
+    lastTopicChange = { ...change, label };
+    notes = await allNotes(); syncPreferences(); route(); manageTopicsSheet(); toast(`Topic ${label} saved`);
+}
+function topicEditSheet(from, split = false) {
+    const members = notes.filter((note) => topicIdentity(note) === from.id);
+    const selected = new Set();
+    const field = h('input', { id: 'topic-name', class: 'field', type: 'text', maxlength: '40', autocapitalize: 'words', 'aria-describedby': 'topic-edit-error' });
+    field.value = split ? '' : from.name;
+    const error = h('p', { id: 'topic-edit-error', class: 'small error', role: 'alert' });
+    field.addEventListener('input', () => { error.textContent = ''; field.removeAttribute('aria-invalid'); });
+    const count = h('p', { class: 'small muted', role: 'status' }, '0 pieces selected');
+    const submit = h('button', { type: 'submit', class: 'btn primary block' }, split ? 'Move selected pieces' : 'Rename topic');
+    const form = h('form', { class: 'stack', novalidate: true, onsubmit: async (event) => {
+        event.preventDefault(); submit.disabled = true; error.textContent = ''; field.removeAttribute('aria-invalid');
+        try {
+            await saveTopicChange((current) => split ? splitTopic(current, from.id, [...selected], field.value) : renameTopic(current, from.id, field.value), split ? 'split' : 'rename');
+        } catch (failure) {
+            error.textContent = failure.message; submit.disabled = false;
+            if (!split || !selected.size || selected.size === members.length) {
+                if (!split) { field.setAttribute('aria-invalid', 'true'); field.focus(); }
+            } else { field.setAttribute('aria-invalid', 'true'); field.focus(); }
+        }
+    } }, h('label', { for: 'topic-name', class: 'small' }, split ? 'New topic name' : 'Topic name'), field,
+        split ? h('fieldset', { class: 'topic-piece-selector' }, h('legend', { class: 'small' }, 'Pieces to move'),
+            h('div', { class: 'group topic-manager-list' }, members.map((note) => h('label', { class: 'topic-piece-choice' },
+                h('input', { type: 'checkbox', value: note.id, onchange: (event) => {
+                    if (event.currentTarget.checked) selected.add(note.id); else selected.delete(note.id);
+                    error.textContent = ''; field.removeAttribute('aria-invalid');
+                    count.textContent = `${selected.size} of ${members.length} pieces selected`;
+                } }), h('span', {}, note.title)))), count) : null,
+        error, submit, h('button', { type: 'button', class: 'btn block', onclick: manageTopicsSheet }, 'Cancel'));
+    openSheet(h('h3', {}, split ? `Split ${from.name}` : `Rename ${from.name}`), h('p', { class: 'small muted' }, split
+        ? 'Choose pieces for a new topic. Leave at least one in the original topic. Future captures using the original name still go there.'
+        : `Rename all ${from.count} pieces. The old name stays as an alias for search and future captures. The topic keeps its place on the map.`), form);
+}
 function manageTopicsSheet() {
     const topics = new Map();
     notes.forEach((note) => {
@@ -1194,38 +1295,39 @@ function manageTopicsSheet() {
         entry.count++; topics.set(id, entry);
     });
     const entries = [...topics.values()].sort((a, b) => a.name.localeCompare(b.name));
-    openSheet(h('h3', {}, 'Manage topics'), h('p', { class: 'small muted' }, 'Combine duplicate topics under one name. Their former names are remembered for future captures.'),
-        h('div', { class: 'group topic-manager-list' }, entries.map((from) => h('button', { type: 'button', class: 'group-row', disabled: entries.length < 2, onclick: () => {
-            openSheet(h('h3', {}, `Merge ${from.name}`), h('p', { class: 'small muted' }, `Choose the topic to keep. All ${from.count} pieces will move there. Your saved content and connections stay.`),
-                h('div', { class: 'group topic-manager-list' }, entries.filter((to) => to.id !== from.id).map((to) => h('button', { type: 'button', class: 'group-row', onclick: () => {
-                    const error = h('p', { class: 'small error', role: 'alert' });
-                    const submit = h('button', { type: 'button', class: 'btn primary block', onclick: async () => {
-                        submit.disabled = true;
-                        try {
-                            const updated = mergeTopics(notes, from.id, to.id);
-                            const changes = updated.filter((note, i) => note !== notes[i]);
-                            const before = notes.filter((note) => changes.some((changed) => changed.id === note.id));
-                            await saveMany(changes);
-                            lastTopicMerge = { before, target: to.id };
-                            notes = await allNotes(); syncPreferences(); route(); manageTopicsSheet(); toast('Topics merged');
-                        } catch (failure) { error.textContent = failure.message; submit.disabled = false; }
-                    } }, 'Merge topics');
-                    openSheet(h('h3', {}, `Merge into ${to.name}?`), h('p', { class: 'small muted' }, `${from.name} will become an alias of ${to.name}. You can undo this merge from Manage topics during this session.`), error,
-                        h('button', { type: 'button', class: 'btn block', onclick: manageTopicsSheet }, 'Cancel'), submit);
-                } }, h('span', { class: 'row-label' }, to.name), h('span', { class: 'row-value muted' }, String(to.count))))),
+    const merge = (from) => {
+        openSheet(h('h3', {}, `Merge ${from.name}`), h('p', { class: 'small muted' }, `Choose the topic to keep. All ${from.count} pieces will move there.`),
+            h('div', { class: 'group topic-manager-list' }, entries.filter((to) => to.id !== from.id).map((to) => h('button', { type: 'button', class: 'group-row', onclick: () => {
+                const error = h('p', { class: 'small error', role: 'alert' });
+                const submit = h('button', { type: 'button', class: 'btn primary block', onclick: async () => {
+                    submit.disabled = true;
+                    try { await saveTopicChange((current) => mergeTopics(current, from.id, to.id), 'merge'); }
+                    catch (failure) { error.textContent = failure.message; submit.disabled = false; }
+                } }, 'Merge topics');
+                openSheet(h('h3', {}, `Merge into ${to.name}?`), h('p', { class: 'small muted' }, `${from.name} will become an alias of ${to.name}. You can undo changes to these pieces from Manage topics during this session.`), error,
+                    h('button', { type: 'button', class: 'btn block', onclick: manageTopicsSheet }, 'Cancel'), submit);
+            } }, h('span', { class: 'row-label' }, to.name), h('span', { class: 'row-value muted' }, String(to.count))))),
+            h('button', { type: 'button', class: 'btn block', onclick: manageTopicsSheet }, 'Back'));
+    };
+    const undoError = h('p', { class: 'small error', role: 'alert' });
+    openSheet(h('h3', {}, 'Manage topics'), h('p', { class: 'small muted' }, 'Rename a topic, split a broad one, or merge duplicates. Choose a topic to see its options.'),
+        h('div', { class: 'group topic-manager-list' }, entries.length ? entries.map((from) => h('button', { type: 'button', class: 'group-row', onclick: () => {
+            openSheet(h('h3', {}, from.name), h('p', { class: 'small muted' }, `${from.count} saved piece${from.count === 1 ? '' : 's'}`),
+                h('button', { type: 'button', class: 'btn block', onclick: () => topicEditSheet(from) }, 'Rename topic'),
+                h('button', { type: 'button', class: 'btn block', disabled: from.count < 2, onclick: () => topicEditSheet(from, true) }, 'Split topic'),
+                h('button', { type: 'button', class: 'btn block', disabled: entries.length < 2, onclick: () => merge(from) }, 'Merge with another topic'),
                 h('button', { type: 'button', class: 'btn block', onclick: manageTopicsSheet }, 'Back'));
-        } }, h('span', { class: 'row-label' }, from.name), h('span', { class: 'row-value muted' }, `${from.count} pieces`)))),
-        lastTopicMerge ? h('button', { type: 'button', class: 'btn block', onclick: async (event) => {
+        } }, h('span', { class: 'row-label' }, from.name), h('span', { class: 'row-value muted' }, `${from.count} pieces`))) : h('p', { class: 'group-body small muted' }, 'Save a piece with a topic to begin.')),
+        lastTopicChange ? h('p', { class: 'small muted' }, 'Undo restores your last topic action and its names for future captures. Newer content and separate topic edits stay.') : null,
+        undoError,
+        lastTopicChange ? h('button', { type: 'button', class: 'btn block', onclick: async (event) => {
             event.currentTarget.disabled = true;
             try {
-                const undo = notes.flatMap((note) => {
-                    const previous = lastTopicMerge.before.find((old) => old.id === note.id);
-                    return previous && topicIdentity(note) === lastTopicMerge.target ? [{ ...note, topic: previous.topic,
-                        topicId: previous.topicId, topicAliases: previous.topicAliases || [], topicByUser: previous.topicByUser }] : [];
-                });
-                await saveMany(undo); lastTopicMerge = null; notes = await allNotes(); syncPreferences(); route(); manageTopicsSheet(); toast('Topic merge undone');
-            } catch (error) { toast(error.message); event.currentTarget.disabled = false; }
-        } }, 'Undo last merge') : null,
+                await updateMany((current) => undoTopicChange(current, lastTopicChange));
+                const label = lastTopicChange.label; lastTopicChange = null;
+                notes = await allNotes(); syncPreferences(); route(); manageTopicsSheet(); toast(`Topic ${label} undone`);
+            } catch (error) { undoError.textContent = error.message; event.currentTarget.disabled = false; }
+        } }, `Undo last ${lastTopicChange.label}`) : null,
         h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Close'));
 }
 
@@ -1816,7 +1918,8 @@ function settingsView() {
                 h('div', { class: 'small muted', style: { margin: '0 2px 6px' } }, 'Color notes by'),
                 segmentedControl('Color notes by', [['theme', 'Theme'], ['source', 'Source']], settings.mapColor, (value) => saveSettings({ ...getSettings(), mapColor: value })),
                 h('button', { type: 'button', class: 'btn block', onclick: manageTopicsSheet }, 'Manage topics'),
-                notes.length > 1 ? h('button', { type: 'button', class: 'btn block', onclick: reviewLibraryConnectionsSheet }, 'Review library connections') : null,
+                notes.length > 1 ? h('button', { type: 'button', class: 'btn block', onclick: () => reviewLibraryConnectionsSheet() }, 'Review library connections') : null,
+                connectionReviewPanel(),
                 detailText,
                 (() => {
                     // Notes saved before topics existed can be sorted in one go.
@@ -2149,48 +2252,67 @@ async function importFinished(item) {
 
 let linkRetryTimer;
 let linkRetryRunning = false;
+let activeLinkId = null;
 function scheduleLinkRetry() {
     clearTimeout(linkRetryTimer);
-    const pendingNotes = notes.filter((note) => note.linking?.status === 'pending' && (note.linking.attempts || 0) < 3);
+    const pendingNotes = notes.filter((note) => note.linking?.status === 'pending' && !note.linking.paused && (note.linking.attempts || 0) < 3);
     if (!pendingNotes.length || !getSettings().token) return;
     const due = Math.min(...pendingNotes.map((note) => note.linking.nextAttemptAt || 0));
     linkRetryTimer = setTimeout(() => retryPendingLinks(), Math.max(1000, due - Date.now()));
 }
 async function retryPendingLinks() {
-    if (linkRetryRunning || pending || inboxRunning || ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName) || !getSettings().token || navigator.onLine === false) {
-        if (notes.some((note) => note.linking?.status === 'pending')) {
+    if (linkRetryRunning) return;
+    // Only one tab may issue connection requests at a time. The queue itself
+    // remains in IndexedDB, so a closed tab does not lose pending work.
+    if (navigator.locks?.request) {
+        return navigator.locks.request('aidedmind.connection-review', { ifAvailable: true }, async (lock) => {
+            if (lock) await runPendingLinks();
+            else { notes = await allNotes(); refreshConnectionReview(); scheduleLinkRetry(); }
+        });
+    }
+    return runPendingLinks();
+}
+async function runPendingLinks() {
+    if (pending || inboxRunning || ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName) || !getSettings().token || navigator.onLine === false) {
+        if (notes.some((note) => note.linking?.status === 'pending' && !note.linking.paused)) {
             clearTimeout(linkRetryTimer); linkRetryTimer = setTimeout(() => retryPendingLinks(), pending || inboxRunning ? 1000 : 30000);
         }
-        return;
+        refreshConnectionReview(); return;
     }
     linkRetryRunning = true;
     try {
-        for (const note of notes.filter((n) => retryDue(n)).slice(0, 3)) {
-            const version = sourceVersion(note);
+        notes = await allNotes();
+        const ids = notes.filter((note) => retryDue(note)).slice(0, 3).map((note) => note.id);
+        for (const id of ids) {
+            notes = await allNotes();
+            const note = notes.find((current) => current.id === id);
+            if (!note || !retryDue(note) || pending || inboxRunning || navigator.onLine === false) continue;
+            const version = sourceVersion(note), reviewId = note.linking?.reviewId;
+            const stillCurrent = (latest) => sourceVersion(latest) === version && latest.linking?.status === 'pending' && latest.linking.reviewId === reviewId;
+            activeLinkId = note.id; refreshConnectionReview();
             let links;
             try {
                 links = await suggestConnections(note, { text: note.sourceText || '' }, notes.filter((n) => n.id !== note.id));
             } catch {
-                const current = (await allNotes()).find((n) => n.id === note.id);
-                if (current) await updateNote(note.id, (latest) => sourceVersion(latest) === version && latest.linking?.status === 'pending' ? { ...latest, linking: failedLinking(latest.linking) } : null);
-                continue;
+                await updateNote(note.id, (latest) => stillCurrent(latest) ? { ...latest, linking: failedLinking(latest.linking) } : null);
+                activeLinkId = null; notes = await allNotes(); refreshConnectionReview(); continue;
             }
             const currentNotes = await allNotes();
-            const current = currentNotes.find((n) => n.id === note.id);
-            if (!current || sourceVersion(current) !== version || current.linking?.status !== 'pending') continue;
             await updateNote(note.id, (latest) => {
-                if (sourceVersion(latest) !== version || latest.linking?.status !== 'pending') return null;
+                if (!stillCurrent(latest)) return null;
                 const allowed = links.filter((link) => !linkBlocked(latest, currentNotes.find((n) => n.id === link.noteId)));
-                return { ...latest, connections: mergeConnections(allowed, latest.connections), linking: { status: 'complete', attempts: 0 } };
+                return { ...latest, connections: mergeConnections(allowed, latest.connections),
+                    linking: { ...latest.linking, status: 'complete', attempts: 0, nextAttemptAt: 0 } };
             });
+            activeLinkId = null; notes = await allNotes(); refreshConnectionReview();
         }
-        notes = await allNotes();
-        if (location.hash.startsWith('#/note/') && noteTab.get(decodeURIComponent(location.hash.slice(7))) === 'Links') route();
+        if (location.hash.startsWith('#/note/') && noteTab.get(decodeURIComponent(location.hash.slice(7))) === 'Links' && !document.getElementById('sheet-root').childElementCount) route();
     } catch (error) {
         console.warn('Could not save refreshed connections', error);
+        document.querySelectorAll('[data-connection-review] .error').forEach((element) => { element.textContent = 'Could not save review progress. Reload AidedMind to resume the saved queue.'; });
     } finally {
-        linkRetryRunning = false;
-        scheduleLinkRetry();
+        linkRetryRunning = false; activeLinkId = null;
+        refreshConnectionReview(); scheduleLinkRetry();
     }
 }
 
@@ -2472,12 +2594,16 @@ async function start() {
     }
     syncPreferences();
     scheduleLinkRetry();
-    window.addEventListener('online', () => { scheduleLinkRetry(); });
+    window.addEventListener('online', () => { refreshConnectionReview(); scheduleLinkRetry(); });
+    window.addEventListener('offline', refreshConnectionReview);
     drainInbox().then(() => {
         if (getLastUsage()?.limit === null) backfillTopics();
     });
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') { drainInbox(); scheduleLinkRetry(); }
+        if (document.visibilityState === 'visible') {
+            allNotes().then((current) => { notes = current; refreshConnectionReview(); scheduleLinkRetry(); });
+            drainInbox();
+        }
     });
     if ('serviceWorker' in navigator) {
         watchForUpdates();

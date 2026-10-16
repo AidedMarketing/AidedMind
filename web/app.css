@@ -1057,3 +1057,15 @@ p a:not(.btn), .tip a, .group-footer a { text-decoration: underline; text-underl
 .link-retry-status { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; padding: var(--space-3) 0; border-bottom: 1px solid var(--rule); }
 .link-evidence { margin-top: var(--space-2); line-height: 1.6; overflow-wrap: anywhere; }
 .topic-manager-list { max-height: 45vh; overflow: auto; }
+
+/* Topic edits reuse the reading sheet and its native keyboard controls. */
+.topic-piece-selector { border: 0; margin: 0; padding: 0; min-width: 0; }
+.topic-piece-choice { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; padding: var(--space-3) var(--space-2); cursor: pointer; border-bottom: 1px solid var(--line); }
+.topic-piece-choice:last-child { border-bottom: 0; }
+.topic-piece-choice span { overflow-wrap: anywhere; }
+.topic-piece-choice input { width: 24px; height: 24px; flex: 0 0 24px; accent-color: var(--accent); }
+.connection-review { margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--line); }
+.connection-review[hidden], .connection-review [hidden] { display: none; }
+.connection-review progress { display: block; width: 100%; height: 12px; margin: var(--space-3) 0; accent-color: var(--accent); }
+.connection-review .btn { margin-top: var(--space-2); }
+.sheet > .connection-review { margin-bottom: var(--space-2); }

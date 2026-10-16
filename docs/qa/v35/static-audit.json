@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "mode": "strict",
+  "projectRoot": "/workspace/scratch/d6e0efb7048e/AidedMind",
+  "findings": [],
+  "summary": {
+    "total": 0,
+    "errors": 0,
+    "warnings": 0,
+    "violations": 0,
+    "unresolved": 0
+  }
+}
