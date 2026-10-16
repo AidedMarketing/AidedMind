@@ -520,6 +520,7 @@ try {
                 await shellGeometry();
             }
             assert.deepEqual(errors, [], label + ' browser errors');
+            await page.setViewportSize({ width: config.width, height: config.height });
         });
         await check(label + ' import full text on a complete note', async () => {
             await page.evaluate(async (note) => (await import('/js/db.js')).saveNote(note), { ...fixture[0], userNotes: 'Keep my thoughts', connections: [...fixture[0].connections, { noteId: 'c', origin: 'user', reason: 'Linked by you.' }] });
