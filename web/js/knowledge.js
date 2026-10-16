@@ -65,10 +65,12 @@ export function mergeConnections(fresh = [], previous = []) {
     return [...links.values()];
 }
 export function matchesNote(note, query) {
-    const q = nameKey(query);
-    return !q || nameKey([note.title, note.topic, note.tldr, ...(note.tags || []),
+    const expand = (value) => nameKey(String(value || '').replace(/\b(?:ai|ml|llms?|seo|ux)\b/gi, (word) => canonicalName(word)));
+    const q = expand(query);
+    return !q || expand([note.title, note.topic, note.tldr, ...(note.tags || []),
         ...(note.topicAliases || []), ...(note.concepts || []).map((c) => typeof c === 'string' ? c : c.name)].join(' ')).includes(q);
 }
+
 export function retryDue(note, now = Date.now()) {
     return note.linking?.status === 'pending' && (note.linking.attempts || 0) < 3 && (note.linking.nextAttemptAt || 0) <= now;
 }

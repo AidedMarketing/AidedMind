@@ -274,6 +274,7 @@ try {
             await page.getByRole('button', { name: 'Close Map list' }).click();
             const theme = page.locator('.graph-legend button').first();
             await theme.click();
+            await page.waitForTimeout(3000); // capture the settled map, including its final fit
             await screenshot('topic-neighborhood');
             await page.getByRole('button', { name: 'Show Map as a list' }).click();
             assert.ok(await page.locator('.graph-access-item').count() < 4);
@@ -288,7 +289,10 @@ try {
             await mapGeometry();
             await page.setViewportSize({ width: config.width, height: config.height });
             await page.getByRole('button', { name: 'Color by source' }).click();
+            assert.equal(await page.getByRole('button', { name: 'Color by theme' }).getAttribute('aria-pressed'), 'false');
             await page.getByRole('button', { name: 'Toggle shared ideas' }).click();
+            assert.equal(await page.getByRole('button', { name: 'Toggle shared ideas' }).getAttribute('aria-pressed'), 'false');
+            assert.equal(await page.getByRole('button', { name: 'Toggle shared ideas' }).evaluate((button) => button.classList.contains('on')), false);
         });
         await check(label + ' focused Map and Fit All', async () => {
             await goto('graph?focus=a');
@@ -315,6 +319,13 @@ try {
             await page.getByRole('button', { name: 'Manage topics', exact: true }).click();
             await page.getByRole('dialog').getByRole('button', { name: /Learning.*2 pieces/ }).click();
             await page.getByRole('dialog').getByRole('button', { name: /Marketing/ }).click();
+            await page.evaluate(() => {
+                window.qaMergeTransaction = IDBDatabase.prototype.transaction;
+                IDBDatabase.prototype.transaction = function(...args) { if (args[1] === 'readwrite') throw Error('Could not save topic changes'); return window.qaMergeTransaction.apply(this, args); };
+            });
+            await page.getByRole('button', { name: 'Merge topics', exact: true }).click();
+            await page.getByRole('alert').filter({ hasText: 'Could not save topic changes' }).waitFor();
+            await page.evaluate(() => { IDBDatabase.prototype.transaction = window.qaMergeTransaction; });
             await page.getByRole('button', { name: 'Merge topics', exact: true }).click();
             await page.getByRole('button', { name: 'Undo last merge', exact: true }).waitFor();
             let saved = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()));

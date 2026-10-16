@@ -1602,10 +1602,11 @@ function graphView(params = new URLSearchParams()) {
         saveSettings({ ...getSettings(), mapColor: settings.mapColor }); graph.colorBy = settings.mapColor; graph.draw();
         colorButton.setAttribute('aria-label', settings.mapColor === 'theme' ? 'Color by source' : 'Color by theme');
         colorButton.setAttribute('aria-pressed', String(settings.mapColor === 'theme'));
+        colorButton.classList.toggle('on', settings.mapColor === 'theme');
     });
     conceptsButton.addEventListener('click', () => {
         settings.showConcepts = !settings.showConcepts; saveSettings({ ...getSettings(), showConcepts: settings.showConcepts });
-        conceptsButton.setAttribute('aria-pressed', String(settings.showConcepts)); refresh();
+        conceptsButton.setAttribute('aria-pressed', String(settings.showConcepts)); conceptsButton.classList.toggle('on', settings.showConcepts); refresh();
     });
     view.classList.add('full');
     view.replaceChildren(h('div', { class: 'graph-page' },

@@ -14,6 +14,10 @@ test('canonical aliases merge acronyms without conflating related concepts', () 
     assert.equal(a.concepts.length, 2);
     assert.equal(a.concepts[1].name, 'Neuroplasticity');
     assert.equal(buildThemes([a, b]).themes.length, 1);
+    assert.ok(matchesNote(a, 'AI'));
+    assert.ok(matchesNote(a, 'LLM'));
+    assert.ok(matchesNote(piece('title', 'News', { title: 'AI: a new tool' }), 'AI'));
+    assert.equal(matchesNote(piece('unrelated', 'News', { title: 'Paid subscriptions' }), 'AI'), false);
 });
 test('merged aliases survive backup and classify subsequent captures', () => {
     const notes = ['Habit building', 'Habit formation'].map((topic, i) => normalizeKnowledge(piece(String(i), topic)));

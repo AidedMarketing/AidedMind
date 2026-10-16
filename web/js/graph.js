@@ -378,7 +378,7 @@ export class GraphView {
         const nodes = this.nodes;
         const alpha = this.alpha;
         const clustered = this.clustered();
-        const repulsion = clustered ? 850 : 1800;
+        const repulsion = clustered ? 1500 : 1800;
 
         for (let i = 0; i < nodes.length; i++) {
             const a = nodes[i];
@@ -421,7 +421,7 @@ export class GraphView {
             const dy = target.y - source.y;
             const dist = Math.sqrt(dx * dx + dy * dy) || 1;
             const sameGroup = source.layoutGroup && source.layoutGroup === target.layoutGroup;
-            const ideal = link.kind === 'concept' ? (sameGroup ? 58 : 105) : (sameGroup ? 72 : 155);
+            const ideal = link.kind === 'concept' ? (sameGroup ? 85 : 105) : (sameGroup ? 95 : 155);
             const strength = (link.kind === 'concept' ? 0.045 : (sameGroup ? 0.11 : 0.026)) * alpha;
             const k = ((dist - ideal) / dist) * strength;
             source.vx += dx * k; source.vy += dy * k;
@@ -432,7 +432,7 @@ export class GraphView {
             nodes.forEach((node) => {
                 const anchor = node.layoutGroup && this.clusterAnchors.get(node.layoutGroup);
                 if (!anchor) return;
-                const strength = node.isNote ? (node.layoutGroup === '__unsorted__' ? 0.075 : 0.14) : 0.09;
+                const strength = node.isNote ? (node.layoutGroup === '__unsorted__' ? 0.04 : 0.05) : 0.025;
                 node.vx += (anchor.x - node.x) * strength * alpha;
                 node.vy += (anchor.y - node.y) * strength * alpha;
             });
