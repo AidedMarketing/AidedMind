@@ -1,6 +1,7 @@
+import { sourceQuality } from './source-quality.js';
 // Shared, deterministic vocabulary and processing rules. Knowledge metadata
 // travels with each note, so backups retain aliases and manual decisions.
-export const KNOWLEDGE_VERSION = 2;
+export const KNOWLEDGE_VERSION = 3;
 const TERMS = [
     ['Artificial Intelligence', 'AI'], ['Machine Learning', 'ML'],
     ['Large Language Models', 'LLM', 'LLMs', 'Large Language Model'],
@@ -43,7 +44,8 @@ export function normalizeKnowledge(note, library = []) {
     return { ...note, topic, topicId: owner?.topicId || note.topicId || termId(topic), concepts,
         topicAliases: [...new Set([...(note.topicAliases || []), ...(owner?.topicAliases || [])])],
         knowledgeVersion: KNOWLEDGE_VERSION, sourceVersion: sourceVersion(note),
-        knowledgeState: note.source?.partial ? 'provisional' : 'ready' };
+        sourceQuality: sourceQuality({ ...note.source, text: note.sourceText || '', confirmed: note.source?.textConfirmedVersion === sourceVersion(note) }),
+        knowledgeState: sourceQuality({ ...note.source, text: note.sourceText || '', confirmed: note.source?.textConfirmedVersion === sourceVersion(note) }).status === 'ready' ? 'ready' : 'provisional' };
 }
 export function mergeTopics(notes, fromId, toId) {
     const from = notes.filter((n) => topicIdentity(n) === fromId);

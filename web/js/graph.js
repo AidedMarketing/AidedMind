@@ -1,3 +1,4 @@
+import { groundedConcept } from './source-quality.js';
 import { conceptKey, canonicalName, linkBlocked, matchesNote } from './knowledge.js';
 // Canvas force-directed graph, Obsidian style: drag, pan, pinch/wheel zoom,
 // hover highlights neighbours, click opens a note.
@@ -46,7 +47,7 @@ export function buildGraph(notes, { showConcepts = true, focusId = null, depth =
     if (showConcepts) {
         notes.forEach((note) => (note.concepts || []).forEach((concept) => {
             const key = conceptKey(concept);
-            if (!key) return;
+            if (!key || !groundedConcept(concept, note.sourceText)) return;
             if (!concepts.has(key)) concepts.set(key, { name: canonicalName(typeof concept === 'string' ? concept : concept.name), notes: new Set() });
             concepts.get(key).notes.add(note.id);
         }));

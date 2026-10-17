@@ -7,6 +7,7 @@ import { summarizeCosts, recordClaude } from './costs.js';
 import { checkServices } from './transcripts.js';
 import { assignTopics } from './topics.js';
 import { suggestConnections } from './connections.js';
+import { reviewOrganization } from './organization.js';
 import { compactVocabulary, DEPTH_CHOICES } from './analyze.js';
 
 export { currentMonth };
@@ -196,6 +197,14 @@ const routes = [
             await store.releaseCapture(month);
             throw error;
         }
+    }, { auth: true }],
+
+    ['POST', /^\/api\/organization$/, async (request, env, user) => {
+        const { source } = await readJson(request, 1024 * 1024);
+        if (!source || typeof source !== 'object') throw new HttpError(400, 'Send the captured source to review.');
+        const result = await reviewOrganization(source, env);
+        if (result.model) await recordClaude(userStore(env, user.id), currentMonth(), result.model, result.tokens);
+        return json({ proposal: result.proposal });
     }, { auth: true }],
 
     // Suggests links from a note the server broke down in the background to

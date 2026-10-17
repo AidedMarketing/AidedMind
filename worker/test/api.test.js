@@ -63,7 +63,7 @@ test('source endpoint blocks private addresses', async () => {
     }
 });
 
-test('analyze calls Claude, keeps only known connections and meters usage', async (t) => {
+test('analyze extracts from the source alone and meters usage', async (t) => {
     const stub = await anthropicStub(() => claudeReply());
     t.after(() => stub.close());
     const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
@@ -73,7 +73,7 @@ test('analyze calls Claude, keeps only known connections and meters usage', asyn
     });
     const data = await res.json();
     assert.strictEqual(res.status, 200, JSON.stringify(data));
-    assert.deepStrictEqual(data.analysis.connections.map((c) => c.noteId), ['n1']);
+    assert.deepStrictEqual(data.analysis.connections, []);
     assert.deepStrictEqual(data.analysis.tags, ['big-idea']);
     assert.deepStrictEqual(data.usage.limit, null);
 
@@ -92,26 +92,22 @@ test('analyze calls Claude, keeps only known connections and meters usage', asyn
     assert.deepStrictEqual(usage, { captures: 1, inputTokens: 120, outputTokens: 40 });
 });
 
-test('analyze caps the library index and passes known concepts', async (t) => {
+test('source extraction never receives library vocabulary or existing note contents', async (t) => {
     const stub = await anthropicStub(() => claudeReply());
     t.after(() => stub.close());
     const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
-    const library = Array.from({ length: 90 }, (_, i) => ({ id: `n${i}`, title: `Note ${i}` }));
-    const concepts = ['Memory', 'memory', ' Sleep ', '', ...Array.from({ length: 300 }, (_, i) => `c${i}`)];
-    const res = await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: { source: { text: 'hello world' }, library, concepts } });
+    const res = await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: {
+        source: { text: 'Original source about budgeting.' },
+        library: [{ id: 'unrelated', title: 'Private unrelated library title', topic: 'Personal Development' }],
+        concepts: ['Act first, identity catches up later'], topics: ['Personal Development']
+    } });
     assert.strictEqual(res.status, 200);
-    const text = stub.requests[0].body.messages[0].content[0].text;
-    const index = JSON.parse(text.match(/<library_index>\n(.*)\n<\/library_index>/)[1]);
-    assert.strictEqual(index.length, 60);
-    const known = JSON.parse(text.match(/<known_concepts>\n(.*)\n<\/known_concepts>/)[1]);
-    assert.deepStrictEqual(known.slice(0, 3), ['Memory', 'Sleep', 'c0']);
-    assert.strictEqual(known.length, 200);
-
-    await call(app, env, 'POST', '/api/analyze', { token: 'owner-secret', body: { source: { text: 'hello world' }, library: [] } });
-    assert.doesNotMatch(stub.requests[1].body.messages[0].content[0].text, /known_concepts/);
+    const prompt = JSON.stringify(stub.requests[0].body.messages);
+    assert.doesNotMatch(prompt, /Private unrelated library title|Act first, identity catches up later|known_topics|known_concepts|library_index/);
+    assert.match(prompt, /Original source about budgeting/);
 });
 
-test('analyze asks for a main topic and passes known topics', async (t) => {
+test('analyze asks for a specific main subject without inheriting known topics', async (t) => {
     const stub = await anthropicStub(() => ({ json: { ...claudeReply().json, content: [{ type: 'text', text: JSON.stringify({ ...ANALYSIS, topic: ' Journaling. ' }) }] } }));
     t.after(() => stub.close());
     const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
@@ -124,9 +120,8 @@ test('analyze asks for a main topic and passes known topics', async (t) => {
     const sent = stub.requests[0].body;
     assert.ok(sent.output_config.format.schema.required.includes('topic'));
     const text = sent.messages[0].content[0].text;
-    assert.deepStrictEqual(JSON.parse(text.match(/<known_topics>\n(.*)\n<\/known_topics>/)[1]), ['Sleep', 'Artificial Intelligence']);
-    assert.match(text, /"topic":"Sleep"/);
-    assert.match(sent.system, /not what it mentions in passing|passing mention/);
+    assert.doesNotMatch(text, /known_topics|Sleep/);
+    assert.match(sent.system, /Choose the most useful specific subject/);
 });
 
 test('topics endpoint sorts existing notes in one quick call and meters it', async (t) => {
@@ -143,7 +138,7 @@ test('topics endpoint sorts existing notes in one quick call and meters it', asy
     const sent = stub.requests[0].body;
     assert.strictEqual(sent.model, 'claude-haiku-4-5');
     assert.strictEqual(sent.thinking, undefined);
-    assert.match(sent.messages[0].content, /<known_topics>/);
+    assert.doesNotMatch(sent.messages[0].content, /<known_topics>/);
     const usage = await env.STORE.get('user:owner').usageFor(new Date().toISOString().slice(0, 7));
     assert.strictEqual(usage.captures, 1);
 

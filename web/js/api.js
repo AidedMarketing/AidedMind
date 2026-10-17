@@ -1,5 +1,7 @@
+import { organizationSource } from './organization.js';
+import { sourceQuality } from './source-quality.js';
 // Talks to the AidedMind server. Settings live in localStorage.
-import { relatedNotes, conceptVocabulary, knownTopics, findDuplicate } from './library.js';
+import { relatedNotes, findDuplicate } from './library.js';
 import { looksPaywalled } from './paywall.js';
 
 const SETTINGS_KEY = 'aidedmind.settings';
@@ -77,7 +79,7 @@ export function splitInput(raw) {
 }
 
 function libraryIndex(notes, source = {}) {
-    return notes.map((note) => ({
+    return notes.filter((note) => sourceQuality(organizationSource(note)).status === 'ready').map((note) => ({
         id: note.id,
         title: note.title,
         topic: note.topic || '',
@@ -165,12 +167,9 @@ export async function capture({ url, text, title, depth, photos, retry, replace,
         if (resolved) replaces = resolved;
         source.sharedUrl = url;
     }
-    // Only the notes likely to connect are sent, plus the library's common
-    // concept names, so the cost per breakdown stays flat as the library grows.
+    // Extract from this source alone. Matching runs after the piece is saved.
     const others = replaces ? notes.filter((n) => n.id !== replaces.id) : notes;
-    const related = relatedNotes(others, source);
-    const body = { source, library: libraryIndex(related, source), depth: depth || getSettings().depth, topics: knownTopics(others) };
-    if (related.length < others.length) body.concepts = conceptVocabulary(others);
+    const body = { source, library: [], depth: depth || getSettings().depth };
     const result = await request('POST', '/analyze', body);
     setLastUsage(result.usage);
     if (source.images) {
@@ -179,7 +178,7 @@ export async function capture({ url, text, title, depth, photos, retry, replace,
         source = { ...rest, text: augment ? [source.text, result.analysis.sourceText].filter(Boolean).join('\n\n') : result.analysis.sourceText || source.text,
             imageCount: source.imageCount };
     }
-    return { source, analysis: result.analysis, model: result.model, depth: result.depth, auto: result.auto, usage: result.usage, replaces: replaces?.id || null };
+    return { source, analysis: result.analysis, model: result.model, depth: result.depth, auto: result.auto, usage: result.usage, linking: { status: others.length ? 'pending' : 'complete', attempts: 0 }, replaces: replaces?.id || null };
 }
 
 export function getLastUsage() {
@@ -225,14 +224,34 @@ export async function putPreferences(prefs) {
 }
 
 // Links from a note the server broke down in the background to your library.
+export async function reviewOrganization(note) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90000);
+    try {
+        const result = await request('POST', '/organization', { source: {
+            title: note.source?.title || note.title, sourceType: note.source?.sourceType || 'text',
+            partial: Boolean(note.source?.partial), confirmed: organizationSource(note).confirmed, text: note.sourceText || ''
+        } }, { signal: controller.signal });
+        if (!result.proposal || !['ready', 'needs-review'].includes(result.proposal.quality?.status) ||
+            (result.proposal.quality.status === 'ready' && (!result.proposal.topic || !Array.isArray(result.proposal.concepts) || !Array.isArray(result.proposal.tags)))) {
+            throw new Error('The organization review did not finish. Try again.');
+        }
+        return result.proposal;
+    } finally { clearTimeout(timer); }
+}
+
 export async function suggestConnections(analysis, source, notes) {
     if (!notes.length) return [];
-    const related = relatedNotes(notes, { title: analysis.title, text: `${analysis.tldr} ${(analysis.concepts || []).map((c) => c.name).join(' ')} ${source.text || ''}` });
+    const context = { sourceType: analysis.source?.sourceType || source.sourceType || 'text', partial: analysis.source?.partial ?? source.partial, confirmed: organizationSource(analysis).confirmed, text: source.text || '' };
+    if (sourceQuality(context).status !== 'ready') return [];
+    const candidates = notes.filter((note) => sourceQuality(organizationSource(note)).status === 'ready');
+    const related = relatedNotes(candidates, { title: analysis.title, text: `${analysis.tldr} ${(analysis.concepts || []).map((c) => c.name).join(' ')} ${source.text || ''}` });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 90000);
     try {
         const result = await request('POST', '/connections', {
             note: {
+                sourceType: context.sourceType, partial: Boolean(context.partial), confirmed: context.confirmed,
                 title: analysis.title,
                 sourceText: source.text || '',
                 topic: analysis.topic || '',

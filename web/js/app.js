@@ -1,6 +1,8 @@
+import { organizationSource, organizationStamp, organizationSummary, queueOrganization, applyOrganization, undoOrganization } from './organization.js';
+import { sourceQuality } from './source-quality.js';
 import { normalizeKnowledge, topicIdentity, mergeTopics, renameTopic, splitTopic, undoTopicChange, connectionReview, mergeConnections, linkBlocked, sourceVersion, retryDue, failedLinking, matchesNote, conceptKey } from './knowledge.js';
 import { allNotes, saveNote, saveMany, updateMany, updateNote, deleteNote, newId } from './db.js';
-import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, queueInboxItem, removeInboxItem, updateInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, getLastUsage, adminListUsers, adminCreateUser, connectionSetupIssue } from './api.js';
+import { capture, DuplicateError, checkAuth, getSettings, saveSettings, splitInput, fetchInbox, queueInboxItem, removeInboxItem, updateInboxItem, serverBase, fetchHealth, assignTopics, putPreferences, suggestConnections, reviewOrganization, getLastUsage, adminListUsers, adminCreateUser, connectionSetupIssue } from './api.js';
 import { buildGraph, GraphView } from './graph.js';
 import { buildThemes, THEME_DETAIL } from './themes.js';
 import { knownTopics, conceptVocabulary, knownUrlHashes, findDuplicate, preserveUpdatedNote } from './library.js';
@@ -57,7 +59,7 @@ function depthLabel(depth) {
 }
 const TIP_KEY = 'aidedmind.tipDismissed';
 // Matches the service worker cache version, so Settings shows which build is running.
-const APP_VERSION = '35';
+const APP_VERSION = '36';
 
 let notes = [];
 let activeMap = null;
@@ -213,7 +215,7 @@ function noteRow(note) {
                     const topic = note.topic || theme?.label;
                     return topic ? [h('span', { class: 'meta-topic' }, topicMark(topic, theme ? theme.color : null)), ' · '] : null;
                 })(),
-                [origin, readingTime(note), note.source?.partial ? 'Needs your help' : 'Ready', relativeDate(note.createdAt)].filter(Boolean).join(' · '))
+                [origin, readingTime(note), note.sourceQuality?.status === 'needs-review' ? 'Check captured text' : 'Ready', relativeDate(note.createdAt)].filter(Boolean).join(' · '))
         ),
         links ? h('span', { class: 'connection-glyph', 'aria-label': `${links} connection${links === 1 ? '' : 's'}` },
             icon('graph', { size: 15, strokeWidth: 2 }), String(links)) : null
@@ -333,6 +335,7 @@ function buildNote(result, title) {
             wordCount: result.source.wordCount || (result.source.sourceType === 'article' ? (result.source.text.match(/\S+/g) || []).length : 0)
         },
         sourceText: result.source.text,
+        processingVersion: 3,
         title: title || a.title || result.source.title || 'Untitled',
         topic: a.topic || '',
         tldr: a.tldr,
@@ -392,6 +395,10 @@ async function finishNote(result, title) {
     const previous = result.replaces && notes.find((n) => n.id === result.replaces);
     if (previous) {
         note = preserveUpdatedNote(note, previous);
+        if (previous.organizationReview) {
+            const quality = sourceQuality(organizationSource(note));
+            note.organizationReview = { ...previous.organizationReview, status: quality.status === 'ready' ? 'corrected' : 'blocked', quality };
+        }
         note.connections = keepAllowedLinks(note, note.connections);
     }
     note.connections = (note.connections || []).map((connection) => ({
@@ -848,7 +855,7 @@ function noteView(id) {
         }
     }, name)));
 
-    const origin = [note.source?.author || note.source?.siteName || hostOf(note.source?.url), readingTime(note), note.source?.partial ? 'Needs your help' : 'Ready', relativeDate(note.createdAt)].filter(Boolean).join(' · ');
+    const origin = [note.source?.author || note.source?.siteName || hostOf(note.source?.url), readingTime(note), note.sourceQuality?.status === 'needs-review' ? 'Check captured text' : 'Ready', relativeDate(note.createdAt)].filter(Boolean).join(' · ');
     render(
         h('div', { class: 'source-line' }, sourceTile(type, 14), h('span', {}, `${SOURCE_LABELS[type]}${origin ? ` · ${origin}` : ''}`)),
         h('h1', { class: 'note-title' }, note.title),
@@ -860,6 +867,9 @@ function noteView(id) {
             // Sharing the link again only helps when the service that failed might work next time.
             note.source.url && note.source.transcriptSource !== 'paywall' ? ' Share the link again to retry.' : null
         ) : null,
+        !note.source?.partial && note.sourceQuality?.status === 'needs-review' ? h('p', { class: 'partial-note' }, note.sourceQuality.reason,
+            h('button', { type: 'button', class: 'btn block', onclick: () => checkSavedTextSheet(note) }, 'Check captured text'),
+            h('button', { type: 'button', class: 'btn block', onclick: () => pasteFullTextSheet(note) }, 'Import full text')) : null,
         note.source?.wordCount ? h('p', { class: 'small muted' }, `${note.source.wordCount.toLocaleString()} words captured${note.source.captureKind === 'safari' ? ' from Safari' : ''}.${note.source.imageCount ? ` This page has images AidedMind may not have read (${note.source.imageCount}).` : ''}`,
             note.source.imageCount ? h('button', { type: 'button', class: 'btn small-btn', onclick: () => addScreenshots(note) }, 'Add screenshots') : null) : null,
         (() => {
@@ -1169,6 +1179,179 @@ function topicSheet(note) {
     );
 }
 
+// Organization proposals are saved separately from accepted knowledge.
+let organizationTimer;
+let organizationRunning = false;
+let organizationActiveId = null;
+function refreshOrganization() {
+    document.querySelectorAll('[data-organization-review]').forEach((panel) => panel.refresh());
+}
+function scheduleOrganization() {
+    clearTimeout(organizationTimer);
+    if (notes.some((note) => note.organizationReview?.status === 'pending' && !note.organizationReview.paused) && getSettings().token) {
+        organizationTimer = setTimeout(runOrganization, 1000);
+    }
+}
+async function runOrganization() {
+    if (organizationRunning) return;
+    const run = async () => {
+        if (pending || inboxRunning || linkRetryRunning || navigator.onLine === false || !getSettings().token || ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+            clearTimeout(organizationTimer); organizationTimer = setTimeout(runOrganization, 10000); return;
+        }
+        organizationRunning = true;
+        try {
+            notes = await allNotes();
+            const ids = notes.filter((note) => note.organizationReview?.status === 'pending' && !note.organizationReview.paused).slice(0, 3).map((note) => note.id);
+            for (const id of ids) {
+                notes = await allNotes();
+                const note = notes.find((current) => current.id === id);
+                const review = note?.organizationReview;
+                if (!review || review.status !== 'pending' || review.paused || pending || inboxRunning || navigator.onLine === false) continue;
+                const valid = (current) => current.organizationReview?.id === review.id && current.organizationReview.status === 'pending' && current.organizationReview.stamp === review.stamp;
+                organizationActiveId = id; refreshOrganization();
+                try {
+                    const proposal = await reviewOrganization(note);
+                    await updateNote(id, (current) => !valid(current) ? null : { ...current, organizationReview: { ...current.organizationReview,
+                        status: organizationStamp(current) !== review.stamp ? 'stale' : proposal.quality.status === 'ready' ? 'ready' : 'blocked', proposal, quality: proposal.quality } });
+                } catch {
+                    await updateNote(id, (current) => valid(current) ? { ...current, organizationReview: { ...current.organizationReview, status: 'failed' } } : null);
+                }
+                organizationActiveId = null; notes = await allNotes(); refreshOrganization();
+            }
+        } catch {
+            document.querySelectorAll('[data-organization-review] .error').forEach((element) => { element.textContent = 'Could not save review progress. Reopen AidedMind to resume the saved review.'; });
+        } finally {
+            organizationRunning = false; organizationActiveId = null;
+            refreshOrganization(); scheduleOrganization(); scheduleLinkRetry();
+        }
+    };
+    if (navigator.locks?.request) await navigator.locks.request('aidedmind.organization-review', { ifAvailable: true }, async (lock) => {
+        if (lock) await run(); else { notes = await allNotes(); refreshOrganization(); scheduleOrganization(); }
+    });
+    else await run();
+}
+function organizationSheet({ start = false } = {}) {
+    const current = organizationSummary(notes);
+    if (start || !current.total) {
+        const eligible = notes.filter((note) => sourceQuality(organizationSource(note)).status === 'ready').length;
+        const error = h('p', { class: 'small error', role: 'alert' });
+        const submit = h('button', { type: 'button', class: 'btn primary block', disabled: !notes.length, onclick: async () => {
+            submit.disabled = true;
+            try {
+                const id = newId(), startedAt = new Date().toISOString();
+                await updateMany((latest) => queueOrganization(latest, id, startedAt));
+                notes = await allNotes(); organizationSheet(); scheduleOrganization();
+            } catch (failure) { error.textContent = failure.message; submit.disabled = false; }
+        } }, 'Prepare preview');
+        openSheet(h('h3', {}, 'Review organization'), h('p', { class: 'small muted' },
+            `Review topics, concepts and tags from the original captured text. Preparing this preview uses up to ${eligible} model requests and model tokens. Summaries and your own topic choices stay. Keep AidedMind open; progress is saved if you leave.`),
+            h('p', { class: 'small muted' }, 'Pieces with missing or potentially incomplete text are flagged for correction. Nothing changes until you apply selected proposals. Applying also queues connection checks across your library, with up to three attempts per piece.'),
+            error, h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel'), submit);
+        return;
+    }
+    const selected = new Set(current.members.filter((note) => note.organizationReview.status === 'ready').map((note) => note.id));
+    const touched = new Set();
+    const rows = new Map();
+    let limit = 10, changing = false;
+    const summary = h('p', { class: 'small', role: 'status', 'aria-live': 'polite', tabindex: '-1' });
+    const progress = h('progress', { 'aria-label': 'Organization review progress' });
+    const help = h('p', { class: 'small muted' });
+    const error = h('p', { class: 'small error', role: 'alert' });
+    const list = h('div', { class: 'organization-list' });
+    const selection = h('p', { class: 'small muted', role: 'status' });
+    const more = h('button', { type: 'button', class: 'btn block', onclick: () => {
+        const previousLimit = limit; limit += 10; panel.refresh();
+        const item = list.children[previousLimit];
+        if (item) { const target = item.querySelector('input, a'); if (target) target.focus(); else { item.tabIndex = -1; item.focus(); } }
+    } }, 'Load more pieces');
+    const change = async (button, transform, success) => {
+        if (changing) return;
+        changing = true; error.textContent = ''; button.disabled = true;
+        try {
+            await updateMany(transform); notes = await allNotes(); panel.refresh();
+            if (success) toast(success());
+            scheduleOrganization(); refreshConnectionReview(); scheduleLinkRetry();
+        } catch (failure) { error.textContent = failure.message; }
+        finally {
+            changing = false; panel.refresh();
+            if (panel.isConnected) (button.hidden || button.disabled ? summary : button).focus({ preventScroll: true });
+        }
+    };
+    const pause = h('button', { type: 'button', class: 'btn block', onclick: (event) => {
+        const review = organizationSummary(notes);
+        change(event.currentTarget, (latest) => latest.map((note) => note.organizationReview?.id === review.id && note.organizationReview.status === 'pending'
+            ? { ...note, organizationReview: { ...note.organizationReview, paused: !review.paused } } : note));
+    } });
+    const retry = h('button', { type: 'button', class: 'btn block', onclick: (event) => {
+        const { id, paused } = organizationSummary(notes);
+        change(event.currentTarget, (latest) => latest.map((note) => note.organizationReview?.id === id && ['failed', 'stale'].includes(note.organizationReview.status)
+            ? { ...note, organizationReview: { ...note.organizationReview, stamp: organizationStamp(note), paused, status: 'pending' } } : note));
+    } }, 'Retry failed or changed pieces');
+    let appliedResult;
+    const apply = h('button', { type: 'button', class: 'btn primary block', onclick: (event) => {
+        const id = organizationSummary(notes).id, connectionId = newId(), startedAt = new Date().toISOString();
+        change(event.currentTarget, (latest) => { appliedResult = applyOrganization(latest, [...selected], id, connectionId, startedAt); return appliedResult.notes; },
+            () => `${appliedResult.applied} organization changes applied${appliedResult.stale ? `; ${appliedResult.stale} changed pieces skipped` : ''}`);
+    } }, 'Apply selected changes');
+    let undoResult;
+    const undo = h('button', { type: 'button', class: 'btn block', onclick: (event) => {
+        const id = organizationSummary(notes).id, connectionId = newId(), startedAt = new Date().toISOString();
+        change(event.currentTarget, (latest) => { undoResult = undoOrganization(latest, id, connectionId, startedAt); return undoResult.notes; }, () => `${undoResult.restored} organization changes undone`);
+    } }, 'Undo organization changes');
+    const panel = h('div', { class: 'connection-review organization-review', 'data-organization-review': '' }, summary, progress, help, error, pause, retry,
+        list, more, selection, h('p', { class: 'small muted' }, `Applying or undoing queues up to ${notes.length} initial connection checks across this library, using model tokens. Summaries, source text and personal notes stay. Connection checks use the separate Pause/Resume controls in Review library connections.`), apply, undo);
+    panel.refresh = () => {
+        const focused = panel.contains(document.activeElement) ? document.activeElement : null;
+        const review = organizationSummary(notes);
+        summary.textContent = [`${review.ready} ready`, `${review.pending} remaining`, review.failed ? `${review.failed} failed` : '',
+            review.blocked ? `${review.blocked} need text` : '', review.stale ? `${review.stale} changed` : '',
+            review.applied ? `${review.applied} applied` : '', review.restored ? `${review.restored} undone` : '', review.corrected ? `${review.corrected} updated` : ''].filter(Boolean).join(' · ');
+        progress.max = Math.max(1, review.total); progress.value = review.total - review.pending;
+        help.textContent = review.paused ? 'Paused. An active request may finish.' : navigator.onLine === false ? 'Waiting for a connection.'
+            : organizationActiveId ? 'Checking one source. Your saved organization stays until you apply proposals.'
+            : review.pending ? 'Keep AidedMind open. Review waits while you capture or type.' : 'Review the proposals below. Pieces needing text can be opened and corrected first.';
+        pause.hidden = !review.pending; pause.disabled = changing; pause.textContent = review.paused ? 'Resume organization review' : 'Pause organization review';
+        retry.hidden = !review.failed && !review.stale; retry.disabled = changing;
+        const visible = review.members.slice(0, limit), visibleIds = new Set(visible.map((note) => note.id));
+        for (const [id, item] of rows) { if (!visibleIds.has(id)) { item.element.remove(); rows.delete(id); } }
+        visible.forEach((note) => {
+            const state = note.organizationReview;
+            const key = JSON.stringify([state.status, note.topic, note.topicByUser, state.proposal]);
+            if (state.status === 'ready' && !touched.has(note.id)) selected.add(note.id);
+            if (state.status !== 'ready') selected.delete(note.id);
+            if (rows.get(note.id)?.key === key) return;
+            const topic = note.topicByUser ? `${note.topic} (kept: your choice)` : `${note.topic || 'No topic'} → ${state.proposal?.topic || 'Checking'}`;
+            const check = state.status === 'ready' ? h('label', { class: 'topic-piece-choice' },
+                h('input', { type: 'checkbox', checked: selected.has(note.id), onchange: (event) => {
+                    touched.add(note.id); if (event.currentTarget.checked) selected.add(note.id); else selected.delete(note.id); panel.refresh();
+                } }), h('span', {}, note.title)) : h('h4', { class: 'small' }, note.title);
+            const item = h('section', { class: 'organization-piece', 'data-note-id': note.id }, check,
+                h('p', { class: 'small muted' }, state.status === 'ready' ? topic : state.status === 'blocked' ? state.quality.reason
+                    : state.status === 'failed' ? 'The check could not finish. Retry when ready.' : state.status === 'stale' ? 'This piece changed. Review it again before applying.'
+                    : state.status === 'corrected' ? 'Organization rebuilt from the current source.' : state.status === 'applied' ? 'Organization changes applied.' : state.status === 'restored' ? 'Organization changes undone.' : 'Waiting for review.'),
+                state.status === 'ready' ? h('details', {}, h('summary', {}, `Concepts: ${(note.concepts || []).length} → ${state.proposal.concepts.length}`),
+                    state.proposal.concepts.map((concept) => h('div', { class: 'organization-concept' }, h('strong', { class: 'small' }, concept.name),
+                        h('p', { class: 'small' }, concept.description), h('blockquote', { class: 'small muted' }, concept.evidence))),
+                    h('p', { class: 'small muted' }, `Tags: ${state.proposal.tags.join(', ') || 'None'}`)) : null,
+                state.status === 'blocked' ? h('a', { class: 'btn block', href: `#/note/${encodeURIComponent(note.id)}` }, 'Open piece to check text') : null);
+            if (rows.has(note.id)) rows.get(note.id).element.replaceWith(item); else list.append(item);
+            rows.set(note.id, { key, element: item });
+        });
+        const available = new Set(review.members.filter((note) => note.organizationReview.status === 'ready').map((note) => note.id));
+        const count = [...selected].filter((id) => available.has(id)).length;
+        selection.textContent = `${count} proposals selected. Showing ${visible.length} of ${review.total} pieces.`;
+        apply.disabled = changing || !count; undo.hidden = !review.applied; undo.disabled = changing;
+        more.hidden = visible.length >= review.total;
+        if (focused && !focused.isConnected) summary.focus({ preventScroll: true });
+    };
+    const sheet = openSheet(h('h3', {}, 'Organization preview'), panel,
+        !current.pending ? h('button', { type: 'button', class: 'btn block', onclick: () => organizationSheet({ start: true }) }, 'Start a new review') : null,
+        h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Close'));
+    sheet.classList.add('organization-sheet');
+    sheet.querySelector('.sheet-close').focus({ preventScroll: true });
+    panel.refresh();
+}
+
 function refreshConnectionReview() {
     document.querySelectorAll('[data-connection-review]').forEach((panel) => panel.refresh());
 }
@@ -1450,6 +1633,26 @@ async function retryTranscript(note) {
 
 // Keep an unfinished import in memory when the sheet closes or a request fails.
 const fullTextDrafts = new Map();
+function checkSavedTextSheet(note) {
+    const version = sourceVersion(note);
+    const error = h('p', { class: 'small error', role: 'alert' });
+    const submit = h('button', { type: 'button', class: 'btn primary block', onclick: async () => {
+        submit.disabled = true;
+        try {
+            const saved = await updateNote(note.id, (current) => {
+                if (sourceVersion(current) !== version) throw new Error('This piece changed. Open its captured text again.');
+                return normalizeKnowledge({ ...current, source: { ...current.source, textConfirmedVersion: version },
+                    ...(current.organizationReview?.status === 'blocked' ? { organizationReview: { ...current.organizationReview, status: 'stale' } } : {}) }, notes);
+            });
+            if (!saved) throw new Error('This piece is no longer in your library.');
+            notes = await allNotes(); route(); toast('Captured text checked');
+        } catch (failure) { error.textContent = failure.message; submit.disabled = false; }
+    } }, 'Text is complete');
+    openSheet(h('h3', {}, 'Check captured text'), h('p', { class: 'small muted' }, 'Compare this captured text with the original article. Confirm only if it contains the complete piece.'),
+        h('textarea', { class: 'field', rows: '8', readonly: true, 'aria-label': 'Captured text' }, note.sourceText), error,
+        h('button', { type: 'button', class: 'btn block', onclick: closeSheet }, 'Cancel'), submit);
+}
+
 function pasteFullTextSheet(note) {
     const field = h('textarea', { id: 'full-text-input', class: 'field', rows: '6', placeholder: 'Paste the entire article or transcript here',
         'aria-describedby': 'full-text-help full-text-error', oninput: () => {
@@ -1920,6 +2123,7 @@ function settingsView() {
                 h('button', { type: 'button', class: 'btn block', onclick: manageTopicsSheet }, 'Manage topics'),
                 notes.length > 1 ? h('button', { type: 'button', class: 'btn block', onclick: () => reviewLibraryConnectionsSheet() }, 'Review library connections') : null,
                 connectionReviewPanel(),
+                h('button', { type: 'button', class: 'btn block', onclick: () => organizationSheet() }, 'Review organization'),
                 detailText,
                 (() => {
                     // Notes saved before topics existed can be sorted in one go.
@@ -2262,6 +2466,7 @@ function scheduleLinkRetry() {
 }
 async function retryPendingLinks() {
     if (linkRetryRunning) return;
+    if (organizationRunning) { scheduleLinkRetry(); return; }
     // Only one tab may issue connection requests at a time. The queue itself
     // remains in IndexedDB, so a closed tab does not lose pending work.
     if (navigator.locks?.request) {
@@ -2594,14 +2799,15 @@ async function start() {
     }
     syncPreferences();
     scheduleLinkRetry();
-    window.addEventListener('online', () => { refreshConnectionReview(); scheduleLinkRetry(); });
+    scheduleOrganization();
+    window.addEventListener('online', () => { refreshConnectionReview(); refreshOrganization(); scheduleLinkRetry(); scheduleOrganization(); });
     window.addEventListener('offline', refreshConnectionReview);
     drainInbox().then(() => {
         if (getLastUsage()?.limit === null) backfillTopics();
     });
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-            allNotes().then((current) => { notes = current; refreshConnectionReview(); scheduleLinkRetry(); });
+            allNotes().then((current) => { notes = current; refreshConnectionReview(); refreshOrganization(); scheduleLinkRetry(); scheduleOrganization(); });
             drainInbox();
         }
     });

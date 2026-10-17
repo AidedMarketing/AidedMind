@@ -79,8 +79,7 @@ test('a shared article is broken down in the background and waits for the app', 
 
     const sent = stub.requests[0].body;
     const known = sent.messages[0].content[0].text;
-    assert.match(known, /<known_topics>\n\["Habits","Sleep"\]/);
-    assert.match(known, /<known_concepts>\n\["Cue"\]/);
+    assert.doesNotMatch(known, /known_topics|known_concepts|library_index/);
     assert.deepStrictEqual(core.usageFor(month()), { captures: 1, inputTokens: 500, outputTokens: 100 });
     assert.ok(core.costsFor(month()).some((row) => row.item === 'claude:claude-sonnet-5-5:input' && row.amount === 500));
 });
@@ -529,25 +528,20 @@ test('preferences are validated and stored for background breakdowns', async (t)
     assert.strictEqual(env.STORE.get('user:owner').metaGet('prefs').depth, undefined);
 });
 
-test('connections are suggested from the library, and only to known notes', async (t) => {
+test('connections without grounded direct evidence are rejected, including unknown targets', async (t) => {
     const stub = await anthropicStub(() => ({ json: { ...reply('claude-haiku-4-5').json, content: [{ type: 'text', text: JSON.stringify({ connections: [
-        { noteId: 'n1', relation: 'supports', reason: 'Same subject.' }, { noteId: 'n1', relation: 'related', reason: 'dup' }, { noteId: 'ghost', relation: 'related', reason: 'x' }, { noteId: 'n2', relation: 'weird', reason: 'y' }
+        { noteId: 'n1', relation: 'supports', reason: 'Same subject.', confidence: .99 },
+        { noteId: 'ghost', relation: 'related', reason: 'Not a saved piece.', confidence: 1 }
     ] }) }] } }));
     t.after(() => stub.close());
     const env = fakeEnv({ ANTHROPIC_BASE_URL: stub.url });
-    const res = await call(app, env, 'POST', '/api/connections', {
-        token: 'owner-secret',
-        body: { note: { title: 'New', topic: 'Habits', tldr: 't', concepts: ['Cue'], tags: ['habits'] }, library: [{ id: 'n1', title: 'A', topic: 'Habits' }, { id: 'n2', title: 'B' }] }
-    });
-    const data = await res.json();
-    assert.deepStrictEqual(data.connections, [
-        { noteId: 'n1', relation: 'related', reason: 'Same subject.', evidence: null, confidence: 0.8, origin: 'aidedmind' },
-        { noteId: 'n2', relation: 'related', reason: 'y', evidence: null, confidence: 0.8, origin: 'aidedmind' }
-    ]);
+    const res = await call(app, env, 'POST', '/api/connections', { token: 'owner-secret',
+        body: { note: { title: 'New', sourceText: 'Spaced repetition improves memory across days.' }, library: [{ id: 'n1', title: 'A' }] } });
+    assert.deepStrictEqual((await res.json()).connections, []);
     assert.strictEqual(stub.requests[0].body.model, 'claude-haiku-4-5');
     const empty = await call(app, env, 'POST', '/api/connections', { token: 'owner-secret', body: { note: { title: 'New' }, library: [] } });
     assert.deepStrictEqual((await empty.json()).connections, []);
-    assert.strictEqual(stub.requests.length, 1); // nothing to compare with: no call
+    assert.strictEqual(stub.requests.length, 1);
 });
 
 test('a link already in the library is skipped without fetching or spending anything', async (t) => {
