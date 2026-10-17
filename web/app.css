@@ -1069,3 +1069,17 @@ p a:not(.btn), .tip a, .group-footer a { text-decoration: underline; text-underl
 .connection-review progress { display: block; width: 100%; height: 12px; margin: var(--space-3) 0; accent-color: var(--accent); }
 .connection-review .btn { margin-top: var(--space-2); }
 .sheet > .connection-review { margin-bottom: var(--space-2); }
+
+.organization-list { margin: var(--space-3) 0; }
+.organization-piece { padding: var(--space-3) 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.organization-piece:first-child { border-top: 0; }
+.organization-piece h4 { margin: var(--space-2) 0; }
+.organization-piece summary { min-height: 44px; padding: var(--space-3) 0; cursor: pointer; }
+.organization-piece .topic-piece-choice { padding-inline: 0; border: 0; }
+.organization-concept { padding: var(--space-2); }
+.organization-concept blockquote { margin: var(--space-2) 0; padding-left: var(--space-3); border-left: 2px solid var(--accent); }
+.organization-review .error:empty { display: none; }
+.organization-sheet { display: flex; flex-direction: column; overflow: hidden; }
+.organization-sheet > h3, .organization-sheet > .grabber, .organization-sheet > button { flex-shrink: 0; }
+.organization-sheet .organization-review { flex: 1 1 auto; min-height: 0; overflow: auto; max-height: calc(85dvh - 160px); padding-right: var(--space-2); }
+.topic-piece-choice:hover { background: var(--surface-2); }

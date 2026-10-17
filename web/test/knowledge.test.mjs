@@ -55,8 +55,8 @@ test('common concepts cannot turn a focused map into the entire library', () => 
     assert.equal(graph.links.length, 0);
 });
 test('focused concepts expand by note distance and respect rejected pairs', () => {
-    const notes = [piece('a', 'One', { concepts: [{ name: 'Specific idea' }], removedLinks: ['c'] }),
-        piece('b', 'Two', { concepts: [{ name: 'Specific idea' }], connections: [{ noteId: 'c', confidence: .9 }] }), piece('c', 'Three'), piece('d', 'Four')];
+    const notes = [piece('a', 'One', { sourceText: 'A specific idea developed in this captured source.', concepts: [{ name: 'Specific idea', evidence: 'A specific idea developed in this captured source.' }], removedLinks: ['c'] }),
+        piece('b', 'Two', { sourceText: 'A specific idea developed in this captured source.', concepts: [{ name: 'Specific idea', evidence: 'A specific idea developed in this captured source.' }], connections: [{ noteId: 'c', confidence: .9 }] }), piece('c', 'Three'), piece('d', 'Four')];
     assert.deepEqual(buildGraph(notes, { focusId: 'a', depth: 1 }).nodes.filter((n) => n.isNote).map((n) => n.id), ['a', 'b']);
     assert.equal(buildGraph(notes, { focusId: 'a', depth: 3 }).nodes.some((n) => n.id === 'c'), false);
     notes[0].removedLinks = [];

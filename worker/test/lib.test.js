@@ -34,10 +34,10 @@ test('normalize drops unknown connections and dedupes concepts', () => {
         title: ' T ', tldr: 'x',
         summary: [{ heading: 'a', body: 'b' }, { heading: 'e', body: '' }],
         outline: [{ level: 7, text: 'deep' }],
-        concepts: [{ name: 'Spaced repetition', description: 'd' }, { name: 'spaced repetition', description: 'dup' }],
+        concepts: [{ name: 'Spaced repetition', description: 'd', evidence: 'Spaced repetition improves recall over time.' }, { name: 'spaced repetition', description: 'dup', evidence: 'Spaced repetition improves recall over time.' }],
         tags: ['#Memory', 'Learning Science', 'memory'], quotes: ['q'], takeaways: [],
         connections: [{ noteId: 'n1', relation: 'supports', reason: 'r' }, { noteId: 'ghost', relation: 'related', reason: 'r' }]
-    }, new Set(['n1']));
+    }, new Set(['n1']), { sourceText: 'Spaced repetition improves recall over time.' });
     assert.strictEqual(result.summary.length, 1);
     assert.deepStrictEqual(result.outline, [{ level: 3, text: 'deep' }]);
     assert.strictEqual(result.concepts.length, 1);

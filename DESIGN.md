@@ -54,3 +54,6 @@ Topic management uses the shared sheet, semantic grouped-row buttons, explicit m
 
 ## Topic care and connection review, v35
 Topic rename, split and merge extend the shared sheet and grouped rows. Split uses labeled native checkboxes within the bounded piece list; controls and selection counts retain the editorial type hierarchy. Connection review uses a quiet inline status and native progress bar, with the same status panel in its sheet. Existing palette, type and shell tokens remain the visual owners.
+
+## Organization preview, v36
+Organization review extends the shared sheet with a bounded scrolling body, persistent heading and close action, and ten-piece pages through Load more. Labeled native checkboxes select proposals across the reviewed collection; the selected count makes that scope explicit. Source evidence and proposed concepts live in native disclosures. Progress, failure/retry and pause use the existing review styles. Short-article checks use the same source-correction sheet family. Runtime tokens and shell geometry remain unchanged.

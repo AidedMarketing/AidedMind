@@ -5,8 +5,10 @@ import { suggestConnections } from '../src/connections.js';
 import { fakeEnv, anthropicStub } from './helpers.js';
 
 test('analysis and connection responses enforce confidence bounds locally', async (t) => {
+    const source = 'Spaced repetition improves retention over several days.';
+    const target = 'Spaced repetition helps memory across multiple sessions.';
     const connections = [
-        { noteId: 'a', relation: 'related', reason: 'Strong', confidence: 9 },
+        { noteId: 'a', relation: 'related', reason: 'Strong', confidence: 9, basis: 'same-framework', evidence: { source, target } },
         { noteId: 'b', relation: 'related', reason: 'Weak', confidence: -2 }
     ];
     assert.deepEqual(normalize(baseRaw(connections), new Set(['a', 'b'])).connections.map(c => [c.noteId, c.confidence]), [['a', 1]]);
@@ -16,7 +18,7 @@ test('analysis and connection responses enforce confidence bounds locally', asyn
         stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 10 }
     } }));
     t.after(() => stub.close());
-    const result = await suggestConnections({ title: 'New note' }, [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }], fakeEnv({ ANTHROPIC_BASE_URL: stub.url }));
+    const result = await suggestConnections({ title: 'New note', sourceText: source }, [{ id: 'a', title: 'A', passages: [target] }, { id: 'b', title: 'B' }], fakeEnv({ ANTHROPIC_BASE_URL: stub.url }));
     assert.deepEqual(result.connections.map(c => [c.noteId, c.confidence]), [['a', 1]]);
 });
 

@@ -1,3 +1,4 @@
+import { groundedConcept } from './source-quality.js';
 import { canonicalName, conceptKey, topicIdentity, mergeConnections } from './knowledge.js';
 // Library helpers that keep breakdowns cheap, all computed on the device:
 // - relatedNotes: only the notes likely to connect to a new source are sent
@@ -7,7 +8,6 @@ import { canonicalName, conceptKey, topicIdentity, mergeConnections } from './kn
 // - canonicalUrl / findDuplicate: a link that's already saved opens the
 //   existing note instead of paying for a second breakdown.
 export const RELATED_LIMIT = 20;
-const MIN_NOTES = 8; // fill with recent notes when few match
 const VOCABULARY_LIMIT = 150;
 const SOURCE_SCAN_CHARS = 60000;
 
@@ -22,7 +22,7 @@ export function terms(text) {
 }
 
 function noteFields(note) {
-    const concepts = (note.concepts || []).map((c) => (typeof c === 'string' ? c : c?.name)).filter(Boolean);
+    const concepts = (note.concepts || []).filter((c) => groundedConcept(c, note.sourceText)).map((c) => c?.name).filter(Boolean);
     return {
         strong: new Set([...terms(concepts.join(' ')), ...terms((note.tags || []).join(' ')), ...terms([note.topic, ...(note.topicAliases || [])].join(' '))]),
         title: new Set(terms(note.title)),
@@ -68,12 +68,6 @@ export function relatedNotes(notes, source = {}, { limit = RELATED_LIMIT } = {})
     });
 
     const picked = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score || byNewest(a.note, b.note)).slice(0, limit).map((s) => s.note);
-    if (picked.length < MIN_NOTES) {
-        const chosen = new Set(picked.map((n) => n.id));
-        [...list].sort(byNewest).forEach((note) => {
-            if (picked.length < Math.min(MIN_NOTES, limit) && !chosen.has(note.id)) picked.push(note);
-        });
-    }
     return picked;
 }
 

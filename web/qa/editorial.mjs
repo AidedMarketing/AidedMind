@@ -57,6 +57,7 @@ let failed = 0;
 let currentCheck = '';
 const report = [];
 async function check(name, operation) {
+    if (process.env.AIDEDMIND_QA_CHECKS && !name.includes(process.env.AIDEDMIND_QA_CHECKS) && !name.endsWith('empty Library') && !name.startsWith('service worker')) return;
     currentCheck = name;
     await operation(); passed++; report.push({ name, status: 'passed' }); console.log('PASS ' + name);
 }
@@ -622,7 +623,7 @@ try {
                 await route.fulfill({ status: fail ? 503 : 200, contentType: 'application/json', body: JSON.stringify(fail ? { error: 'Unavailable' } : { connections: [] }) });
             });
             // Clear earlier individual retry history, without touching saved links.
-            await page.evaluate(async () => { await (await import('/js/db.js')).updateMany((notes) => notes.map((note) => ({ ...note, linking: { status: 'complete', attempts: 0 } }))); });
+            await page.evaluate(async () => { await (await import('/js/db.js')).updateMany((notes) => notes.map((note) => ({ ...note, source: { ...note.source, partial: false }, sourceText: note.sourceText || 'An original captured source passage about memory practice. '.repeat(40), linking: { status: 'complete', attempts: 0 } }))); });
             await goto('settings');
             const appearance = () => page.locator('.settings-section').filter({ has: page.getByRole('heading', { name: 'Appearance', exact: true }) });
             await appearance().locator('summary').click();
@@ -679,6 +680,121 @@ try {
             assert.equal(analyzeCount, breakdowns);
             assert.equal(requests, total + 2);
             await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+        });
+        await check(label + ' organization preview, persisted pause, retry, stale apply and Undo', async () => {
+            const passage = 'Spaced repetition improves recall by separating practice across days. ';
+            await page.evaluate(async (passage) => {
+                const db = await import('/js/db.js');
+                await db.updateMany((notes) => notes.map((note) => ({ ...note,
+                    source: { ...note.source, title: note.id, partial: note.id === 'd' },
+                    sourceText: note.id === 'd' ? '' : passage.repeat(40),
+                    ...(note.id === 'c' ? { topicByUser: true } : {}),
+                    linking: { status: 'complete', attempts: 0 }, organizationReview: undefined
+                })));
+            }, passage);
+            let requests = 0, release, failB = true;
+            await page.route('**/api/organization', async (route) => {
+                requests++;
+                const body = route.request().postDataJSON();
+                assert.deepEqual(Object.keys(body), ['source']);
+                if (requests === 1) await new Promise((done) => { release = done; });
+                const failure = body.source.title === 'b' && failB;
+                if (failure) failB = false;
+                await route.fulfill({ status: failure ? 503 : 200, contentType: 'application/json', body: JSON.stringify(failure ? { error: 'Unavailable' } : {
+                    proposal: { topic: 'Study Methods', concepts: [{ name: 'Spaced repetition', description: 'Practice separated over days.', evidence: passage.trim() }], tags: ['memory'], quality: { status: 'ready' } }
+                }) });
+            });
+            await goto('settings');
+            const appearance = () => page.locator('.settings-section').filter({ has: page.getByRole('heading', { name: 'Appearance', exact: true }) });
+            await appearance().locator('summary').click();
+            await page.getByRole('button', { name: 'Review organization', exact: true }).click();
+            await page.getByRole('button', { name: 'Prepare preview', exact: true }).click();
+            let dialog = page.getByRole('dialog');
+            await dialog.getByText('Checking one source. Your saved organization stays until you apply proposals.', { exact: true }).waitFor();
+            const gateDeadline = Date.now() + 15000;
+            while (!release && Date.now() < gateDeadline) await page.waitForTimeout(20);
+            assert.equal(typeof release, 'function', 'Organization request did not start');
+            await dialog.getByRole('button', { name: 'Pause organization review', exact: true }).click();
+            await dialog.getByText('Paused. An active request may finish.', { exact: true }).waitFor();
+            release();
+            await dialog.getByText(/1 ready/).waitFor();
+            await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+            await goto('settings'); await appearance().locator('summary').click();
+            await page.getByRole('button', { name: 'Review organization', exact: true }).click();
+            dialog = page.getByRole('dialog');
+            await dialog.getByRole('button', { name: 'Resume organization review', exact: true }).waitFor();
+            await page.waitForTimeout(1200); assert.equal(requests, 1);
+            await dialog.getByRole('button', { name: 'Resume organization review', exact: true }).click();
+            const total = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()).length);
+            const eligible = total - 1;
+            await dialog.getByText(new RegExp(`${eligible - 1} ready.*0 remaining.*1 failed.*1 need text`)).waitFor();
+            await dialog.getByRole('button', { name: 'Retry failed or changed pieces', exact: true }).click();
+            await dialog.getByText(new RegExp(`${eligible} ready.*0 remaining`)).waitFor();
+            assert.equal(requests, eligible + 1);
+            let saved = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()));
+            assert.equal(saved.find((note) => note.id === 'b').topic, 'Learning');
+            assert.equal(saved.find((note) => note.id === 'c').topic, 'Marketing');
+            await dialog.locator('[data-note-id="c"]').getByText('Marketing (kept: your choice)', { exact: true }).waitFor();
+            await axe('organization preview'); await noOverflow();
+            await page.screenshot({ path: resolve(output, label + '-organization-preview-viewport.png') });
+            assert.equal(await dialog.evaluate((element) => element.contains(document.activeElement)), true);
+            await page.evaluate(async () => {
+                const db = await import('/js/db.js');
+                await db.updateNote('a', (note) => ({ ...note, sourceText: 'Changed original text while the preview was open.' }));
+                await db.updateNote('c', (note) => ({ ...note, userNotes: 'Personal text saved during review' }));
+                window.qaOrganizationTransaction = IDBDatabase.prototype.transaction;
+                IDBDatabase.prototype.transaction = function(...args) { if (args[1] === 'readwrite') throw Error('Could not apply organization'); return window.qaOrganizationTransaction.apply(this, args); };
+            });
+            await dialog.getByRole('button', { name: 'Apply selected changes', exact: true }).click();
+            await dialog.getByRole('alert').filter({ hasText: 'Could not apply organization' }).waitFor();
+            await page.evaluate(() => { IDBDatabase.prototype.transaction = window.qaOrganizationTransaction; });
+            await dialog.getByRole('button', { name: 'Apply selected changes', exact: true }).click();
+            await dialog.getByText(new RegExp(`1 changed.*${eligible - 1} applied`)).waitFor();
+            saved = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()));
+            assert.equal(saved.find((note) => note.id === 'a').organizationReview.status, 'stale');
+            assert.equal(saved.find((note) => note.id === 'b').topic, 'Study Methods');
+            assert.equal(saved.find((note) => note.id === 'c').topic, 'Marketing');
+            assert.equal(saved.find((note) => note.id === 'c').userNotes, 'Personal text saved during review');
+            assert.equal(saved.find((note) => note.id === 'd').organizationReview.status, 'blocked');
+            await page.evaluate(async () => { await (await import('/js/db.js')).updateNote('c', (note) => ({ ...note, userNotes: 'A later personal thought' })); });
+            await dialog.getByRole('button', { name: 'Undo organization changes', exact: true }).click();
+            await waitForSavedNote('b', (note) => note.organizationReview?.status === 'restored');
+            saved = await page.evaluate(async () => (await (await import('/js/db.js')).allNotes()));
+            assert.equal(saved.find((note) => note.id === 'b').topic, 'Learning');
+            assert.equal(saved.find((note) => note.id === 'c').userNotes, 'A later personal thought');
+            await page.keyboard.press('Escape');
+            assert.equal(await page.getByRole('dialog').count(), 0);
+            await page.evaluate(async () => { await (await import('/js/db.js')).updateNote('d', (note) => ({ ...note, source: { ...note.source, partial: false }, sourceText: 'A heading and one introductory question.' })); });
+            await goto('note/d');
+            await page.locator('.partial-note').getByText(/Only 6 words were captured/).waitFor();
+            await page.locator('.partial-note').getByRole('button', { name: 'Import full text', exact: true }).click();
+            await page.getByRole('textbox', { name: 'Full text', exact: true }).waitFor();
+            await page.keyboard.press('Escape');
+            await page.locator('.partial-note').getByRole('button', { name: 'Check captured text', exact: true }).click();
+            await page.getByRole('textbox', { name: 'Captured text', exact: true }).waitFor();
+            await page.getByRole('button', { name: 'Text is complete', exact: true }).click();
+            await page.locator('.partial-note').waitFor({ state: 'detached' });
+            await page.evaluate(async (passage) => {
+                const db = await import('/js/db.js'); const organization = await import('/js/organization.js');
+                const template = (await db.allNotes()).find((note) => note.id === 'b');
+                const extras = Array.from({ length: 12 }, (_, i) => {
+                    const note = { ...template, id: `pagination-${i}`, title: `Additional source ${i + 1}`, sourceText: passage.repeat(40) };
+                    note.organizationReview = { ...template.organizationReview, status: 'ready', stamp: organization.organizationStamp(note) };
+                    return note;
+                });
+                await db.saveMany(extras);
+            }, passage);
+            await goto('settings'); await appearance().locator('summary').click();
+            await page.getByRole('button', { name: 'Review organization', exact: true }).click();
+            dialog = page.getByRole('dialog');
+            assert.equal(await dialog.locator('.organization-piece').count(), 10);
+            await visibleControls('.sheet-close, .organization-sheet > button:visible');
+            await dialog.getByRole('button', { name: 'Load more pieces', exact: true }).click();
+            assert.equal(await dialog.locator('.organization-piece').count(), total + 12);
+            assert.equal(await dialog.getByRole('button', { name: 'Load more pieces', exact: true }).isVisible(), false);
+            await axe('organization pagination');
+            await page.keyboard.press('Escape');
+            assert.deepEqual(errors, [], label + ' browser errors after organization review');
         });
         } catch (error) {
             failed++; report.push({ name: currentCheck, status: 'failed', error: error.message });

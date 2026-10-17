@@ -18,8 +18,8 @@ test('capture setup requires a token and a server capable of receiving captures'
 });
 
 const notes = [
-    { id: 'a', title: 'Spacing effect', source: { sourceType: 'article' }, concepts: [{ name: 'Memory' }], connections: [{ noteId: 'b', relation: 'supports', reason: 'r' }], tags: ['learning'], createdAt: '2026-01-01', tldr: 't' },
-    { id: 'b', title: 'Anki tips', source: { sourceType: 'youtube' }, concepts: [{ name: 'memory' }, { name: 'Flashcards' }], connections: [], userNotes: 'see [[Sleep and recall]]', createdAt: '2026-01-02', tldr: 't' },
+    { id: 'a', title: 'Spacing effect', sourceText: 'Memory is retained through spaced practice.', source: { sourceType: 'article' }, concepts: [{ name: 'Memory', evidence: 'Memory is retained through spaced practice.' }], connections: [{ noteId: 'b', relation: 'supports', reason: 'r' }], tags: ['learning'], createdAt: '2026-01-01', tldr: 't' },
+    { id: 'b', title: 'Anki tips', sourceText: 'Memory is retained through spaced practice.', source: { sourceType: 'youtube' }, concepts: [{ name: 'memory', evidence: 'Memory is retained through spaced practice.' }, { name: 'Flashcards' }], connections: [], userNotes: 'see [[Sleep and recall]]', createdAt: '2026-01-02', tldr: 't' },
     { id: 'c', title: 'Sleep and recall', source: { sourceType: 'tiktok' }, concepts: [], connections: [], createdAt: '2026-01-03', tldr: 't' },
     { id: 'd', title: 'Unrelated', source: { sourceType: 'text' }, concepts: [], connections: [], createdAt: '2026-01-04', tldr: 't' }
 ];
@@ -126,7 +126,7 @@ test('large libraries send only related notes', () => {
     assert.ok(picked.length <= 20);
     assert.deepStrictEqual(picked.slice(0, 2).map((n) => n.id).sort(), ['sleep', 'spacing']);
     const none = relatedNotes(lib, { text: '' });
-    assert.strictEqual(none.length, 8); // falls back to the newest notes
+    assert.strictEqual(none.length, 0); // unrelated recent notes are not filler candidates
 });
 
 test('concept vocabulary counts names across notes', () => {
